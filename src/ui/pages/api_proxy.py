@@ -1802,7 +1802,8 @@ class ApiProxyPage(QWidget):
         "auto",
     ]
 
-    # 模型能力定义（全部勾选）
+    # 模型能力定义 (tool_call, images, reasoning)
+    # 不支持图片的模型 images=False，避免 WorkBuddy 发图片导致报错
     MODEL_CAPABILITIES = {
         "hy3-preview":              (True,  True,  True),
         "hunyuan-chat":             (True,  True,  True),
@@ -1813,13 +1814,13 @@ class ApiProxyPage(QWidget):
         "deepseek-v3-1":            (True,  True,  True),
         "deepseek-v3-0324":         (True,  True,  True),
         "deepseek-r1":              (True,  True,  True),
-        "glm-5.2":                  (True,  True,  True),
-        "glm-5.1":                  (True,  True,  True),
-        "glm-5.0":                  (True,  True,  True),
-        "glm-5.0-turbo":            (True,  True,  True),
+        "glm-5.2":                  (True,  False, True),
+        "glm-5.1":                  (True,  False, True),
+        "glm-5.0":                  (True,  False, True),
+        "glm-5.0-turbo":            (True,  False, True),
         "glm-5v-turbo":             (True,  True,  True),
-        "glm-4.7":                  (True,  True,  True),
-        "glm-4.6":                  (True,  True,  True),
+        "glm-4.7":                  (True,  False, True),
+        "glm-4.6":                  (True,  False, True),
         "kimi-k2.6":                (True,  True,  True),
         "kimi-k2.5":                (True,  True,  True),
         "minimax-m3":               (True,  True,  True),
