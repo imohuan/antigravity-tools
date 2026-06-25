@@ -44,31 +44,32 @@ jobs:
 
   build-macos-intel:
     runs-on: macos-14
+    env:
+      PYINSTALLER_TARGET_ARCH: x86_64
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up Python 3.11 (x86_64 via Rosetta)
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-          architecture: 'x64'
 
       - name: Install Rosetta
         run: softwareupdate --install-rosetta --agree-to-license || true
 
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
 
-      - name: Verify architecture
+      - name: Install dependencies (x86_64 via Rosetta)
         run: |
-          python -c "import platform; print(f'Python arch: {platform.machine()}')"
-          file $(python -c "import sys; print(sys.executable)")
+          arch -x86_64 python -m pip install --upgrade pip
+          arch -x86_64 python -m pip install -r requirements.txt
 
-      - name: Build with PyInstaller
+      - name: Verify Python runs as x86_64
         run: |
-          python -m PyInstaller antigravity-mac.spec --noconfirm
+          arch -x86_64 python -c "import platform; print(f'Python arch: {platform.machine()}')"
+          file $(arch -x86_64 python -c "import sys; print(sys.executable)")
+
+      - name: Build with PyInstaller (x86_64 via Rosetta)
+        run: |
+          arch -x86_64 python -m PyInstaller antigravity-mac.spec --noconfirm
 
       - name: Verify app architecture
         run: |
