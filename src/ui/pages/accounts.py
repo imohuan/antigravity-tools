@@ -119,6 +119,7 @@ class AddAccountDialog(QDialog):
         btn_row4.addWidget(btn_save)
 
         btn_cancel = QPushButton(t("common.cancel"))
+        btn_cancel.setObjectName("secondary_btn")
         btn_cancel.clicked.connect(self.reject)
         btn_row4.addWidget(btn_cancel)
 
@@ -390,8 +391,12 @@ class AddAccountDialog(QDialog):
             QDialogButtonBox.Ok | QDialogButtonBox.Cancel,
             parent=dialog
         )
-        buttons.button(QDialogButtonBox.Ok).setText("验证并导入")
-        buttons.button(QDialogButtonBox.Cancel).setText(t("common.cancel"))
+        btn_ok = buttons.button(QDialogButtonBox.Ok)
+        btn_ok.setText("验证并导入")
+        btn_ok.setObjectName("primary_btn")
+        btn_cancel = buttons.button(QDialogButtonBox.Cancel)
+        btn_cancel.setText(t("common.cancel"))
+        btn_cancel.setObjectName("secondary_btn")
         buttons.accepted.connect(dialog.accept)
         buttons.rejected.connect(dialog.reject)
         dlg_layout.addWidget(buttons)
@@ -438,7 +443,7 @@ class AddAccountDialog(QDialog):
         # 同步导入到上游 Key 池（立即写盘）
         try:
             from ...modules.proxy_server import ProxyDatabase
-            proxy_db = ProxyDatabase()
+            proxy_db = ProxyDatabase.get_instance()
             existing = {k.get("api_key", "") for k in proxy_db.get_upstream_keys()}
             if api_key not in existing:
                 import secrets as _sec
@@ -476,7 +481,7 @@ class AddAccountDialog(QDialog):
         # 1. 批量导入到上游Key池（一次写磁盘）
         try:
             from ...modules.proxy_server import ProxyDatabase
-            proxy_db = ProxyDatabase()
+            proxy_db = ProxyDatabase.get_instance()
             existing_keys = proxy_db.get_upstream_keys()
             existing_api_keys = {k.get("api_key", "") for k in existing_keys}
 
@@ -605,11 +610,16 @@ class AddAccountDialog(QDialog):
             QMessageBox.warning(self, t("common.warning"), "请先提取或登录账号")
             return
 
+        token = self._token_input.text()
+        # 如果 token 以 ck_ 开头，说明是 API Key，同时填到 api_key 字段
+        api_key = token if token.startswith("ck_") else ""
+
         account = Account(
             uid=self._uid_input.text() or f"user_{id(self)}",
             nickname=self._nickname_input.text(),
             platform=self._platform_combo.currentData(),
-            auth_token=self._token_input.text(),
+            auth_token=token,
+            api_key=api_key,
         )
         save_account(account)
         self.account_added.emit(account)
@@ -848,8 +858,8 @@ class AccountsPage(QWidget):
         self._btn_stop_query = QPushButton("⏹ 停止")
         self._btn_stop_query.setObjectName("secondary_btn")
         self._btn_stop_query.setStyleSheet(
-            "QPushButton { color: #E53E3E; border: 1px solid #E53E3E; }"
-            "QPushButton:hover { background-color: #FED7D7; }"
+            "QPushButton { color: #FC8181; border: 1px solid #FC8181; }"
+            "QPushButton:hover { background-color: #3B1C1C; }"
         )
         self._btn_stop_query.setCursor(Qt.PointingHandCursor)
         self._btn_stop_query.setVisible(False)
@@ -1101,22 +1111,6 @@ class AccountsPage(QWidget):
             return
 
         menu = QMenu(self)
-        menu.setStyleSheet("""
-            QMenu {
-                background-color: white;
-                border: 1px solid #E2E6EC;
-                border-radius: 8px;
-                padding: 4px;
-            }
-            QMenu::item {
-                padding: 8px 24px;
-                border-radius: 4px;
-            }
-            QMenu::item:selected {
-                background-color: #E8F4FD;
-                color: #2B6CB0;
-            }
-        """)
 
         if len(selected) == 1:
             account = selected[0]
@@ -1585,7 +1579,7 @@ class AccountsPage(QWidget):
             # 联动更新上游 Key 池
             try:
                 from ...modules.proxy_server import ProxyDatabase
-                db = ProxyDatabase()
+                db = ProxyDatabase.get_instance()
                 db.sync_quota_to_key(
                     api_key_or_token=getattr(account, "api_key", None) or account.auth_token,
                     remaining_credits=remaining,
@@ -1646,7 +1640,7 @@ class AccountsPage(QWidget):
                     # 联动更新上游 Key 池
                     try:
                         from ...modules.proxy_server import ProxyDatabase
-                        db = ProxyDatabase()
+                        db = ProxyDatabase.get_instance()
                         db.sync_quota_to_key(
                             api_key_or_token=getattr(acc, "api_key", None) or acc.auth_token,
                             remaining_credits=remaining,
@@ -1733,7 +1727,7 @@ class AccountsPage(QWidget):
                                         # 联动更新上游 Key 池
                                         try:
                                             from ...modules.proxy_server import ProxyDatabase
-                                            db = ProxyDatabase()
+                                            db = ProxyDatabase.get_instance()
                                             db.sync_quota_to_key(
                                                 api_key_or_token=getattr(acc, "api_key", None) or acc.auth_token,
                                                 remaining_credits=remaining,
@@ -1794,7 +1788,7 @@ class AccountsPage(QWidget):
         """删除账号时同步删除 Key 池中对应的 Key"""
         try:
             from ...modules.proxy_server import ProxyDatabase
-            proxy_db = ProxyDatabase()
+            proxy_db = ProxyDatabase.get_instance()
             keys = proxy_db.get_upstream_keys()
             # 用 api_key 或 auth_token 匹配
             tokens_to_remove = set()
@@ -1926,7 +1920,7 @@ class AccountsPage(QWidget):
                         if api_key:
                             try:
                                 from ...modules.proxy_server import ProxyDatabase
-                                proxy_db = ProxyDatabase()
+                                proxy_db = ProxyDatabase.get_instance()
                                 existing_keys = {k.get("api_key", "") for k in proxy_db.get_upstream_keys()}
                                 if api_key not in existing_keys:
                                     import secrets as _sec
@@ -2000,7 +1994,7 @@ class AccountsPage(QWidget):
                     # 导入上游池
                     try:
                         from ...modules.proxy_server import ProxyDatabase
-                        proxy_db = ProxyDatabase()
+                        proxy_db = ProxyDatabase.get_instance()
                         existing_keys = {k.get("api_key", "") for k in proxy_db.get_upstream_keys()}
                         if token not in existing_keys:
                             import secrets as _sec
@@ -2082,7 +2076,7 @@ class ServerFetchDialog(QDialog):
             "• 手机号----登录URL\n"
             "• 子API Key (sk_xxx)"
         )
-        hint.setStyleSheet("color: #718096; font-size: 12px; padding: 4px 8px; background: #F7FAFC; border-radius: 6px;")
+        hint.setStyleSheet("color: #9BA4B0; font-size: 12px; padding: 4px 8px; background: rgba(255,255,255,0.03); border-radius: 6px;")
         hint.setWordWrap(True)
         layout.addWidget(hint)
 
@@ -2159,6 +2153,7 @@ class ServerFetchDialog(QDialog):
 
         btn_row.addStretch()
         close_btn = QPushButton("关闭")
+        close_btn.setObjectName("secondary_btn")
         close_btn.clicked.connect(self.reject)
         btn_row.addWidget(close_btn)
 

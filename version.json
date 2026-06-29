@@ -1,13 +1,19 @@
 {
-    "version": "1.5.3",
-    "changelog": "v1.5.3 更新内容：\n\n修复上游 Key 被误禁用的问题（查分返回空数据时不再禁用）\n专一模式改为真正粘住一个 Key，用到不可用才切换\n新增轮询模式，每次请求轮换 Key，均匀分散压力\n修复高并发下选 Key 异常导致\"无可用上游\"的问题\n自动查分间隔改为 5 分钟\n更新提示同一版本不重复弹窗\n\n下载地址 https://wwbvx.lanzouw.com/b0fqdlz3e\n密码: 0000",
-    "release_date": "2026-06-18",
+    "version": "1.5.6",
+    "changelog": "v1.5.6 更新内容：\n\n【重大修复】彻底修复上下文异常/超限问题\n\n【模型配置】更新后重新一键配置模型，glm5.1/5.2不要勾选图片输入！！\n\n【代理优化】\n\n【新功能】\n添加账号新增「用API导入」（输入 ck_xxx + 昵称 + UID）\n批量导入支持 API Key 格式（JSON / 纯文本每行一个）\nQQ群:1025605799\n\n版本号升级至 1.5.6\nMac 版同步更新\n\n下载地址 https://wwbvx.lanzouw.com/b0fqdlz3e\n密码: 0000\nhttps://github.com/qinchangxv/antigravity-tools/releases/tag/v1.5.6",
+    "release_date": "2026-06-24",
     "download_url": "https://wwbvx.lanzouw.com/b0fqdlz3e",
     "sha256": "",
     "platforms": {
         "windows": {
-            "version": "1.5.3",
-            "changelog": "v1.5.3 更新内容：\n\n修复上游 Key 被误禁用的问题（查分返回空数据时不再禁用）\n专一模式改为真正粘住一个 Key，用到不可用才切换\n新增轮询模式，每次请求轮换 Key，均匀分散压力\n修复高并发下选 Key 异常导致\"无可用上游\"的问题\n自动查分间隔改为 5 分钟\n更新提示同一版本不重复弹窗\n\n下载地址 https://wwbvx.lanzouw.com/b0fqdlz3e\n密码: 0000",
+            "version": "1.5.6",
+            "changelog": "v1.5.6 更新内容：\n\n【重大修复】彻底修复上下文异常/超限问题\n\n【模型配置】更新后重新一键配置模型，glm5.1/5.2不要勾选图片输入！！\n\n【代理优化】\n\n【新功能】\n添加账号新增「用API导入」（输入 ck_xxx + 昵称 + UID）\n批量导入支持 API Key 格式（JSON / 纯文本每行一个）\nQQ群:1025605799\n\n版本号升级至 1.5.6\nMac 版同步更新\n\n下载地址 https://wwbvx.lanzouw.com/b0fqdlz3e\n密码: 0000\nhttps://github.com/qinchangxv/antigravity-tools/releases/tag/v1.5.6",
+            "download_url": "https://wwbvx.lanzouw.com/b0fqdlz3e",
+            "sha256": ""
+        },
+        "mac": {
+            "version": "1.5.6",
+            "changelog": "v1.5.6 更新内容：\n\n【重大修复】彻底修复上下文异常/超限问题\n\n【模型配置】更新后重新一键配置模型，glm5.1/5.2不要勾选图片输入！！\n\n【代理优化】\n\n【新功能】\n添加账号新增「用API导入」（输入 ck_xxx + 昵称 + UID）\n批量导入支持 API Key 格式（JSON / 纯文本每行一个）\nQQ群:1025605799\n\n版本号升级至 1.5.6\nMac 版同步更新\n\n下载地址 https://wwbvx.lanzouw.com/b0fqdlz3e\n密码: 0000\nhttps://github.com/qinchangxv/antigravity-tools/releases/tag/v1.5.6",
             "download_url": "https://wwbvx.lanzouw.com/b0fqdlz3e",
             "sha256": ""
         }

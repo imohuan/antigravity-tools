@@ -64,7 +64,7 @@ class StatusRefreshWorker(QThread):
                         # 联动更新上游 Key 池（用 API Key 或 auth_token 匹配）
                         try:
                             from ...modules.proxy_server import ProxyDatabase
-                            db = ProxyDatabase()
+                            db = ProxyDatabase.get_instance()
                             match_key = account.api_key if (account.api_key and account.api_key.startswith("ck_")) else account.auth_token
                             db.sync_quota_to_key(
                                 api_key_or_token=match_key,
@@ -272,8 +272,8 @@ class CheckinPage(QWidget):
         self._btn_stop = QPushButton("⏹ 停止")
         self._btn_stop.setObjectName("secondary_btn")
         self._btn_stop.setStyleSheet(
-            "QPushButton { color: #E53E3E; border: 1px solid #E53E3E; }"
-            "QPushButton:hover { background-color: #FED7D7; }"
+            "QPushButton { color: #FC8181; border: 1px solid #FC8181; }"
+            "QPushButton:hover { background-color: #3B1C1C; }"
         )
         self._btn_stop.setCursor(Qt.PointingHandCursor)
         self._btn_stop.setVisible(False)
@@ -628,8 +628,8 @@ class CheckinPage(QWidget):
         self._timer_active = True
         self._btn_timer.setText("关闭定时")
         self._btn_timer.setStyleSheet(
-            "QPushButton { color: #E53E3E; border: 1px solid #E53E3E; }"
-            "QPushButton:hover { background-color: #FED7D7; }"
+            "QPushButton { color: #FC8181; border: 1px solid #FC8181; }"
+            "QPushButton:hover { background-color: #3B1C1C; }"
         )
         self._time_edit.setEnabled(False)
         self._timer.start()

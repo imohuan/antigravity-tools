@@ -6,8 +6,8 @@
    - GitHub 失败时 fallback 到旧服务器 (http://103.36.63.44:9680/version.json)
 2. 对比本地版本号 (src/VERSION)
 3. 有新版本 → 弹窗提示(含changelog) → 用户确认 → 下载更新包
-4. 源码模式: 解压覆盖 src/ → 重启
-   打包模式: 提示用户手动下载安装
+4. 源码模式: 解压覆盖 src/ → 提示重启
+   打包模式: 下载 zip → 批处理替换 → 自动重启
 
 双源策略保证旧版（只查服务器）和新版（优先GitHub）都能收到更新通知。
 """
@@ -222,6 +222,100 @@ def _verify_sha256(file_path: Path, expected: str) -> bool:
     return sha256.hexdigest() == expected
 
 
+def _apply_frozen_update(zip_path: Path) -> bool:
+    """打包模式下的自动更新：下载新版本 zip → 解压 → 批处理替换 → 重启
+
+    流程：
+    1. 解压 zip 到临时目录
+    2. 找到新版本的 exe 和 _internal 目录
+    3. 生成批处理脚本：
+       - 等待旧进程退出（ping 延迟）
+       - robocopy 覆盖文件
+       - 启动新 exe
+       - 删除自身
+    4. 启动批处理（隐藏窗口）
+    5. 退出当前应用
+    """
+    import subprocess
+
+    try:
+        # 当前 exe 路径
+        current_exe = Path(sys.executable)
+        app_dir = current_exe.parent  # dist/Antigravity Tools/
+
+        # 解压到临时目录
+        with tempfile.TemporaryDirectory(prefix="ag_update_") as tmp_dir:
+            tmp = Path(tmp_dir)
+            with zipfile.ZipFile(zip_path, "r") as zf:
+                zf.extractall(tmp)
+
+            # 找到解压后的 exe（可能在根目录或子目录下）
+            new_exe = None
+            new_internal = None
+
+            # 查找 exe
+            for exe_path in tmp.rglob("*.exe"):
+                if "Antigravity Tools" in exe_path.name or "antigravity" in exe_path.name.lower():
+                    new_exe = exe_path
+                    break
+
+            if not new_exe:
+                # 如果没找到指定名称，找第一个 exe（排除 updater 脚本）
+                for exe_path in tmp.rglob("*.exe"):
+                    new_exe = exe_path
+                    break
+
+            if not new_exe:
+                logger.error("更新包中未找到 exe 文件")
+                return False
+
+            new_app_dir = new_exe.parent
+
+            # 生成批处理脚本
+            bat_path = Path(tempfile.gettempdir()) / "ag_updater.bat"
+            bat_content = f"""@echo off
+chcp 65001 >nul 2>&1
+timeout /t 2 /nobreak >nul
+
+:: 等待旧进程退出
+:wait_loop
+tasklist /fi "pid eq {os.getpid()}" 2>nul | find "{os.getpid()}" >nul
+if %errorlevel% == 0 goto wait_loop
+
+:: 再等1秒确保文件释放
+timeout /t 1 /nobreak >nul
+
+:: 用 robocopy 覆盖文件（/E 含子目录，/IS 覆盖相同文件，/IT 覆盖只读）
+robocopy "{new_app_dir}" "{app_dir}" /E /IS /IT /NFL /NDL /NJH /NJS /nc /ns /np
+
+:: 启动新版本
+start "" "{current_exe}"
+
+:: 删除批处理自身
+del "%~f0"
+"""
+
+            bat_path.write_text(bat_content, encoding="gbk", errors="replace")
+
+            # 启动批处理（隐藏窗口）
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = 0  # SW_HIDE
+
+            subprocess.Popen(
+                ["cmd", "/c", str(bat_path)],
+                startupinfo=startupinfo,
+                creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+            )
+
+            logger.info("更新批处理已启动，即将退出应用以完成更新")
+            return True
+
+    except Exception as e:
+        logger.error(f"打包模式更新失败: {e}")
+        return False
+
+
 def _apply_update(zip_path: Path) -> bool:
     """应用更新包 — 解压覆盖 src/ 目录
 
@@ -393,11 +487,29 @@ class UpdateChecker(QObject):
 
         def _do_download():
             try:
-                # 打包模式：GitHub Release 下载的是完整安装包，打开浏览器让用户手动安装
+                # 打包模式：下载 zip → 批处理替换 → 重启
                 if getattr(sys, 'frozen', False):
-                    import webbrowser
-                    webbrowser.open(download_url)
-                    self.update_finished.emit(True, f"已打开浏览器下载最新版本，请下载后手动安装。")
+                    tmp_dir = Path(tempfile.gettempdir()) / "antigravity-update"
+                    tmp_dir.mkdir(exist_ok=True)
+                    zip_path = tmp_dir / "update.zip"
+
+                    def _progress(downloaded, total):
+                        self.download_progress.emit(downloaded, total)
+
+                    if not _download_update(download_url, zip_path, _progress):
+                        self.update_finished.emit(False, "下载更新包失败")
+                        return
+
+                    # 校验
+                    if sha256 and not _verify_sha256(zip_path, sha256):
+                        self.update_finished.emit(False, "文件校验失败，可能被篡改")
+                        return
+
+                    # 应用更新（批处理替换模式）
+                    if _apply_frozen_update(zip_path):
+                        self.update_finished.emit(True, "UPDATE_NEED_RESTART")
+                    else:
+                        self.update_finished.emit(False, "应用更新失败")
                     return
 
                 # 源码模式：下载 zip 解压覆盖 src/

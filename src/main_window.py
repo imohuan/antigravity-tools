@@ -170,19 +170,32 @@ class MainWindow(QMainWindow):
             self._update_dialog = None
 
         if success:
-            # 更新成功 — 提示重启
-            msg = QMessageBox(self)
-            msg.setWindowTitle("更新成功")
-            msg.setIcon(QMessageBox.Icon.Information)
-            msg.setText("✅ 更新已下载并安装完成！")
-            msg.setInformativeText("需要重启应用才能生效，是否立即重启？")
-            msg.setStandardButtons(
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-            )
-            msg.setDefaultButton(QMessageBox.StandardButton.Yes)
+            if message == "UPDATE_NEED_RESTART":
+                # 打包模式：批处理已启动，直接退出让批处理接管
+                msg = QMessageBox(self)
+                msg.setWindowTitle("更新就绪")
+                msg.setIcon(QMessageBox.Icon.Information)
+                msg.setText("✅ 更新已下载完成！")
+                msg.setInformativeText("点击「确定」后将自动关闭并完成更新，请稍候片刻自动重启。")
+                msg.setStandardButtons(QMessageBox.StandardButton.Ok)
+                msg.exec()
+                # 批处理已经在等待进程退出，直接退出即可
+                QApplication.quit()
+                os._exit(0)
+            else:
+                # 源码模式：更新成功 — 提示重启
+                msg = QMessageBox(self)
+                msg.setWindowTitle("更新成功")
+                msg.setIcon(QMessageBox.Icon.Information)
+                msg.setText("✅ 更新已下载并安装完成！")
+                msg.setInformativeText("需要重启应用才能生效，是否立即重启？")
+                msg.setStandardButtons(
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                )
+                msg.setDefaultButton(QMessageBox.StandardButton.Yes)
 
-            if msg.exec() == QMessageBox.StandardButton.Yes:
-                self._restart_app()
+                if msg.exec() == QMessageBox.StandardButton.Yes:
+                    self._restart_app()
         else:
             QMessageBox.warning(self, "更新失败", f"❌ {message}")
 

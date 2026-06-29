@@ -46,17 +46,6 @@ class SettingsPage(QWidget):
 
         # === 通用设置 ===
         general_group = QGroupBox("🎨 " + t("settings.general"))
-        general_group.setStyleSheet("""
-            QGroupBox {
-                font-size: 15px; font-weight: 600;
-                border: 1px solid #E2E6EC; border-radius: 12px;
-                margin-top: 12px; padding-top: 24px;
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                left: 16px; padding: 0 8px;
-            }
-        """)
         general_form = QFormLayout(general_group)
         general_form.setSpacing(12)
         general_form.setContentsMargins(20, 24, 20, 20)
@@ -95,7 +84,6 @@ class SettingsPage(QWidget):
 
         # === 代理设置（暂时隐藏） ===
         proxy_group = QGroupBox("🌐 " + t("settings.proxy"))
-        proxy_group.setStyleSheet(general_group.styleSheet())
         proxy_form = QFormLayout(proxy_group)
         proxy_form.setSpacing(12)
         proxy_form.setContentsMargins(20, 24, 20, 20)
@@ -115,7 +103,6 @@ class SettingsPage(QWidget):
 
         # === 刷新设置 ===
         refresh_group = QGroupBox("🔄 配额刷新")
-        refresh_group.setStyleSheet(general_group.styleSheet())
         refresh_form = QFormLayout(refresh_group)
         refresh_form.setSpacing(12)
         refresh_form.setContentsMargins(20, 24, 20, 20)

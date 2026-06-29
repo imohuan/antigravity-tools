@@ -93,6 +93,147 @@ MODEL_CONTEXT_LENGTHS = {
     "hunyuan-2.0-thinking": 256000,    # 256K（混元 2.0 Think）
 }
 
+MODEL_SUPPORTS_IMAGES = {
+    "auto": True,
+    "glm-5.2": False,
+    "glm-5.1": False,
+    "glm-5.0": False,
+    "glm-5.0-turbo": False,
+    "glm-5v-turbo": True,
+    "glm-4.7": False,
+    "glm-4.6": False,
+}
+
+MODEL_MAX_OUTPUT_TOKENS = {
+    "auto": 131072,
+    "glm-5.2": 131072,
+    "glm-5.1": 131072,
+    "glm-5.0": 131072,
+    "glm-5.0-turbo": 65536,
+    "glm-5v-turbo": 8192,
+    "glm-4.7": 131072,
+    "glm-4.6": 131072,
+}
+
+IMAGE_UNSUPPORTED_TEXT_MODELS = {m for m, v in MODEL_SUPPORTS_IMAGES.items() if not v}
+
+def _model_supports_images(model: str) -> bool:
+    return MODEL_SUPPORTS_IMAGES.get(model, True)
+
+
+def _model_context_fields(model: str) -> dict:
+    context_tokens = MODEL_CONTEXT_LENGTHS.get(model, 128000)
+    max_output_tokens = min(MODEL_MAX_OUTPUT_TOKENS.get(model, 131072), context_tokens)
+    return {
+        "maxInputTokens": context_tokens,
+        "max_input_tokens": context_tokens,
+        "maxOutputTokens": max_output_tokens,
+        "max_output_tokens": max_output_tokens,
+        "maxTokens": max_output_tokens,
+        "context_length": context_tokens,
+        "contextLength": context_tokens,
+        "contextWindow": context_tokens,
+        "maxContextTokens": context_tokens,
+        "context_window": context_tokens,
+        "max_context_window": context_tokens,
+        "maxAllowedSize": context_tokens,
+        "max_allowed_size": context_tokens,
+    }
+
+
+def _image_url_from_part(part: dict):
+    if not isinstance(part, dict):
+        return None
+    part_type = part.get("type")
+    if part_type == "image_url":
+        image_url = part.get("image_url")
+        if isinstance(image_url, dict):
+            return image_url.get("url")
+        if isinstance(image_url, str):
+            return image_url
+    if part_type in ("image", "input_image"):
+        url = part.get("url")
+        if isinstance(url, str):
+            return url
+        image = part.get("image")
+        if isinstance(image, dict):
+            url = image.get("url")
+            if isinstance(url, str):
+                return url
+            data = image.get("data")
+            media_type = image.get("mediaType") or image.get("media_type") or "image/jpeg"
+            if isinstance(data, str):
+                return data if data.startswith("data:") else f"data:{media_type};base64,{data}"
+        if isinstance(image, str):
+            return image
+        data = part.get("data")
+        media_type = part.get("mediaType") or part.get("media_type") or "image/jpeg"
+        if isinstance(data, str):
+            return data if data.startswith("data:") else f"data:{media_type};base64,{data}"
+    return None
+
+
+def _detect_multimodal_images(request_data: dict) -> dict:
+    image_count = 0
+    data_uri_count = 0
+    max_image_chars = 0
+    for msg in request_data.get("messages", []):
+        content = msg.get("content")
+        if not isinstance(content, list):
+            continue
+        for part in content:
+            image_url = _image_url_from_part(part)
+            if image_url:
+                image_count += 1
+                max_image_chars = max(max_image_chars, len(image_url))
+                if image_url.startswith("data:"):
+                    data_uri_count += 1
+    return {
+        "image_count": image_count,
+        "data_uri_count": data_uri_count,
+        "max_image_chars": max_image_chars,
+    }
+
+
+def _latest_user_message_index(messages: list) -> int:
+    for idx in range(len(messages) - 1, -1, -1):
+        msg = messages[idx]
+        if isinstance(msg, dict) and msg.get("role") == "user":
+            return idx
+    return -1
+
+
+def _message_has_image(msg: dict) -> bool:
+    if not isinstance(msg, dict):
+        return False
+    content = msg.get("content")
+    if not isinstance(content, list):
+        return False
+    return any(_image_url_from_part(part) for part in content)
+
+
+def _strip_historical_images_for_text_model(request_data: dict, latest_user_idx: int) -> dict:
+    stripped = 0
+    for idx, msg in enumerate(request_data.get("messages", [])):
+        if idx == latest_user_idx or not isinstance(msg, dict):
+            continue
+        content = msg.get("content")
+        if not isinstance(content, list):
+            continue
+        normalized = []
+        changed = False
+        for part in content:
+            if _image_url_from_part(part):
+                stripped += 1
+                changed = True
+                normalized.append({"type": "text", "text": "[历史图片已省略]"})
+            else:
+                normalized.append(part)
+        if changed:
+            msg["content"] = normalized
+    return {"stripped_images": stripped}
+
+
 # 上游 API 路径（copilot.tencent.com/v2 使用 /chat/completions，不是 /v1/chat/completions）
 UPSTREAM_CHAT_PATH = "/chat/completions"
 UPSTREAM_MODELS_PATH = "/v1/models"
@@ -170,9 +311,29 @@ class ProxyDatabase:
     性能优化：
     - 延迟写入：数据变更后不立即写盘，由定时器批量刷盘
     - 内存优先：所有读操作直接从内存返回，不读文件
+    - 单例模式：多线程共享同一实例，避免并发写冲突
+    - 原子写入：先写临时文件再 rename，避免读到半截 JSON
     """
 
     _SAVE_INTERVAL = 5.0  # 秒，刷盘间隔
+    _instance = None       # 单例实例
+    _instance_lock = threading.Lock()
+
+    @classmethod
+    def get_instance(cls, data_dir: str = "") -> "ProxyDatabase":
+        """获取单例实例（线程安全）"""
+        with cls._instance_lock:
+            if cls._instance is None:
+                cls._instance = cls(data_dir)
+            return cls._instance
+
+    @classmethod
+    def reset_instance(cls):
+        """重置单例（用于测试或强制重新加载）"""
+        with cls._instance_lock:
+            if cls._instance:
+                cls._instance._flush_to_disk()
+            cls._instance = None
 
     def __init__(self, data_dir: str = ""):
         import os
@@ -187,22 +348,44 @@ class ProxyDatabase:
         self._key_status_version = 0  # Key 状态变更版本号，每次状态变化 +1，ProxyRouter 据此刷新缓存
 
     def _load(self) -> dict:
-        """从文件加载数据"""
+        """从文件加载数据（带重试，读取失败时重试而非返回空数据）"""
         import os
-        if os.path.exists(self._db_path):
+        if not os.path.exists(self._db_path):
+            return {
+                "upstream_keys": [],
+                "sub_api_keys": [],
+                "request_logs": [],
+                "daily_stats": {},
+                "settings": {"upstream_proxy": ""},
+            }
+        # 最多重试 3 次，应对并发写入导致的短暂读取失败
+        for attempt in range(3):
             try:
                 with open(self._db_path, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            except Exception:
-                pass
+                    content = f.read()
+                    if not content.strip():
+                        # 文件为空（可能正在被原子写入），等一下重试
+                        import time
+                        time.sleep(0.2 * (attempt + 1))
+                        continue
+                    return json.loads(content)
+            except (json.JSONDecodeError, ValueError) as e:
+                # JSON 解析失败（可能读到半截文件），等一下重试
+                logger.warning(f"[DB] proxy_db.json 读取失败(尝试 {attempt+1}/3): {e}")
+                import time
+                time.sleep(0.3 * (attempt + 1))
+            except Exception as e:
+                logger.error(f"[DB] proxy_db.json 读取异常: {e}")
+                import time
+                time.sleep(0.3 * (attempt + 1))
+        # 重试 3 次都失败，说明文件确实损坏
+        logger.error("[DB] proxy_db.json 读取失败3次，返回空数据（可能需要恢复备份）")
         return {
             "upstream_keys": [],
             "sub_api_keys": [],
             "request_logs": [],
-            "daily_stats": {},  # {"upstream": {key_id: {"2026-06-17": {prompt, completion, total, cached, credits, count}}}, "sub": {key_id: {...}}}
-            "settings": {
-                "upstream_proxy": "",
-            }
+            "daily_stats": {},
+            "settings": {"upstream_proxy": ""},
         }
 
     def _save(self):
@@ -215,16 +398,26 @@ class ProxyDatabase:
             self._save_timer.start()
 
     def _flush_to_disk(self):
-        """实际写入磁盘"""
+        """实际写入磁盘（原子写入：先写临时文件，再 rename 覆盖）"""
+        import os
         with self._lock:
             if not self._dirty:
                 return
             try:
-                with open(self._db_path, "w", encoding="utf-8") as f:
+                tmp_path = self._db_path + ".tmp"
+                with open(tmp_path, "w", encoding="utf-8") as f:
                     json.dump(self._data, f, ensure_ascii=False, indent=2)
+                # 原子 rename（Windows 上 os.replace 是原子的）
+                os.replace(tmp_path, self._db_path)
                 self._dirty = False
             except Exception as e:
                 logger.error(f"保存代理数据失败: {e}")
+                # 清理临时文件
+                try:
+                    if os.path.exists(tmp_path):
+                        os.remove(tmp_path)
+                except Exception:
+                    pass
 
     def flush_now(self):
         """立即刷盘（用于程序退出前调用）"""
@@ -315,11 +508,16 @@ class ProxyDatabase:
                         k["packages"] = pkg_summaries
 
                     # 积分为 0 → 立即禁用（但不覆盖 abnormal 状态）
-                    if remaining_credits <= 0:
+                    # ⚠️ 防御：如果 remaining=0 且 total=0，说明查分失败返回了空数据，
+                    # 不能当成"积分用完"处理，否则会把正常 Key 全部误禁用
+                    if remaining_credits <= 0 and total_credits > 0:
                         if old_status in ("active", "cooldown", "rate_limited", "exhausted"):
                             k["status"] = "disabled"
                             self._key_status_version += 1  # 通知 ProxyRouter 刷新缓存
                             logger.info(f"[积分同步] Key {k.get('label', k.get('key_id',''))} 积分为0，{old_status} -> DISABLED")
+                    elif remaining_credits <= 0 and total_credits <= 0:
+                        logger.warning(f"[积分同步] Key {k.get('label', k.get('key_id',''))} "
+                                      f"查分返回 remaining=0 total=0，疑似查分失败，跳过禁用（保持 {old_status}）")
                     # 积分 > 100 → 恢复 active（但不恢复 abnormal，风控需要手动解除）
                     elif remaining_credits > 100:
                         if old_status in ("disabled", "exhausted", "cooldown", "rate_limited"):
@@ -743,13 +941,18 @@ class ProxyRouter:
                         continue  # 没有过期时间，跳过
                     # 解析过期时间
                     try:
-                        # cycle_end 格式可能是 ISO 8601 或时间戳
+                        from datetime import datetime as _dt
                         if "T" in cycle_end:
-                            from datetime import datetime as _dt
+                            # ISO 8601 格式: 2026-06-30T23:59:59Z
                             dt = _dt.fromisoformat(cycle_end.replace("Z", "+00:00"))
                             ts = dt.timestamp()
                         else:
-                            ts = float(cycle_end)
+                            try:
+                                ts = float(cycle_end)
+                            except ValueError:
+                                # 空格分隔格式: 2026-06-30 23:59:59
+                                dt = _dt.strptime(cycle_end, "%Y-%m-%d %H:%M:%S")
+                                ts = dt.timestamp()
                         if earliest is None or ts < earliest:
                             earliest = ts
                     except (ValueError, TypeError):
@@ -1290,7 +1493,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             self._send_json(200, {
                 "object": "api.index",
                 "message": "Antigravity Proxy is running",
-                "version": "1.5.6",
+                "version": "1.5.7",
             })
             return
 
@@ -1318,13 +1521,20 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                         "object": "model",
                         "created": int(time.time()),
                         "owned_by": "antigravity-proxy",
-                        "maxInputTokens": MODEL_CONTEXT_LENGTHS.get(m, 128000),
-                        "max_input_tokens": MODEL_CONTEXT_LENGTHS.get(m, 128000),
-                        "context_length": MODEL_CONTEXT_LENGTHS.get(m, 128000),
-                        "contextLength": MODEL_CONTEXT_LENGTHS.get(m, 128000),
-                        "maxContextTokens": MODEL_CONTEXT_LENGTHS.get(m, 128000),
-                        "context_window": MODEL_CONTEXT_LENGTHS.get(m, 128000),
-                        "max_context_window": MODEL_CONTEXT_LENGTHS.get(m, 128000),
+                        **_model_context_fields(m),
+                        "api": "openai-completions",
+                        "provider": "zai",
+                        "baseUrl": "https://copilot.tencent.com/v2",
+                        "input": ["text", "image"] if _model_supports_images(m) else ["text"],
+                        "compat": {
+                            "supportsDeveloperRole": False,
+                            "thinkingFormat": "zai",
+                            "zaiToolStream": True,
+                        },
+                        "supportsImages": _model_supports_images(m),
+                        "supports_images": _model_supports_images(m),
+                        "disabledMultimodal": not _model_supports_images(m),
+                        "disabled_multimodal": not _model_supports_images(m),
                     }
                     for m in model_list
                 ]
@@ -1445,13 +1655,39 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
         model = request_data.get("model", "")
         if not model:
             model = "auto"  # 默认模型，让上游服务端路由
-
         # 与服务器端 chat.py 一致：messages 少于 2 条时补 system 消息
         # 上游 copilot.tencent.com 要求至少 2 条 message，否则返回 400
         messages = request_data.get("messages", [])
         if len(messages) < 2:
             messages.insert(0, {"role": "system", "content": "You are a helpful assistant."})
             request_data["messages"] = messages
+
+        latest_user_idx = _latest_user_message_index(messages)
+        latest_user_has_image = latest_user_idx >= 0 and _message_has_image(messages[latest_user_idx])
+        image_stats = _detect_multimodal_images(request_data)
+        history_strip_stats = {"stripped_images": 0}
+        if model in IMAGE_UNSUPPORTED_TEXT_MODELS and image_stats["image_count"] and not latest_user_has_image:
+            history_strip_stats = _strip_historical_images_for_text_model(request_data, latest_user_idx)
+            image_stats = _detect_multimodal_images(request_data)
+            if history_strip_stats["stripped_images"]:
+                logger.info(
+                    f"[历史图片省略] model={model}, stripped_images={history_strip_stats['stripped_images']}"
+                )
+        if latest_user_has_image and model in IMAGE_UNSUPPORTED_TEXT_MODELS:
+            error_detail = f"{model} 不支持图片输入，如需图片识别请切换到 glm-5v-turbo 模型"
+            logger.warning(
+                f"[图片拒绝] model={model}, images={image_stats['image_count']}, "
+                f"data_uri={image_stats['data_uri_count']}, max_image_chars={image_stats['max_image_chars']}"
+            )
+            self._add_log(event="error", sub_key=sub_key, model=model, error=error_detail, request_path="/v1/chat/completions")
+            self._send_json(400, {
+                "error": {
+                    "message": error_detail,
+                    "type": "unsupported_multimodal",
+                    "code": "model_image_not_supported",
+                }
+            })
+            return
 
         # 4. 检查模型是否允许（透传模式跳过）
         if not is_passthrough:
@@ -1475,6 +1711,8 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
         last_error = None           # 最后一次的错误信息
         last_error_status = 503     # 最后一次的错误状态码
         last_cooldown_secs = 0      # 最后一次冷却秒数（用于 Retry-After 头，优化项 #9）
+        _skip_stream_options = False  # 某些模型不支持 stream_options，检测到 400 后去掉重试
+        _ctx_compressed = [False]    # 上下文是否已压缩过（用 list 包装以便在嵌套函数中修改）
         allowed_key_ids = sub_key.get("allowed_key_ids", [])
         key_mode = sub_key.get("key_mode", 1)
 
@@ -1516,13 +1754,21 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                 # copilot 上游只支持流式请求，强制开启 stream
                 request_data["stream"] = True
                 # 请求上游返回 usage 统计（最后一个 chunk 包含 token/credit/缓存信息）
-                request_data.setdefault("stream_options", {})["include_usage"] = True
+                if not _skip_stream_options:
+                    request_data.setdefault("stream_options", {})["include_usage"] = True
 
                 # 记录请求体大小和消息数（用于排查上下文超长问题）
                 msg_count = len(request_data.get("messages", []))
                 body_size = len(json.dumps(request_data, ensure_ascii=False))
+
+                # 检测请求是否包含图片内容（排查图片上下文超限问题）
+                has_image = image_stats["image_count"] > 0
+
                 logger.info(f"[代理] 请求准备耗时 {int((time.time()-t0)*1000)}ms, model={model}, key={label}, "
-                           f"messages={msg_count}, body={body_size}B ({body_size//1024}KB)")
+                           f"messages={msg_count}, body={body_size}B ({body_size//1024}KB), "
+                           f"stream={client_wants_stream}, image={has_image}, images={image_stats['image_count']}, "
+                           f"stripped_images={history_strip_stats['stripped_images']}, "
+                           f"stream_options={request_data.get('stream_options', 'N/A')}")
 
                 # ─── 发送请求到上游 ───
                 session = self.router._get_session(upstream_url)
@@ -1595,11 +1841,19 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                         self._add_log(event="upstream_error", sub_key=sub_key, upstream_key=upstream_key,
                                       model=model, error=error_detail, upstream_status=401)
                     elif resp.status_code == 400 and not resp_body.strip():
-                        # 400 空 body：上下文太长超限，不截断（会丢失内容），直接返回友好提示（FATAL）
-                        error_detail = f"Key {label} 上游返回 400 空 body，疑似上下文过长"
+                        # 400 空 body：上下文太长，尝试压缩后重试
+                        if not _ctx_compressed[0]:
+                            logger.warning(f"[压缩] Key {label} 400空body，疑似上下文过长，尝试压缩")
+                            result = self._handle_context_too_long(
+                                request_data, upstream_key, model, upstream_url, _ctx_compressed)
+                            if result != "failed":
+                                tried_key_ids.discard(key_id)  # 允许同Key重试
+                                continue
+                        # 已压缩过还超，返回友好提示
+                        error_detail = f"Key {label} 上游返回 400 空 body，上下文过长"
                         logger.warning(f"[拒绝] {error_detail}")
-                        self._add_log(event="upstream_error", sub_key=sub_key, upstream_key=upstream_key,
-                                      model=model, error=error_detail, upstream_status=400)
+                        self._add_log(event="end", sub_key=sub_key, upstream_key=upstream_key,
+                                      model=model, error="context_too_long")
                         self._send_json(400, {
                             "error": {
                                 "message": "当前对话上下文过长，超出上游限制。请新开一个对话继续。",
@@ -1608,11 +1862,19 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                         })
                         return
                     elif resp.status_code == 400 and ("input length too long" in resp_body or '"code":11115' in resp_body):
-                        # 400 + "input length too long"：上下文超限，换 Key 无效，直接返回友好提示（FATAL）
+                        # 400 + "input length too long"：上下文超限，尝试压缩后重试
+                        if not _ctx_compressed[0]:
+                            logger.warning(f"[压缩] Key {label} 400 input length too long，尝试压缩")
+                            result = self._handle_context_too_long(
+                                request_data, upstream_key, model, upstream_url, _ctx_compressed)
+                            if result != "failed":
+                                tried_key_ids.discard(key_id)  # 允许同Key重试
+                                continue
+                        # 已压缩过还超，返回友好提示
                         error_detail = f"Key {label} 上游返回 400 input length too long"
                         logger.warning(f"[拒绝] {error_detail}")
-                        self._add_log(event="upstream_error", sub_key=sub_key, upstream_key=upstream_key,
-                                      model=model, error=error_detail, upstream_status=400)
+                        self._add_log(event="end", sub_key=sub_key, upstream_key=upstream_key,
+                                      model=model, error="context_too_long")
                         self._send_json(400, {
                             "error": {
                                 "message": "当前对话上下文过长，超出模型限制。请新开一个对话继续。",
@@ -1629,6 +1891,27 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                                           model=model, error=error_detail, upstream_status=403)
                             # 标记为 abnormal，不再参与轮询
                             self.router.mark_key_abnormal(key_id)
+                        elif resp.status_code == 400:
+                            # 检测是否是 stream_options 不被支持导致的 400
+                            # 日志特征：code:11133 "invalid parameter value"，且请求体很小
+                            if "stream_options" in request_data and not _skip_stream_options and (
+                                "11133" in resp_body or "invalid parameter" in resp_body.lower()
+                            ):
+                                logger.warning(
+                                    f"[400] 疑似 stream_options 不被支持, 去掉后同Key重试, "
+                                    f"model={model}, key={label}, resp={resp_body[:200]}"
+                                )
+                                request_data.pop("stream_options", None)
+                                _skip_stream_options = True
+                                continue  # 同 Key 重试（不加入 tried_key_ids）
+                            # 400 但不是空body也不是 input length too long — 记录请求参数用于排查
+                            # 常见原因：stream_options 不被某些模型支持、参数格式错误
+                            req_params = {k: v for k, v in request_data.items()
+                                         if k not in ("messages",)}
+                            logger.warning(f"[400排查] model={model}, key={label}, "
+                                          f"resp={resp_body[:300]}, "
+                                          f"req_params(excl messages)={req_params}")
+                            error_detail = f"Key {label} 上游返回 400: {resp_body[:200]}"
                         else:
                             error_detail = f"Key {label} 上游返回 {resp.status_code}: {resp_body[:200]}"
                             logger.warning(f"[重试] {error_detail}")
@@ -1736,6 +2019,148 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             self._add_log(event="error", sub_key=sub_key, model=model, error=error_detail)
             self._send_json(503, {"error": {"message": "No available upstream keys", "type": "server_error"}})
 
+    def _compress_context_with_ai(self, request_data: dict, upstream_key: dict,
+                                     model: str, upstream_url: str) -> bool:
+        """用 AI 生成对话摘要，替换旧消息。
+
+        保留 system 消息 + 最近 5 条对话，旧消息发给上游 AI 生成摘要。
+        返回 True 表示压缩成功（request_data 已被修改）。
+        """
+        messages = request_data.get("messages", [])
+        if len(messages) <= 8:
+            return False
+
+        system_msgs = [m for m in messages if m.get("role") == "system"]
+        non_system = [m for m in messages if m.get("role") != "system"]
+        if len(non_system) <= 5:
+            return False
+
+        recent = non_system[-5:]
+        old = non_system[:-5]
+
+        # 旧消息转纯文本（去掉图片 base64）
+        old_text_parts = []
+        for msg in old:
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+            if isinstance(content, list):
+                text_parts = []
+                for part in content:
+                    if isinstance(part, dict):
+                        if part.get("type") == "text":
+                            text_parts.append(part.get("text", ""))
+                        elif part.get("type") in ("image_url", "image", "input_image"):
+                            text_parts.append("[图片]")
+                    elif isinstance(part, str):
+                        text_parts.append(part)
+                content = " ".join(text_parts)
+            if content:
+                old_text_parts.append(f"[{role}] {content}")
+
+        old_text = "\n".join(old_text_parts)
+        if not old_text.strip() or len(old_text) < 100:
+            return False
+
+        if len(old_text) > 12000:
+            old_text = old_text[:12000] + "\n...(已截断)"
+
+        summary_request = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": "你是一个对话摘要助手。请将用户提供的对话历史总结为简洁的要点，保留关键技术信息、用户意图和上下文。用中文输出，不超过500字。"},
+                {"role": "user", "content": f"请总结以下对话历史的要点：\n\n{old_text}"},
+            ],
+            "stream": True,
+            "max_tokens": 1000,
+        }
+
+        try:
+            api_key = upstream_key.get("api_key", "")
+            resp = self.router._get_session(upstream_url).post(
+                f"{upstream_url}{UPSTREAM_CHAT_PATH}",
+                json=summary_request,
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {api_key}",
+                    "X-Request-ID": secrets.token_hex(16),
+                },
+                timeout=30,
+                stream=True,
+            )
+            if resp.status_code != 200:
+                logger.warning(f"[压缩] 摘要请求失败: status={resp.status_code}")
+                return False
+
+            content_parts = []
+            for line in resp.iter_lines():
+                if not line:
+                    continue
+                line_str = line.decode("utf-8", errors="replace")
+                if line_str.startswith("data: "):
+                    data_str = line_str[6:]
+                    if data_str.strip() == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(data_str)
+                        for choice in chunk.get("choices", []):
+                            delta = choice.get("delta", {})
+                            if delta.get("content"):
+                                content_parts.append(delta["content"])
+                    except json.JSONDecodeError:
+                        pass
+
+            summary = "".join(content_parts).strip()
+            if not summary:
+                logger.warning("[压缩] AI摘要返回空内容")
+                return False
+
+            new_messages = system_msgs + [
+                {"role": "system", "content": f"[以下是之前对话的摘要]\n{summary}"}
+            ] + recent
+            old_count = len(messages)
+            request_data["messages"] = new_messages
+            logger.info(f"[压缩] AI摘要成功, 摘要长度={len(summary)}, 消息数 {old_count}→{len(new_messages)}")
+            return True
+
+        except Exception as e:
+            logger.warning(f"[压缩] AI摘要异常: {e}")
+            return False
+
+    def _truncate_context(self, request_data: dict, keep_recent: int = 6) -> int:
+        """粗暴截断：保留 system + 最近 N 条非system消息。返回截掉的消息数。"""
+        messages = request_data.get("messages", [])
+        system_msgs = [m for m in messages if m.get("role") == "system"]
+        non_system = [m for m in messages if m.get("role") != "system"]
+
+        old_count = len(messages)
+        keep = min(keep_recent, len(non_system))
+        new_messages = system_msgs + non_system[-keep:]
+        request_data["messages"] = new_messages
+        removed = old_count - len(new_messages)
+        logger.info(f"[截断] 粗暴截断: {old_count}→{len(new_messages)} 条消息, 截掉{removed}条")
+        return removed
+
+    def _handle_context_too_long(self, request_data: dict, upstream_key: dict,
+                                   model: str, upstream_url: str,
+                                   context_compressed: list) -> str:
+        """处理上下文超长：先尝试AI摘要，失败则粗暴截断。
+
+        Args:
+            context_compressed: [bool] 单元素列表，标记是否已压缩过
+        Returns:
+            "compressed" / "truncated" / "failed"（已压缩过，不能再压缩）
+        """
+        if context_compressed[0]:
+            return "failed"
+
+        if self._compress_context_with_ai(request_data, upstream_key, model, upstream_url):
+            context_compressed[0] = True
+            return "compressed"
+
+        self._truncate_context(request_data)
+        context_compressed[0] = True
+        return "truncated"
+
     def _detect_stream_error(self, chunk_str: str) -> Optional[str]:
         """扫描 SSE chunk 检测错误（优化项 #4）
 
@@ -1808,6 +2233,9 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
         last_usage = {}
         first_token_ms = None
         client_disconnected = False
+        _chunk_count = 0       # 接收的 chunk 总数
+        _has_usage_chunk = False  # 是否收到包含 usage 的 chunk
+        _last_chunk_preview = ""  # 最后一个 chunk 的预览（排查 usage 丢失）
 
         # 提取底层 socket 用于 select 超时控制（优化项 #10）
         _stream_sock = None
@@ -1853,6 +2281,9 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                         "type": "context_too_long"
                     }
                 })
+                self._add_log(event="end", sub_key=sub_key, upstream_key=upstream_key,
+                              model=model, duration_ms=int((time.time() - start_time) * 1000),
+                              error="context_too_long")
                 return (False, "")
             if error_type == "stream_error":
                 # 首 chunk 包含错误事件，换 Key 重试
@@ -1865,6 +2296,9 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
 
             # 从首 chunk 提取 usage
             self._extract_usage(first_chunk_str, last_usage)
+            _chunk_count = 1
+            if '"usage"' in first_chunk_str:
+                _has_usage_chunk = True
 
             # 发送响应头（现在才发送 — 延迟首输）
             self.send_response(200)
@@ -1895,6 +2329,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             for chunk in _stream_gen:
                 if chunk:
                     chunk_str = chunk.decode("utf-8", errors="replace")
+                    _chunk_count += 1
                     # 上下文超长检测（优化项 #4）
                     if self._detect_stream_error(chunk_str) == "context_too_long":
                         error_event = 'data: {"error": {"message": "当前对话上下文过长，超出模型限制。请新开一个对话继续。", "type": "context_too_long"}}\n\ndata: [DONE]\n\n'
@@ -1906,6 +2341,9 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                         logger.warning("[代理] 流中检测到上下文超长，终止流")
                         break
                     self._extract_usage(chunk_str, last_usage)
+                    if '"usage"' in chunk_str and '"prompt_tokens"' in chunk_str:
+                        _has_usage_chunk = True
+                        _last_chunk_preview = chunk_str[-300:] if len(chunk_str) > 300 else chunk_str
                     if not client_disconnected:
                         try:
                             self.request.sendall(chunk)
@@ -1915,6 +2353,25 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                     last_data_time = time.time()
 
             self.close_connection = True
+
+            # 记录 usage 提取结果（排查上下文超限问题）
+            if last_usage:
+                logger.info(f"[代理] 流式完成 chunks={_chunk_count}, usage提取成功: "
+                           f"prompt_tokens={last_usage.get('prompt_tokens',0)}, "
+                           f"completion_tokens={last_usage.get('completion_tokens',0)}, "
+                           f"total_tokens={last_usage.get('total_tokens',0)}, "
+                           f"key={upstream_key.get('label','')}")
+            else:
+                logger.warning(f"[代理] 流式完成 chunks={_chunk_count} 但 usage 为空! "
+                              f"has_usage_chunk={_has_usage_chunk}, "
+                              f"WorkBuddy 无法获取上下文大小→不会触发压缩, "
+                              f"key={upstream_key.get('label','')}")
+                if _last_chunk_preview:
+                    logger.info(f"[代理] 最后含usage的chunk预览: {_last_chunk_preview}")
+                elif _chunk_count > 0:
+                    logger.warning(f"[代理] 所有 {_chunk_count} 个 chunk 中均未找到 usage 字段! "
+                                  f"上游可能不支持 stream_options.include_usage")
+            # 流式转发到此结束，fall through 到下方的统计代码（else 块被跳过）
 
         else:
             # ─── 非流式：收集完整 SSE 响应，拼装成标准 JSON 返回 ───
@@ -1978,6 +2435,9 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                         "type": "context_too_long"
                     }
                 })
+                self._add_log(event="end", sub_key=sub_key, upstream_key=upstream_key,
+                              model=model, duration_ms=int((time.time() - start_time) * 1000),
+                              error="context_too_long")
                 return (False, "")
 
             full_content = "".join(content_parts)
@@ -2086,7 +2546,7 @@ class ProxyServer:
         self.host = host
         self.port = port
         self.mode = mode  # "local" or "open"
-        self.db = ProxyDatabase()
+        self.db = ProxyDatabase.get_instance()
         self.router = ProxyRouter(self.db)
         self._server = None
         self._thread = None

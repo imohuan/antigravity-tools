@@ -201,8 +201,14 @@ class ApiClient:
                 if not resp.ok:
                     try:
                         result = resp.json()
-                        # 返回 JSON 让调用方自行判断业务错误码
                         logger.info(f"非2xx但可解析JSON [POST {path}] code={result.get('code')} msg={result.get('msg')}")
+                        # 签到接口 code=10001 是"今日已签到"，需要返回给调用方判断
+                        if "daily-checkin" in path and result.get("code") == 10001:
+                            return result
+                        # ⚠️ 非 2xx + code != 0 是真正的错误（如 500 code:10000），
+                        # 必须返回 None，否则调用方会拿到空 data → remaining_credits=0 → 误禁用 Key
+                        if result.get("code") != 0:
+                            return None
                         return result
                     except Exception:
                         resp.raise_for_status()
@@ -272,6 +278,11 @@ class ApiClient:
         result = self._billing_request(BILLING_API_PATHS["user_resource"])
         if not result:
             return {"success": False, "error": "请求失败"}
+
+        # ⚠️ 双重校验：code != 0 视为失败（防止上游 500 返回 {"code":10000} 被 truthy 判断通过）
+        if result.get("code") != 0:
+            logger.warning(f"[积分查询] 上游返回 code={result.get('code')}, msg={result.get('msg')}, 不更新积分")
+            return {"success": False, "error": f"上游错误: code={result.get('code')}"}
 
         try:
             response_data = result.get("data", {}).get("Response", {}).get("Data", {})

@@ -23,7 +23,7 @@ from PySide6.QtGui import QCursor
 from ...i18n import t
 from ...utils.store import save_setting, load_setting, load_accounts
 from ...modules.proxy_server import (
-    ProxyServer, SUPPORTED_MODELS, ProxyDatabase, MODEL_CONTEXT_LENGTHS
+    ProxyServer, SUPPORTED_MODELS, ProxyDatabase, MODEL_CONTEXT_LENGTHS, MODEL_MAX_OUTPUT_TOKENS
 )
 
 
@@ -67,11 +67,32 @@ def _set_item(table, row, col, text, tooltip=None):
 def _apply_context_aliases(entry: dict, context_tokens: int):
     """Write common context-window field names for different clients."""
     if context_tokens:
+        max_output_tokens = min(MODEL_MAX_OUTPUT_TOKENS.get(entry.get("id"), 131072), context_tokens)
         entry["maxInputTokens"] = context_tokens
         entry["max_input_tokens"] = context_tokens
+        entry["maxOutputTokens"] = max_output_tokens
+        entry["max_output_tokens"] = max_output_tokens
+        entry["maxTokens"] = max_output_tokens
+        entry["contextWindow"] = context_tokens
         entry["contextLength"] = context_tokens
         entry["context_length"] = context_tokens
         entry["maxContextTokens"] = context_tokens
+        entry["maxAllowedSize"] = context_tokens
+        entry["max_allowed_size"] = context_tokens
+    return entry
+
+
+def _apply_model_protocol_fields(entry: dict, images: bool):
+    """Add WorkBuddy catalog-style fields used by newer model capability checks."""
+    entry["api"] = "openai-completions"
+    entry["provider"] = "zai"
+    entry["baseUrl"] = entry.get("url", "https://copilot.tencent.com/v2")
+    entry["input"] = ["text", "image"] if images else ["text"]
+    entry["compat"] = {
+        "supportsDeveloperRole": False,
+        "thinkingFormat": "zai",
+        "zaiToolStream": True,
+    }
     return entry
 
 
@@ -420,7 +441,7 @@ class ApiProxyPage(QWidget):
         super().__init__(parent)
         self.setObjectName("content_area")
         self._proxy_server: ProxyServer = None
-        self._db = ProxyDatabase()
+        self._db = ProxyDatabase.get_instance()
         self._setup_ui()
 
         # 日志自动刷新定时器
@@ -506,7 +527,7 @@ class ApiProxyPage(QWidget):
 
         # 开放模式提示（默认隐藏）
         self._open_mode_hint = QLabel("")
-        self._open_mode_hint.setStyleSheet("color: #C53030; font-size: 12px; padding: 4px 8px; background: #FFF5F5; border-radius: 4px;")
+        self._open_mode_hint.setStyleSheet("color: #FC8181; font-size: 12px; padding: 4px 8px; background: #3B1C1C; border-radius: 4px;")
         self._open_mode_hint.setWordWrap(True)
         self._open_mode_hint.setVisible(False)
         control_layout.addWidget(self._open_mode_hint)
@@ -770,7 +791,7 @@ class ApiProxyPage(QWidget):
             self._proxy_server.stop()
             self._proxy_server = None
             # 服务停止后恢复独立 db 实例（从文件重新加载）
-            self._db = ProxyDatabase()
+            self._db = ProxyDatabase.get_instance()
             self._status_label.setText("⏹ 已停止")
             self._status_label.setStyleSheet("font-weight: 600; color: #9BA4B0;")
             self._toggle_btn.setText("▶ 启动服务")
@@ -892,6 +913,7 @@ class ApiProxyPage(QWidget):
         layout = QVBoxLayout(dlg)
 
         table = QTableWidget()
+        table.setAlternatingRowColors(True)
         sorted_dates = sorted(daily.keys(), reverse=True)
         table.setRowCount(len(sorted_dates))
         table.setColumnCount(6)
@@ -920,6 +942,8 @@ class ApiProxyPage(QWidget):
         layout.addWidget(table)
 
         btn_close = QPushButton("关闭")
+        btn_close.setObjectName("secondary_btn")
+        btn_close.setCursor(Qt.PointingHandCursor)
         btn_close.clicked.connect(dlg.accept)
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
@@ -1053,41 +1077,38 @@ class ApiProxyPage(QWidget):
                 cache_tip = "暂无数据"
             _set_item(self._keys_table, row, 7, cache_text, tooltip=cache_tip)
 
-            # 操作按钮（紧凑文字按钮）
+            # 操作栏：一个按钮触发下拉菜单
             ops_widget = QWidget()
+            ops_widget.setAttribute(Qt.WA_TranslucentBackground, True)
             ops_layout = QHBoxLayout(ops_widget)
             ops_layout.setContentsMargins(4, 0, 4, 0)
-            ops_layout.setSpacing(6)
+            ops_layout.setSpacing(0)
 
+            from PySide6.QtWidgets import QToolButton
+            btn_ops = QToolButton()
+            btn_ops.setText("操作 ▾")
+            btn_ops.setCursor(Qt.PointingHandCursor)
+            btn_ops.setToolButtonStyle(Qt.ToolButtonTextOnly)
+            btn_ops.setPopupMode(QToolButton.InstantPopup)
+            btn_ops.setStyleSheet("QToolButton{background:transparent;border:none;color:#3182CE;font-size:12px;padding:2px 6px;}QToolButton:hover{color:#2B6CB0;text-decoration:underline;}")
+
+            from PySide6.QtWidgets import QMenu
+            ops_menu = QMenu(btn_ops)
             if status != "active":
-                btn_enable = QPushButton("恢复")
-                btn_enable.setCursor(Qt.PointingHandCursor)
-                btn_enable.setMinimumWidth(36)
-                btn_enable.setStyleSheet("QPushButton{background:transparent;border:none;color:#3182CE;font-size:12px;padding:1px 2px;}QPushButton:hover{color:#2B6CB0;text-decoration:underline;}")
-                btn_enable.clicked.connect(lambda checked, kid=key_id: self._reset_key(kid))
-                ops_layout.addWidget(btn_enable)
+                act = ops_menu.addAction("✅ 恢复")
+                act.triggered.connect(lambda checked, kid=key_id: self._reset_key(kid))
             else:
-                btn_disable = QPushButton("禁用")
-                btn_disable.setCursor(Qt.PointingHandCursor)
-                btn_disable.setMinimumWidth(36)
-                btn_disable.setStyleSheet("QPushButton{background:transparent;border:none;color:#D69E2E;font-size:12px;padding:1px 2px;}QPushButton:hover{color:#B7791F;text-decoration:underline;}")
-                btn_disable.clicked.connect(lambda checked, kid=key_id: self._disable_key(kid))
-                ops_layout.addWidget(btn_disable)
+                act = ops_menu.addAction("🚫 禁用")
+                act.triggered.connect(lambda checked, kid=key_id: self._disable_key(kid))
+            ops_menu.addSeparator()
+            act = ops_menu.addAction("📊 明细")
+            act.triggered.connect(lambda checked, kid=key_id, lbl=label: self._show_daily_detail("upstream", kid, f"上游Key {lbl or kid}"))
+            ops_menu.addSeparator()
+            act = ops_menu.addAction("🗑️ 删除")
+            act.triggered.connect(lambda checked, kid=key_id: self._delete_upstream_key(kid))
 
-            btn_del = QPushButton("删除")
-            btn_del.setCursor(Qt.PointingHandCursor)
-            btn_del.setMinimumWidth(36)
-            btn_del.setStyleSheet("QPushButton{background:transparent;border:none;color:#E53E3E;font-size:12px;padding:1px 2px;}QPushButton:hover{color:#C53030;text-decoration:underline;}")
-            btn_del.clicked.connect(lambda checked, kid=key_id: self._delete_upstream_key(kid))
-            ops_layout.addWidget(btn_del)
-
-            btn_detail = QPushButton("明细")
-            btn_detail.setCursor(Qt.PointingHandCursor)
-            btn_detail.setMinimumWidth(36)
-            btn_detail.setStyleSheet("QPushButton{background:transparent;border:none;color:#805AD5;font-size:12px;padding:1px 2px;}QPushButton:hover{color:#6B46C1;text-decoration:underline;}")
-            btn_detail.clicked.connect(lambda checked, kid=key_id, lbl=label: self._show_daily_detail("upstream", kid, f"上游Key {lbl or kid}"))
-            ops_layout.addWidget(btn_detail)
-
+            btn_ops.setMenu(ops_menu)
+            ops_layout.addWidget(btn_ops)
             ops_layout.addStretch()
             self._keys_table.setCellWidget(row, 8, ops_widget)
 
@@ -1562,51 +1583,38 @@ class ApiProxyPage(QWidget):
                 sk_cache_tip = "暂无数据"
             _set_item(self._subkeys_table, row, 10, sk_cache_text, tooltip=sk_cache_tip)
 
-            # 操作按钮（紧凑文字按钮）
+            # 操作栏：一个按钮触发下拉菜单
             ops_widget = QWidget()
+            ops_widget.setAttribute(Qt.WA_TranslucentBackground, True)
             ops_layout = QHBoxLayout(ops_widget)
             ops_layout.setContentsMargins(4, 0, 4, 0)
-            ops_layout.setSpacing(6)
+            ops_layout.setSpacing(0)
 
-            btn_edit = QPushButton("编辑")
-            btn_edit.setCursor(Qt.PointingHandCursor)
-            btn_edit.setMinimumWidth(36)
-            btn_edit.setStyleSheet("QPushButton{background:transparent;border:none;color:#805AD5;font-size:12px;padding:1px 2px;}QPushButton:hover{color:#6B46C1;text-decoration:underline;}")
-            sk_id = sk.get("key_id", "")
-            btn_edit.clicked.connect(lambda checked, kid=sk_id: self._edit_sub_key(kid))
-            ops_layout.addWidget(btn_edit)
+            from PySide6.QtWidgets import QToolButton
+            btn_ops = QToolButton()
+            btn_ops.setText("操作 ▾")
+            btn_ops.setCursor(Qt.PointingHandCursor)
+            btn_ops.setToolButtonStyle(Qt.ToolButtonTextOnly)
+            btn_ops.setPopupMode(QToolButton.InstantPopup)
+            btn_ops.setStyleSheet("QToolButton{background:transparent;border:none;color:#3182CE;font-size:12px;padding:2px 6px;}QToolButton:hover{color:#2B6CB0;text-decoration:underline;}")
 
-            btn_copy = QPushButton("复制")
-            btn_copy.setCursor(Qt.PointingHandCursor)
-            btn_copy.setMinimumWidth(36)
-            btn_copy.setStyleSheet("QPushButton{background:transparent;border:none;color:#3182CE;font-size:12px;padding:1px 2px;}QPushButton:hover{color:#2B6CB0;text-decoration:underline;}")
-            btn_copy.clicked.connect(lambda checked, k=api_key: self._copy_sub_key(k))
-            ops_layout.addWidget(btn_copy)
+            from PySide6.QtWidgets import QMenu
+            ops_menu = QMenu(btn_ops)
+            act = ops_menu.addAction("✏️ 编辑")
+            act.triggered.connect(lambda checked, kid=sk_id: self._edit_sub_key(kid))
+            act = ops_menu.addAction("📋 复制")
+            act.triggered.connect(lambda checked, k=api_key: self._copy_sub_key(k))
+            ops_menu.addSeparator()
+            act = ops_menu.addAction("🚫 禁用" if is_active else "✅ 启用")
+            act.triggered.connect(lambda checked, kid=sk_id, active=is_active: self._toggle_sub_key(kid, not active))
+            act = ops_menu.addAction("📊 明细")
+            act.triggered.connect(lambda checked, kid=sk_id, lbl=label: self._show_daily_detail("sub", kid, f"子Key {lbl or kid}"))
+            ops_menu.addSeparator()
+            act = ops_menu.addAction("🗑️ 删除")
+            act.triggered.connect(lambda checked, kid=sk_id: self._delete_sub_key(kid))
 
-            btn_toggle = QPushButton("禁用" if is_active else "启用")
-            btn_toggle.setCursor(Qt.PointingHandCursor)
-            btn_toggle.setMinimumWidth(36)
-            toggle_color = "#D69E2E" if is_active else "#38A169"
-            toggle_hover = "#B7791F" if is_active else "#2F855A"
-            btn_toggle.setStyleSheet(f"QPushButton{{background:transparent;border:none;color:{toggle_color};font-size:12px;padding:1px 2px;}}QPushButton:hover{{color:{toggle_hover};text-decoration:underline;}}")
-            btn_toggle.clicked.connect(
-                lambda checked, kid=sk_id, active=is_active: self._toggle_sub_key(kid, not active))
-            ops_layout.addWidget(btn_toggle)
-
-            btn_del = QPushButton("删除")
-            btn_del.setCursor(Qt.PointingHandCursor)
-            btn_del.setMinimumWidth(36)
-            btn_del.setStyleSheet("QPushButton{background:transparent;border:none;color:#E53E3E;font-size:12px;padding:1px 2px;}QPushButton:hover{color:#C53030;text-decoration:underline;}")
-            btn_del.clicked.connect(lambda checked, kid=sk_id: self._delete_sub_key(kid))
-            ops_layout.addWidget(btn_del)
-
-            btn_detail = QPushButton("明细")
-            btn_detail.setCursor(Qt.PointingHandCursor)
-            btn_detail.setMinimumWidth(36)
-            btn_detail.setStyleSheet("QPushButton{background:transparent;border:none;color:#805AD5;font-size:12px;padding:1px 2px;}QPushButton:hover{color:#6B46C1;text-decoration:underline;}")
-            btn_detail.clicked.connect(lambda checked, kid=sk_id, lbl=label: self._show_daily_detail("sub", kid, f"子Key {lbl or kid}"))
-            ops_layout.addWidget(btn_detail)
-
+            btn_ops.setMenu(ops_menu)
+            ops_layout.addWidget(btn_ops)
             ops_layout.addStretch()
             self._subkeys_table.setCellWidget(row, 11, ops_widget)
 
@@ -1865,8 +1873,10 @@ class ApiProxyPage(QWidget):
                 "supportsToolCall": tool_call,
                 "supportsImages": images,
                 "supportsReasoning": reasoning,
+                "disabledMultimodal": not images,
                 "useCustomProtocol": False,
             }
+            _apply_model_protocol_fields(entry, images)
             ctx = MODEL_CONTEXT_LENGTHS.get(model_id)
             _apply_context_aliases(entry, ctx)
             models.append(entry)
@@ -1919,7 +1929,9 @@ class ApiProxyPage(QWidget):
                 "supportsToolCall": tool_call,
                 "supportsImages": images,
                 "supportsReasoning": reasoning,
+                "disabledMultimodal": not images,
             }
+            _apply_model_protocol_fields(entry, images)
             ctx = MODEL_CONTEXT_LENGTHS.get(model_id)
             _apply_context_aliases(entry, ctx)
             models.append(entry)
@@ -1984,8 +1996,10 @@ class ApiProxyPage(QWidget):
                 "supportsToolCall": tool_call,
                 "supportsImages": images,
                 "supportsReasoning": reasoning,
+                "disabledMultimodal": not images,
                 "useCustomProtocol": False,
             }
+            _apply_model_protocol_fields(entry, images)
             ctx = MODEL_CONTEXT_LENGTHS.get(model_id)
             _apply_context_aliases(entry, ctx)
             models.append(entry)
@@ -2051,7 +2065,9 @@ class ApiProxyPage(QWidget):
                 "supportsToolCall": tool_call,
                 "supportsImages": images,
                 "supportsReasoning": reasoning,
+                "disabledMultimodal": not images,
             }
+            _apply_model_protocol_fields(entry, images)
             ctx = MODEL_CONTEXT_LENGTHS.get(model_id)
             _apply_context_aliases(entry, ctx)
             models.append(entry)
