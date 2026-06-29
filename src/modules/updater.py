@@ -29,6 +29,8 @@ logger = logging.getLogger(__name__)
 # ─── 更新源（双源策略：GitHub 优先，服务器兜底）───
 GITHUB_REPO = "qinchangxv/antigravity-tools"
 GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
+# GitHub token 认证（避免 rate limit，从环境变量读取，不在代码中硬编码）
+GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
 
 # 旧服务器（fallback）
 UPDATE_SERVER = "http://103.36.63.44:9680"
@@ -83,7 +85,7 @@ def _fetch_github_release(timeout: int = 15) -> dict | None:
 
     返回格式与旧服务器 version.json 兼容：
     {
-        "version": "1.5.7",
+        "version": "1.5.8",
         "changelog": "...",
         "download_url": "https://github.com/.../Antigravity-Tools-Windows-x64.zip",
         "sha256": "",
@@ -95,10 +97,12 @@ def _fetch_github_release(timeout: int = 15) -> dict | None:
         req = urllib.request.Request(GITHUB_API_URL)
         req.add_header("User-Agent", "AntigravityTools/1.0")
         req.add_header("Accept", "application/vnd.github+json")
+        if GITHUB_TOKEN:
+            req.add_header("Authorization", f"token {GITHUB_TOKEN}")
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             data = json.loads(resp.read().decode("utf-8"))
 
-        # 从 tag_name 提取版本号 (v1.5.7 → 1.5.7)
+        # 从 tag_name 提取版本号 (v1.5.8 → 1.5.8)
         tag = data.get("tag_name", "")
         version = tag.lstrip("v").strip()
         if not version:
@@ -108,17 +112,22 @@ def _fetch_github_release(timeout: int = 15) -> dict | None:
         # changelog 用 release body
         changelog = data.get("body", "") or f"v{version} 更新"
 
-        # 匹配当前平台的 asset
+        # 匹配当前平台的 asset（优先增量包，其次完整包）
         keyword = _get_platform_asset_keyword()
         download_url = ""
+        src_download_url = ""
         for asset in data.get("assets", []):
             asset_name = asset.get("name", "")
+            asset_url = asset.get("browser_download_url", "")
             if keyword.lower() in asset_name.lower():
-                download_url = asset.get("browser_download_url", "")
-                break
+                if "-src" in asset_name.lower():
+                    # 增量包（只含 src/）
+                    src_download_url = asset_url
+                elif not download_url:
+                    # 完整包
+                    download_url = asset_url
 
         if not download_url:
-            # 没找到对应平台的包，用 release 的 html_url 作为下载页
             download_url = data.get("html_url", "")
             logger.info(f"GitHub Release 无 {keyword} asset，使用 Release 页面 URL")
 
@@ -126,10 +135,11 @@ def _fetch_github_release(timeout: int = 15) -> dict | None:
             "version": version,
             "changelog": changelog,
             "download_url": download_url,
+            "src_download_url": src_download_url,
             "sha256": "",
             "source": "github",
         }
-        logger.info(f"GitHub Release 检测到版本 {version}（源: GitHub）")
+        logger.info(f"GitHub Release 检测到版本 {version}（源: GitHub），增量包={'有' if src_download_url else '无'}")
         return result
 
     except Exception as e:
@@ -158,7 +168,6 @@ def _fetch_version_info(timeout: int = 15) -> dict | None:
     # 1. 先查 GitHub Release
     info = _fetch_github_release(timeout=timeout)
     if info:
-        # GitHub 返回的是扁平结构，需要包装成 platforms 格式供下游处理
         platform_key = _get_platform_key()
         return {
             "version": info["version"],
@@ -167,6 +176,7 @@ def _fetch_version_info(timeout: int = 15) -> dict | None:
                     "version": info["version"],
                     "changelog": info["changelog"],
                     "download_url": info["download_url"],
+                    "src_download_url": info.get("src_download_url", ""),
                     "sha256": info.get("sha256", ""),
                 }
             },
@@ -220,6 +230,108 @@ def _verify_sha256(file_path: Path, expected: str) -> bool:
         for chunk in iter(lambda: f.read(8192), b""):
             sha256.update(chunk)
     return sha256.hexdigest() == expected
+
+
+def _apply_src_only_update(zip_path: Path) -> bool:
+    """增量更新：只替换 src/ 目录
+
+    Windows: 批处理等待进程退出后 robocopy _internal/src/
+    macOS: ditto 直接覆盖 .app/Contents/Resources/src/
+    """
+    import subprocess
+
+    try:
+        # 解压到临时目录
+        with tempfile.TemporaryDirectory(prefix="ag_src_update_") as tmp_dir:
+            tmp = Path(tmp_dir)
+            with zipfile.ZipFile(zip_path, "r") as zf:
+                zf.extractall(tmp)
+
+            # 找到解压后的 src 目录
+            extracted_src = tmp / "src"
+            if not extracted_src.exists():
+                for sub in tmp.iterdir():
+                    if sub.is_dir() and (sub / "src").exists():
+                        extracted_src = sub / "src"
+                        break
+            if not extracted_src.exists():
+                logger.error("增量包中未找到 src/ 目录")
+                return False
+
+            if sys.platform == "darwin":
+                # macOS: 找到 .app 的 src 目录
+                current_exe = Path(sys.executable)
+                app_path = current_exe
+                while app_path.parent.name != "" and not app_path.name.endswith(".app"):
+                    app_path = app_path.parent
+                if not app_path.name.endswith(".app"):
+                    for p in current_exe.parents:
+                        if p.name.endswith(".app"):
+                            app_path = p
+                            break
+
+                src_dir = app_path / "Contents" / "Resources" / "src"
+                if not src_dir.exists():
+                    logger.error(f"macOS src 目录不存在: {src_dir}")
+                    return False
+
+                # ditto 覆盖
+                subprocess.run(["rm", "-rf", str(src_dir)], capture_output=True, timeout=30)
+                result = subprocess.run(
+                    ["ditto", str(extracted_src), str(src_dir)],
+                    capture_output=True, timeout=60
+                )
+                if result.returncode != 0:
+                    logger.error(f"ditto 覆盖 src 失败: {result.stderr.decode(errors='replace')[:200]}")
+                    return False
+
+                logger.info("macOS 增量更新成功")
+                return True
+
+            else:
+                # Windows: 批处理替换 _internal/src/
+                current_exe = Path(sys.executable)
+                src_dir = current_exe.parent / "_internal" / "src"
+                if not src_dir.exists():
+                    logger.error(f"Windows src 目录不存在: {src_dir}")
+                    return False
+
+                bat_path = Path(tempfile.gettempdir()) / "ag_src_updater.bat"
+                bat_content = f"""@echo off
+chcp 65001 >nul 2>&1
+timeout /t 2 /nobreak >nul
+
+:wait_loop
+tasklist /fi "pid eq {os.getpid()}" 2>nul | find "{os.getpid()}" >nul
+if %errorlevel% == 0 goto wait_loop
+
+timeout /t 1 /nobreak >nul
+
+rd /s /q "{src_dir}"
+robocopy "{extracted_src}" "{src_dir}" /E /IS /IT /NFL /NDL /NJH /NJS /nc /ns /np
+
+start "" "{current_exe}"
+
+del "%~f0"
+"""
+                bat_path.write_text(bat_content, encoding="gbk", errors="replace")
+
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = 0
+
+                subprocess.Popen(
+                    ["cmd", "/c", str(bat_path)],
+                    startupinfo=startupinfo,
+                    creationflags=subprocess.CREATE_NO_WINDOW,
+                )
+
+                logger.info("Windows 增量更新批处理已启动")
+                return True
+
+    except Exception as e:
+        logger.error(f"增量更新失败: {e}")
+        return False
 
 
 def _apply_frozen_update(zip_path: Path) -> bool:
@@ -444,6 +556,9 @@ class UpdateChecker(QObject):
     # 信号：检查完成但无更新 (is_manual: bool)
     no_update = Signal(bool)
 
+    # 存储增量包 URL（检测到时保存，下载时用）
+    _src_download_url = ""
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._timer = QTimer(self)
@@ -495,12 +610,14 @@ class UpdateChecker(QObject):
                 changelog = platform_info.get("changelog", "")
                 download_url = platform_info.get("download_url", "")
                 sha256 = platform_info.get("sha256", "")
+                self._src_download_url = platform_info.get("src_download_url", "")
             else:
                 # 兼容旧格式（无 platforms 字段）
                 remote_ver = info.get("version", "0.0.0")
                 changelog = info.get("changelog", "")
                 download_url = info.get("download_url", "")
                 sha256 = info.get("sha256", "")
+                self._src_download_url = info.get("src_download_url", "")
 
             if _compare_versions(remote_ver, current):
                 # 检查是否跳过了此版本
@@ -535,14 +652,29 @@ class UpdateChecker(QObject):
 
         def _do_download():
             try:
-                # 打包模式：下载 zip → 批处理替换 → 重启
+                # 打包模式
                 if getattr(sys, 'frozen', False):
                     tmp_dir = Path(tempfile.gettempdir()) / "antigravity-update"
                     tmp_dir.mkdir(exist_ok=True)
-                    zip_path = tmp_dir / "update.zip"
 
                     def _progress(downloaded, total):
                         self.download_progress.emit(downloaded, total)
+
+                    # 优先尝试增量更新（只下载 src/）
+                    if self._src_download_url:
+                        src_zip = tmp_dir / "update-src.zip"
+                        logger.info(f"尝试增量更新: {self._src_download_url}")
+                        if _download_update(self._src_download_url, src_zip, _progress):
+                            if _apply_src_only_update(src_zip):
+                                self.update_finished.emit(True, "UPDATE_NEED_RESTART")
+                                return
+                            else:
+                                logger.warning("增量更新失败，回退到完整包")
+                        else:
+                            logger.warning("增量包下载失败，回退到完整包")
+
+                    # 完整包更新
+                    zip_path = tmp_dir / "update.zip"
 
                     if not _download_update(download_url, zip_path, _progress):
                         self.update_finished.emit(False, "下载更新包失败")
@@ -553,7 +685,7 @@ class UpdateChecker(QObject):
                         self.update_finished.emit(False, "文件校验失败，可能被篡改")
                         return
 
-                    # 应用更新（批处理替换模式）
+                    # 应用更新（完整包替换）
                     if _apply_frozen_update(zip_path):
                         self.update_finished.emit(True, "UPDATE_NEED_RESTART")
                     else:

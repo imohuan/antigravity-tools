@@ -82,25 +82,6 @@ class SettingsPage(QWidget):
 
         content_layout.addWidget(general_group)
 
-        # === 代理设置（暂时隐藏） ===
-        proxy_group = QGroupBox("🌐 " + t("settings.proxy"))
-        proxy_form = QFormLayout(proxy_group)
-        proxy_form.setSpacing(12)
-        proxy_form.setContentsMargins(20, 24, 20, 20)
-
-        self._proxy_enabled = QCheckBox("启用代理")
-        proxy_form.addRow("", self._proxy_enabled)
-
-        self._proxy_type_combo = QComboBox()
-        self._proxy_type_combo.addItems(["HTTP", "SOCKS5"])
-        proxy_form.addRow(t("settings.proxy_type") + ":", self._proxy_type_combo)
-
-        self._proxy_url_input = QLineEdit()
-        self._proxy_url_input.setPlaceholderText("http://127.0.0.1:7890")
-        proxy_form.addRow(t("settings.proxy_url") + ":", self._proxy_url_input)
-
-        # content_layout.addWidget(proxy_group)  # 暂时隐藏代理设置
-
         # === 刷新设置 ===
         refresh_group = QGroupBox("🔄 配额刷新")
         refresh_form = QFormLayout(refresh_group)
@@ -149,9 +130,6 @@ class SettingsPage(QWidget):
         save_setting("ui_scale", str(self._scale_spin.value()))
         save_setting("close_behavior", "minimize" if self._close_combo.currentIndex() == 0 else "exit")
         save_setting("startup", str(self._startup_check.isChecked()))
-        save_setting("proxy_enabled", str(self._proxy_enabled.isChecked()))
-        save_setting("proxy_type", self._proxy_type_combo.currentText().lower())
-        save_setting("proxy_url", self._proxy_url_input.text())
         save_setting("refresh_interval", str(self._refresh_spin.value()))
 
         # 开机自启动：写入/删除注册表
@@ -221,12 +199,6 @@ class SettingsPage(QWidget):
 
             # 开机自启
             self._startup_check.setChecked(load_setting("startup", "False") == "True")
-
-            # 代理
-            self._proxy_enabled.setChecked(load_setting("proxy_enabled", "False") == "True")
-            proxy_type = load_setting("proxy_type", "http")
-            self._proxy_type_combo.setCurrentIndex(0 if proxy_type == "http" else 1)
-            self._proxy_url_input.setText(load_setting("proxy_url", ""))
 
             # 刷新间隔
             refresh = int(load_setting("refresh_interval", "30"))

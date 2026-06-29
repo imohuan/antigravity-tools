@@ -35,12 +35,16 @@ jobs:
         run: |
           cd "dist"
           Compress-Archive -Path "Antigravity Tools" -DestinationPath "Antigravity-Tools-Windows-x64.zip"
+          # 增量包（只含 src/ 目录）
+          Compress-Archive -Path "Antigravity Tools\_internal\src" -DestinationPath "Antigravity-Tools-Windows-x64-src.zip"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: windows-build
-          path: dist/Antigravity-Tools-Windows-x64.zip
+          path: |
+            dist/Antigravity-Tools-Windows-x64.zip
+            dist/Antigravity-Tools-Windows-x64-src.zip
 
   build-macos-intel:
     runs-on: macos-14
@@ -79,12 +83,17 @@ jobs:
         run: |
           cd dist
           zip -r "Antigravity-Tools-macOS-Intel.zip" "Antigravity Tools.app"
+          # 增量包（只含 src/ 目录）
+          cd "Antigravity Tools.app/Contents/Resources"
+          zip -r "../../../../Antigravity-Tools-macOS-Intel-src.zip" "src"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: macos-intel-build
-          path: dist/Antigravity-Tools-macOS-Intel.zip
+          path: |
+            dist/Antigravity-Tools-macOS-Intel.zip
+            dist/Antigravity-Tools-macOS-Intel-src.zip
 
   build-macos-arm:
     runs-on: macos-14
@@ -109,12 +118,17 @@ jobs:
         run: |
           cd dist
           zip -r "Antigravity-Tools-macOS-ARM.zip" "Antigravity Tools.app"
+          # 增量包（只含 src/ 目录）
+          cd "Antigravity Tools.app/Contents/Resources"
+          zip -r "../../../../Antigravity-Tools-macOS-ARM-src.zip" "src"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: macos-arm-build
-          path: dist/Antigravity-Tools-macOS-ARM.zip
+          path: |
+            dist/Antigravity-Tools-macOS-ARM.zip
+            dist/Antigravity-Tools-macOS-ARM-src.zip
 
   release:
     needs: [build-windows, build-macos-intel, build-macos-arm]
@@ -170,7 +184,10 @@ jobs:
             ${{ steps.version.outputs.version }}
           files: |
             artifacts/windows-build/Antigravity-Tools-Windows-x64.zip
+            artifacts/windows-build/Antigravity-Tools-Windows-x64-src.zip
             artifacts/macos-intel-build/Antigravity-Tools-macOS-Intel.zip
+            artifacts/macos-intel-build/Antigravity-Tools-macOS-Intel-src.zip
             artifacts/macos-arm-build/Antigravity-Tools-macOS-ARM.zip
+            artifacts/macos-arm-build/Antigravity-Tools-macOS-ARM-src.zip
           draft: false
           prerelease: false

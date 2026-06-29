@@ -14,7 +14,7 @@ from PySide6.QtCore import Qt, Signal, Slot
 from PySide6.QtGui import QAction, QCursor
 
 from ...i18n import t
-from ...models import Account, Platform, AccountStatus, PlanType, ResourcePackage
+from ...models import Account, Platform, AccountStatus, ResourcePackage
 from ...utils.store import load_accounts, save_account, delete_account
 from ...modules.oauth import WorkBuddyAuth
 from ...modules.api_client import ApiClient
@@ -672,28 +672,28 @@ class CreditsDetailDialog(QDialog):
             type_text = type_map.get(pkg.package_type, pkg.package_type)
             self._pkg_table.setItem(row, 1, QTableWidgetItem(type_text))
 
-            # 剩余
-            remain_item = QTableWidgetItem(f"{pkg.capacity_remain:.1f}")
-            if pkg.capacity_remain <= 0:
+            # 剩余（用 cycle_remain 周期剩余，capacity_remain 对基础包不更新）
+            remain_item = QTableWidgetItem(f"{pkg.cycle_remain:.1f}")
+            if pkg.cycle_remain <= 0:
                 remain_item.setForeground(Qt.red)
             self._pkg_table.setItem(row, 2, remain_item)
 
             # 总量
-            self._pkg_table.setItem(row, 3, QTableWidgetItem(f"{pkg.capacity_size:.1f}"))
+            self._pkg_table.setItem(row, 3, QTableWidgetItem(f"{pkg.cycle_size:.1f}"))
 
             # 过期时间
             expire_text = self._format_expire(pkg.cycle_end)
             expire_item = QTableWidgetItem(expire_text)
             self._pkg_table.setItem(row, 4, expire_item)
 
-            # 统计
-            total_remain += pkg.capacity_remain
+            # 统计（用 cycle_remain 统计）
+            total_remain += pkg.cycle_remain
             if pkg.package_type in ("1", "4"):
-                base_remain += pkg.capacity_remain
+                base_remain += pkg.cycle_remain
             elif pkg.package_type == "2":
-                activity_remain += pkg.capacity_remain
+                activity_remain += pkg.cycle_remain
             else:
-                activity_remain += pkg.capacity_remain
+                activity_remain += pkg.cycle_remain
 
         # 如果没有积分包数据但有总量信息
         if not packages and (self._account.quota.credits_total > 0 or self._account.quota.credits_remaining > 0):

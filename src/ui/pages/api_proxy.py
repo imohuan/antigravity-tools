@@ -493,6 +493,24 @@ class ApiProxyPage(QWidget):
         self._listen_mode_combo.currentIndexChanged.connect(self._on_listen_mode_changed)
         config_row.addWidget(self._listen_mode_combo)
 
+        config_row.addWidget(QLabel("  "))
+        config_row.addWidget(QLabel("最低积分:"))
+        self._min_credits_spin = QSpinBox()
+        self._min_credits_spin.setRange(0, 100000)
+        self._min_credits_spin.setValue(int(load_setting("min_credits_threshold", "0")))
+        self._min_credits_spin.setSuffix(" 分")
+        self._min_credits_spin.setToolTip("低于此积分自动禁用 Key（0=不限制）")
+        config_row.addWidget(self._min_credits_spin)
+
+        config_row.addWidget(QLabel("  "))
+        config_row.addWidget(QLabel("自动启用:"))
+        self._auto_enable_spin = QSpinBox()
+        self._auto_enable_spin.setRange(0, 100000)
+        self._auto_enable_spin.setValue(int(load_setting("auto_enable_threshold", "100")))
+        self._auto_enable_spin.setSuffix(" 分")
+        self._auto_enable_spin.setToolTip("查分高于此值自动恢复禁用的 Key")
+        config_row.addWidget(self._auto_enable_spin)
+
         config_row.addStretch()
 
         self._status_label = QLabel("⏹ 已停止")
@@ -810,6 +828,17 @@ class ApiProxyPage(QWidget):
                 # 否则页面自己的 _db 实例看不到服务端写入的日志
                 self._db = self._proxy_server.db
                 save_setting("proxy_port", str(port))
+                # 保存积分阈值设置，并同步到所有上游 Key
+                min_val = self._min_credits_spin.value()
+                auto_val = self._auto_enable_spin.value()
+                save_setting("min_credits_threshold", str(min_val))
+                save_setting("auto_enable_threshold", str(auto_val))
+                # 同步阈值到所有上游 Key
+                for k in self._db.get_upstream_keys():
+                    self._db.update_upstream_key(k["key_id"], {
+                        "min_credits_threshold": float(min_val),
+                        "auto_enable_threshold": float(auto_val),
+                    })
                 self._status_label.setText(f"▶ 运行中 :{port}")
                 self._status_label.setStyleSheet("font-weight: 600; color: #38A169;")
                 self._toggle_btn.setText("⏹ 停止服务")
@@ -1002,7 +1031,7 @@ class ApiProxyPage(QWidget):
             status_map = {
                 "active": "✅ 活跃", "exhausted": "❌ 已耗尽",
                 "disabled": "🚫 已禁用", "rate_limited": "⚠️ 限流中", "cooldown": "🧊 冷却中",
-                "abnormal": "⚠️ 异常",
+                "abnormal": "⚠️ 异常", "permanent_disabled": "⛔ 永久禁用",
             }
             status_text = status_map.get(status, status)
             status_item = _set_item(self._keys_table, row, 2, status_text, tooltip=f"状态: {status}")
@@ -1100,6 +1129,9 @@ class ApiProxyPage(QWidget):
             else:
                 act = ops_menu.addAction("🚫 禁用")
                 act.triggered.connect(lambda checked, kid=key_id: self._disable_key(kid))
+            if status != "permanent_disabled":
+                act = ops_menu.addAction("⛔ 永久禁用")
+                act.triggered.connect(lambda checked, kid=key_id: self._permanent_disable_key(kid))
             ops_menu.addSeparator()
             act = ops_menu.addAction("📊 明细")
             act.triggered.connect(lambda checked, kid=key_id, lbl=label: self._show_daily_detail("upstream", kid, f"上游Key {lbl or kid}"))
@@ -1383,14 +1415,26 @@ class ApiProxyPage(QWidget):
             )
 
     def _reset_key(self, key_id: str):
-        """恢复 Key"""
+        """恢复 Key（手动恢复，可恢复 permanent_disabled / abnormal / disabled 等）"""
         self._db.update_upstream_key(key_id, {"status": "active"})
         self._refresh_upstream_keys()
 
     def _disable_key(self, key_id: str):
-        """禁用 Key"""
+        """禁用 Key（临时禁用，查分>100会自动恢复）"""
         self._db.update_upstream_key(key_id, {"status": "disabled"})
         self._refresh_upstream_keys()
+
+    def _permanent_disable_key(self, key_id: str):
+        """永久禁用 Key（不会自动恢复，需手动恢复）"""
+        reply = QMessageBox.question(
+            self, "永久禁用",
+            f"确定永久禁用 Key {key_id}？\n\n永久禁用后不会被查分等操作自动恢复，\n只能手动点击「恢复」来重新启用。",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            self._db.update_upstream_key(key_id, {"status": "permanent_disabled"})
+            self._refresh_upstream_keys()
 
     def _delete_upstream_key(self, key_id: str):
         """删除上游 Key"""
@@ -2235,7 +2279,7 @@ class ApiProxyPage(QWidget):
         # 启动日志自动刷新（每2秒）
         self._log_timer.start(2000)
         # 启动表格定时刷新（每10秒，实时积分更新）
-        self._table_timer.start(10000)
+        self._table_timer.start(5000)  # 每5秒刷新
 
     def hideEvent(self, event):
         """页面隐藏时停止刷新"""

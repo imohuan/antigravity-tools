@@ -246,7 +246,7 @@ class UpstreamKey:
     key_id: str = ""
     api_key: str = ""        # 上游真实 API Key (sk-xxx 或 ck_xxx)
     label: str = ""          # 备注标签（如手机号）
-    status: str = "active"   # active / exhausted / disabled / rate_limited / cooldown / abnormal
+    status: str = "active"   # active / exhausted / disabled / rate_limited / cooldown / abnormal / permanent_disabled
     used_count: int = 0      # 累计调用次数
     points: str = ""         # 积分余额
     points_updated_at: str = ""
@@ -265,6 +265,9 @@ class UpstreamKey:
     cooldown_count: int = 0
     # 上次健康检测时间戳（优化项 #17）
     last_health_check: float = 0.0
+    # 自定义阈值
+    min_credits_threshold: float = 0.0    # 最低积分阈值，低于此值自动禁用（0=不限制）
+    auto_enable_threshold: float = 100.0  # 自动启用阈值，查分高于此值自动恢复 active
 
 
 @dataclass
@@ -507,23 +510,27 @@ class ProxyDatabase:
                                     pass
                         k["packages"] = pkg_summaries
 
-                    # 积分为 0 → 立即禁用（但不覆盖 abnormal 状态）
+                    # 读取该 Key 的自定义阈值
+                    min_threshold = float(k.get("min_credits_threshold", 0) or 0)
+                    auto_enable = float(k.get("auto_enable_threshold", 100) or 100)
+
+                    # 积分低于阈值 → 禁用（但不覆盖 abnormal 和 permanent_disabled 状态）
                     # ⚠️ 防御：如果 remaining=0 且 total=0，说明查分失败返回了空数据，
                     # 不能当成"积分用完"处理，否则会把正常 Key 全部误禁用
-                    if remaining_credits <= 0 and total_credits > 0:
-                        if old_status in ("active", "cooldown", "rate_limited", "exhausted"):
-                            k["status"] = "disabled"
-                            self._key_status_version += 1  # 通知 ProxyRouter 刷新缓存
-                            logger.info(f"[积分同步] Key {k.get('label', k.get('key_id',''))} 积分为0，{old_status} -> DISABLED")
-                    elif remaining_credits <= 0 and total_credits <= 0:
+                    if remaining_credits <= 0 and total_credits <= 0:
                         logger.warning(f"[积分同步] Key {k.get('label', k.get('key_id',''))} "
                                       f"查分返回 remaining=0 total=0，疑似查分失败，跳过禁用（保持 {old_status}）")
-                    # 积分 > 100 → 恢复 active（但不恢复 abnormal，风控需要手动解除）
-                    elif remaining_credits > 100:
+                    elif remaining_credits <= min_threshold and total_credits > 0:
+                        if old_status in ("active", "cooldown", "rate_limited", "exhausted"):
+                            k["status"] = "disabled"
+                            self._key_status_version += 1
+                            logger.info(f"[积分同步] Key {k.get('label', k.get('key_id',''))} 积分{remaining_credits:.0f}<={min_threshold:.0f}，{old_status} -> DISABLED")
+                    # 积分高于自动启用阈值 → 恢复 active（但不恢复 abnormal 和 permanent_disabled）
+                    elif remaining_credits > auto_enable:
                         if old_status in ("disabled", "exhausted", "cooldown", "rate_limited"):
                             k["status"] = "active"
-                            self._key_status_version += 1  # 通知 ProxyRouter 刷新缓存
-                            logger.info(f"[积分同步] Key {k.get('label', k.get('key_id',''))} 积分{remaining_credits:.0f}>100，{old_status} -> ACTIVE")
+                            self._key_status_version += 1
+                            logger.info(f"[积分同步] Key {k.get('label', k.get('key_id',''))} 积分{remaining_credits:.0f}>{auto_enable:.0f}，{old_status} -> ACTIVE")
                     # 0 < 积分 <= 100：保持当前状态
                     break
             if not matched:
@@ -603,6 +610,38 @@ class ProxyDatabase:
                         k["total_cached_tokens"] = k.get("total_cached_tokens", 0) + cached_tokens
                     if credits:
                         k["total_credits"] = round(k.get("total_credits", 0.0) + credits, 4)
+                    # 临期积分递减：从最快过期的积分组扣除已消耗的积分
+                    if credits and credits > 0:
+                        pkgs = k.get("packages", [])
+                        if pkgs:
+                            remaining_to_deduct = credits
+                            def _pkg_end_ts(p):
+                                ce = str(p.get("cycle_end", ""))
+                                try:
+                                    from datetime import datetime as _dt
+                                    if "T" in ce:
+                                        return _dt.fromisoformat(ce.replace("Z", "+00:00")).timestamp()
+                                    return _dt.strptime(ce, "%Y-%m-%d %H:%M:%S").timestamp()
+                                except:
+                                    return float('inf')
+                            pkgs_sorted = sorted([p for p in pkgs if isinstance(p, dict) and float(p.get("cycle_remain", 0)) > 0],
+                                                  key=_pkg_end_ts)
+                            for p in pkgs_sorted:
+                                if remaining_to_deduct <= 0:
+                                    break
+                                cur_remain = float(p.get("cycle_remain", 0))
+                                if cur_remain <= 0:
+                                    continue
+                                deduct = min(cur_remain, remaining_to_deduct)
+                                p["cycle_remain"] = round(cur_remain - deduct, 4)
+                                remaining_to_deduct -= deduct
+                                logger.debug(f"[临期递减] Key {k.get('label','')} 积分组 {p.get('package_name','')[:20]} 扣除 {deduct:.4f}, 剩余 {p['cycle_remain']:.4f}")
+                            # 同步更新 points 字段（UI 显示用）
+                            total_remain = sum(float(p.get("cycle_remain", 0)) for p in pkgs if isinstance(p, dict))
+                            total_size = sum(float(p.get("cycle_size", 0)) for p in pkgs if isinstance(p, dict))
+                            if total_size > 0:
+                                k["points"] = f"{total_remain:.0f}/{total_size:.0f}"
+                                k["points_updated_at"] = datetime.now().isoformat()
                     break
             # 更新每日统计
             self._update_daily_stats("upstream", key_id, prompt_tokens, completion_tokens, total_tokens, cached_tokens, credits)
@@ -1235,6 +1274,24 @@ class ProxyRouter:
         self._sub_keys_cache_time = 0
         logger.warning(f"Key {key_id} 标记为 abnormal（被上游风控，不自动恢复）")
 
+    def mark_key_permanent_disabled(self, key_id: str):
+        """标记 Key 为永久禁用（手动操作，不会被查分等自动恢复）
+
+        与 disabled（积分为0自动禁用，查分>100自动恢复）不同，
+        permanent_disabled 只能通过 mark_key_active() 手动恢复。
+        """
+        self._db.update_upstream_key(key_id, {"status": "permanent_disabled"})
+        self._upstream_keys_cache_time = 0
+        self._sub_keys_cache_time = 0
+        logger.warning(f"Key {key_id} 标记为 permanent_disabled（永久禁用，需手动恢复）")
+
+    def mark_key_active(self, key_id: str):
+        """手动恢复 Key 为 active（用于恢复 permanent_disabled / abnormal 状态）"""
+        self._db.update_upstream_key(key_id, {"status": "active"})
+        self._upstream_keys_cache_time = 0
+        self._sub_keys_cache_time = 0
+        logger.info(f"Key {key_id} 手动恢复为 active")
+
     def mark_key_cooldown(self, key_id: str):
         """标记 Key 为临时冷却（429 临时限流，10秒后自动恢复）
 
@@ -1493,7 +1550,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             self._send_json(200, {
                 "object": "api.index",
                 "message": "Antigravity Proxy is running",
-                "version": "1.5.7",
+                "version": "1.5.8",
             })
             return
 
