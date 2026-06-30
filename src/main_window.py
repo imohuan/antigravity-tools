@@ -73,28 +73,6 @@ class MainWindow(QMainWindow):
         """发现新版本 — 弹窗提示"""
         current = get_current_version()
 
-        if getattr(sys, 'frozen', False):
-            # 打包模式：提示去下载，不支持自动覆盖更新
-            msg = QMessageBox(self)
-            msg.setWindowTitle("发现新版本")
-            msg.setIcon(QMessageBox.Icon.Information)
-            msg.setText(f"发现新版本 v{version}！（当前 v{current}）")
-            dl_text = ""
-            if download_url:
-                dl_text = f"\n\n📥 下载地址：{download_url}"
-            msg.setInformativeText(
-                f"更新内容：\n{changelog}"
-                f"{dl_text}"
-            )
-            # 添加"打开下载页"按钮
-            open_btn = msg.addButton("打开下载页", QMessageBox.ButtonRole.AcceptRole)
-            msg.addButton(QMessageBox.StandardButton.Close)
-            result = msg.exec()
-            if msg.clickedButton() == open_btn and download_url:
-                import webbrowser
-                webbrowser.open(download_url)
-            return
-
         msg = QMessageBox(self)
         msg.setWindowTitle("发现新版本")
         msg.setIcon(QMessageBox.Icon.Information)
