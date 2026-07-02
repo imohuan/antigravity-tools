@@ -9,12 +9,14 @@
             "version": "1.6.1",
             "changelog": "Antigravity Tools v1.6.1 更新公告\n\n【重点更新】\n1. 修复图片识别功能：WorkBuddy 发图片读不了图的问题\n2. 历史图片智能替换：多轮对话不再因历史图片导致上下文爆炸\n\n【功能改进】\n3. 请求头/请求体白名单制，防止未知字段导致上游400\n4. CORS 预检放宽，兼容 WorkBuddy 客户端\n5. glm-5.1/5.2 图片输入支持\n6. 移除旧的图片拦截逻辑，图片默认透传由上游判断\n\n【Bug修复】\n7. 上游400错误处理优化（空body换Key重试、input length too long压缩重试）\n8. 查分接口新格式兼容\n9. 积分实时扣除\n10. 浅色模式深色背景修复\n11. 11133错误诊断增强\n\n下载地址打不开的话去群里下载 1025605799",
             "download_url": "https://github.com/qinchangxv/antigravity-tools/releases/download/v1.6.1/Antigravity-Tools-Windows-x64.zip",
+            "src_download_url": "http://103.36.63.44:9680/Antigravity-Tools-v1.6.1-src.zip",
             "sha256": ""
         },
         "mac": {
             "version": "1.6.1",
             "changelog": "Antigravity Tools v1.6.1 更新公告\n\n【重点更新】\n1. 修复图片识别功能：WorkBuddy 发图片读不了图的问题\n2. 历史图片智能替换：多轮对话不再因历史图片导致上下文爆炸\n\n【功能改进】\n3. 请求头/请求体白名单制，防止未知字段导致上游400\n4. CORS 预检放宽，兼容 WorkBuddy 客户端\n5. glm-5.1/5.2 图片输入支持\n6. 移除旧的图片拦截逻辑，图片默认透传由上游判断\n\n【Bug修复】\n7. 上游400错误处理优化（空body换Key重试、input length too long压缩重试）\n8. 查分接口新格式兼容\n9. 积分实时扣除\n10. 浅色模式深色背景修复\n11. 11133错误诊断增强\n\n下载地址打不开的话去群里下载 1025605799",
             "download_url": "https://github.com/qinchangxv/antigravity-tools/releases/tag/v1.6.1",
+            "src_download_url": "http://103.36.63.44:9680/Antigravity-Tools-v1.6.1-src.zip",
             "sha256": ""
         }
     }

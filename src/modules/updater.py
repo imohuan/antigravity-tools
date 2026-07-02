@@ -119,13 +119,13 @@ def _fetch_github_release(timeout: int = 15) -> dict | None:
         for asset in data.get("assets", []):
             asset_name = asset.get("name", "")
             asset_url = asset.get("browser_download_url", "")
-            if keyword.lower() in asset_name.lower():
-                if "-src" in asset_name.lower():
-                    # 增量包（只含 src/）
-                    src_download_url = asset_url
-                elif not download_url:
-                    # 完整包
-                    download_url = asset_url
+            asset_lower = asset_name.lower()
+            if "-src" in asset_lower or ".src." in asset_lower:
+                # 增量包（只含 src/）— [v1.6.1-fix] 增量包不限平台，所有平台通用
+                src_download_url = asset_url
+            elif keyword.lower() in asset_lower and not download_url:
+                # 完整包（需要匹配平台）
+                download_url = asset_url
 
         if not download_url:
             download_url = data.get("html_url", "")
