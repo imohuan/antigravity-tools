@@ -305,48 +305,56 @@ def _apply_src_only_update(zip_path: Path) -> bool:
             return True
 
         else:
-            # Windows: 批处理替换 _internal/src/
+            # Windows: PowerShell 替换 _internal/src/
+            # [v1.6.1-fix] 改用 PowerShell 替代 bat，避免中文路径 GBK/UTF-8 编码乱码
             current_exe = Path(sys.executable)
             src_dir = current_exe.parent / "_internal" / "src"
             if not src_dir.exists():
                 logger.error(f"Windows src 目录不存在: {src_dir}")
                 return False
 
-            bat_path = Path(tempfile.gettempdir()) / "ag_src_updater.bat"
-            # [v1.6.1-fix] 批处理用 stable_copy 做源，完成后清理两个临时目录
-            bat_content = f"""@echo off
-chcp 65001 >nul 2>&1
-timeout /t 2 /nobreak >nul
+            ps_path = Path(tempfile.gettempdir()) / "ag_src_updater.ps1"
+            ps_content = f"""Start-Sleep -Seconds 2
 
-:wait_loop
-tasklist /fi "pid eq {os.getpid()}" 2>nul | find "{os.getpid()}" >nul
-if %errorlevel% == 0 goto wait_loop
+while (Get-Process -Id {os.getpid()} -ErrorAction SilentlyContinue) {{
+    Start-Sleep -Milliseconds 500
+}}
 
-timeout /t 1 /nobreak >nul
+$ErrorActionPreference = "Stop"
 
-rd /s /q "{src_dir}"
-robocopy "{stable_copy}" "{src_dir}" /E /IS /IT /NFL /NDL /NJH /NJS /nc /ns /np
+Remove-Item -LiteralPath '{src_dir}' -Recurse -Force -ErrorAction SilentlyContinue
+Copy-Item -LiteralPath '{stable_copy}' -Destination '{src_dir}' -Recurse -Force
 
-rd /s /q "{tmp_dir}"
-rd /s /q "{stable_copy}"
+if (-not (Test-Path -LiteralPath '{src_dir}\\VERSION')) {{
+    "VERSION missing after copy" | Out-File -LiteralPath '$TEMP\\ag_update_error.log' -Encoding utf8
+    exit 12
+}}
 
-start "" "{current_exe}"
+Remove-Item -LiteralPath '{tmp_dir}' -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath '{stable_copy}' -Recurse -Force -ErrorAction SilentlyContinue
 
-del "%~f0"
+Start-Process -FilePath '{current_exe}'
+
+Remove-Item -LiteralPath '{ps_path}' -Force -ErrorAction SilentlyContinue
 """
-            bat_path.write_text(bat_content, encoding="gbk", errors="replace")
+            ps_path.write_text(ps_content, encoding="utf-8-sig")
 
             startupinfo = subprocess.STARTUPINFO()
             startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
             startupinfo.wShowWindow = 0
 
             subprocess.Popen(
-                ["cmd", "/c", str(bat_path)],
+                [
+                    "powershell",
+                    "-NoProfile",
+                    "-ExecutionPolicy", "Bypass",
+                    "-File", str(ps_path),
+                ],
                 startupinfo=startupinfo,
                 creationflags=subprocess.CREATE_NO_WINDOW,
             )
 
-            logger.info("Windows 增量更新批处理已启动")
+            logger.info("Windows 增量更新 PowerShell 已启动")
             return True
 
     except Exception as e:
