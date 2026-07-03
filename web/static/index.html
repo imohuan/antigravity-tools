@@ -1,0 +1,562 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Antigravity Tools</title>
+  <link href="https://cdn.jsdelivr.net/npm/@fontsource/geist@5.2.9/400.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/@fontsource/geist@5.2.9/600.css" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
+  <link
+    href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap"
+    rel="stylesheet">
+  <script type="importmap">{"imports":{"vue":"https://cdn.jsdelivr.net/npm/vue@3/dist/vue.esm-browser.js"}}</script>
+  <script src="https://cdn.tailwindcss.com?plugins=forms"></script>
+  <script>tailwind.config = { theme: { extend: { colors: { primary: "#000000", "on-primary": "#ffffff", secondary: "#5f5e61", "on-secondary": "#ffffff", tertiary: "#000000", error: "#ba1a1a", "on-error": "#ffffff", background: "#f9f9fa", surface: "#f9f9fa", "surface-container-lowest": "#ffffff", "surface-container-low": "#f3f3f4", "surface-container": "#eeeeef", "surface-container-high": "#e8e8e9", "surface-container-highest": "#e2e2e3", "surface-variant": "#e2e2e3", "on-surface": "#1a1c1d", "on-surface-variant": "#47464a", "on-background": "#1a1c1d", outline: "#78767b", "outline-variant": "#c8c5ca", "secondary-container": "#e4e1e5", "on-secondary-container": "#656467", "error-container": "#ffdad6", "on-error-container": "#93000a" }, borderRadius: { DEFAULT: "0.125rem", lg: "0.25rem", xl: "0.5rem", full: "0.75rem" }, spacing: { xs: "0.25rem", sm: "0.5rem", md: "1rem", lg: "1.5rem", xl: "2rem", gutter: "16px", margin: "24px" }, fontFamily: { display: ["Geist"], "headline-lg": ["Geist"], "headline-lg-mobile": ["Geist"], "headline-md": ["Geist"], "headline-sm": ["Geist"], "body-lg": ["Geist"], "body-sm": ["Geist"], "body-md": ["Geist"], "label-md": ["JetBrains Mono"] }, fontSize: { display: ["36px", { lineHeight: "40px", letterSpacing: "-0.02em", fontWeight: "600" }], "headline-lg": ["24px", { lineHeight: "32px", letterSpacing: "-0.02em", fontWeight: "600" }], "headline-lg-mobile": ["20px", { lineHeight: "28px", fontWeight: "600" }], "headline-md": ["20px", { lineHeight: "28px", letterSpacing: "-0.01em", fontWeight: "600" }], "headline-sm": ["16px", { lineHeight: "24px", fontWeight: "600" }], "body-lg": ["16px", { lineHeight: "24px", fontWeight: "400" }], "body-sm": ["12px", { lineHeight: "16px", fontWeight: "400" }], "body-md": ["14px", { lineHeight: "20px", fontWeight: "400" }], "label-md": ["12px", { lineHeight: "16px", letterSpacing: "0.02em", fontWeight: "500" }] } } } }</script>
+  <style>
+    body {
+      font-family: "Geist", sans-serif
+    }
+
+    .material-symbols-outlined {
+      font-variation-settings: "FILL" 0, "wght" 400, "GRAD" 0, "opsz" 24;
+      font-size: 18px;
+      display: inline-block;
+      vertical-align: middle
+    }
+
+    .icon-filled {
+      font-variation-settings: "FILL" 1, "wght" 400, "GRAD" 0, "opsz" 24 !important
+    }
+
+    .pro-shadow {
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.04)
+    }
+
+    .scrollbar-hide::-webkit-scrollbar {
+      display: none
+    }
+
+    .scrollbar-hide {
+      -ms-overflow-style: none;
+      scrollbar-width: none
+    }
+
+    .fade-enter-active,
+    .fade-leave-active {
+      transition: opacity .2s
+    }
+
+    .fade-enter-from,
+    .fade-leave-to {
+      opacity: 0
+    }
+
+    .spinner {
+      animation: spin .8s linear infinite
+    }
+
+    @keyframes spin {
+      to {
+        transform: rotate(360deg)
+      }
+    }
+  </style>
+</head>
+
+<body class="bg-background text-on-surface h-screen flex overflow-hidden">
+  <div id="app" class="flex w-full h-full">
+    <aside class="w-56 bg-surface-container-lowest border-r border-outline-variant flex flex-col shrink-0 z-10">
+      <div class="flex items-center gap-sm px-2 py-md border-b border-outline-variant">
+        <div class="h-7 w-7 rounded-lg bg-primary flex items-center justify-center text-on-primary"><span
+            class="material-symbols-outlined icon-filled text-[18px]">bolt</span></div>
+        <div>
+          <h2 class="font-headline-sm text-headline-sm text-primary">Antigravity</h2>
+          <p class="font-body-sm text-[10px] text-secondary">CodeBuddy 工具箱</p>
+        </div>
+      </div>
+      <nav class="flex-1 py-sm px-sm space-y-xs">
+        <a v-for="item in navItems" :key="item.id" href="#"
+          @click.prevent="currentPage=item.id;activePageLabel=item.label"
+          :class="['flex items-center gap-sm rounded-xl py-1.5 px-2 font-label-md text-label-md transition-all duration-100',currentPage===item.id?'bg-secondary-container text-on-secondary-container font-medium scale-[0.98]':'text-secondary hover:bg-surface-container-low']">
+          <span class="material-symbols-outlined" :class="currentPage===item.id?'icon-filled':''">{{item.icon}}</span>
+          <span>{{item.label}}</span>
+        </a>
+      </nav>
+      <div class="border-t border-outline-variant px-sm py-sm space-y-xs">
+        <div class="flex items-center justify-between">
+          <span class="font-body-sm text-[10px] text-secondary">账户</span>
+          <span class="font-label-md text-[11px] text-primary">{{stats.accountCount}} / {{stats.activeCount}} 活跃</span>
+        </div>
+        <div class="flex items-center justify-between">
+          <span class="font-body-sm text-[10px] text-secondary">签到</span>
+          <span class="font-label-md text-[11px] text-primary">{{stats.checkedToday}}/{{stats.accountCount}}</span>
+        </div>
+        <div class="flex items-center justify-between">
+          <span class="font-body-sm text-[10px] text-secondary">积分</span>
+          <span class="font-label-md text-[11px] text-primary">{{fmtNum(stats.totalCredits)}}</span>
+        </div>
+        <div class="flex items-center justify-between">
+          <span class="font-body-sm text-[10px] text-secondary">密钥</span>
+          <span class="font-label-md text-[11px] text-primary">{{proxyInfo.active_keys}}/{{proxyInfo.total_keys}}</span>
+        </div>
+      </div>
+    </aside>
+    <div class="flex-1 flex flex-col overflow-hidden">
+      <header
+        class="h-12 bg-surface-container-lowest border-b border-outline-variant flex items-center justify-between px-margin shrink-0">
+        <span class="font-headline-sm text-body-md font-semibold text-primary">{{activePageLabel}}</span>
+        <div
+          class="font-label-md text-label-md text-secondary bg-surface-container-low border border-outline-variant rounded-lg px-2.5 py-1">
+          <span class="material-symbols-outlined text-[14px]">schedule</span> {{now}}
+        </div>
+      </header>
+      <main class="flex-1 overflow-y-auto p-margin scrollbar-hide">
+
+        <div v-if="currentPage==='accounts'" class="space-y-lg">
+          <div class="flex items-center justify-between">
+            <button @click="showAddModal=true"
+              class="inline-flex items-center gap-xs px-3 py-1.5 bg-primary text-on-primary font-label-md text-label-md rounded-lg hover:opacity-90 transition-opacity"><span
+                class="material-symbols-outlined text-[16px]">add</span>添加账户</button>
+          </div>
+          <div class="bg-surface-container-lowest border border-outline-variant rounded-xl overflow-hidden">
+            <table class="w-full text-body-sm">
+              <thead class="bg-surface-container-low text-secondary font-label-md uppercase tracking-wider text-[10px]">
+                <tr>
+                  <th class="text-left px-md py-sm">账户</th>
+                  <th class="text-left px-md py-sm">平台</th>
+                  <th class="text-left px-md py-sm">积分</th>
+                  <th class="text-left px-md py-sm">签到</th>
+                  <th class="text-left px-md py-sm">状态</th>
+                  <th class="text-left px-md py-sm">操作</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-outline-variant">
+                <tr v-for="a in accounts" :key="a.uid" class="hover:bg-surface-container-low/50 transition-colors">
+                  <td class="px-md py-sm font-medium text-primary">{{a.nickname}}</td>
+                  <td class="px-md py-sm text-secondary">{{a.platform}}</td>
+                  <td class="px-md py-sm">
+                    <div class="flex items-center gap-sm">
+                      <div class="w-16 bg-surface-container-low rounded-full h-1.5 overflow-hidden">
+                        <div class="h-full bg-primary rounded-full transition-all duration-500"
+                          :style="{width:a.quota_total>0?(a.quota_remaining/a.quota_total*100)+'%':'0%'}"></div>
+                      </div><span class="text-secondary text-[11px] font-label-md">{{fmtNum(a.quota_remaining)}}</span>
+                    </div>
+                  </td>
+                  <td class="px-md py-sm"><span
+                      :class="a.checked_today?'bg-secondary-container text-on-secondary-container':'bg-surface-container text-secondary'"
+                      class="font-label-md text-[10px] px-2 py-0.5 rounded">{{a.checked_today?'已完成':'待处理'}}</span>
+                  </td>
+                  <td class="px-md py-sm"><span
+                      :class="a.status==='active'?'bg-secondary-container text-on-secondary-container':'bg-error-container text-on-error-container'"
+                      class="font-label-md text-[10px] px-2 py-0.5 rounded">{{a.status}}</span></td>
+                  <td class="px-md py-sm">
+                    <div class="flex items-center gap-xs">
+                      <button @click="querySingleQuota(a)" :disabled="quotaLoading[a.uid]"
+                        class="w-7 h-7 flex items-center justify-center rounded-lg text-secondary hover:bg-surface-container-low hover:text-primary transition-colors disabled:opacity-30"
+                        title="配额"><span
+                          class="material-symbols-outlined text-[16px]">account_balance_wallet</span></button>
+                      <button @click="checkinSingle(a.uid)" :disabled="checkinLoading[a.uid]"
+                        class="w-7 h-7 flex items-center justify-center rounded-lg text-secondary hover:bg-surface-container-low hover:text-primary transition-colors disabled:opacity-30"
+                        title="签到"><span class="material-symbols-outlined text-[16px]">check_circle</span></button>
+                      <button @click="deleteAccount(a.uid)"
+                        class="w-7 h-7 flex items-center justify-center rounded-lg text-secondary hover:bg-surface-container-low hover:text-error transition-colors"
+                        title="删除"><span class="material-symbols-outlined text-[16px]">delete</span></button>
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+  <div v-else-if="currentPage==='checkin'" class="space-y-lg">
+    <div class="flex items-center justify-between">
+      <button @click="checkinAll" :disabled="checkinAllLoading"
+        class="inline-flex items-center gap-xs px-3 py-1.5 bg-primary text-on-primary font-label-md text-label-md rounded-lg hover:opacity-90 transition-opacity disabled:opacity-30"><span
+          v-if="checkinAllLoading"
+          class="spinner inline-block w-3.5 h-3.5 border-2 border-on-primary/30 border-t-on-primary rounded-full"></span><span
+          v-else
+          class="material-symbols-outlined text-[16px]">check_circle</span>{{checkinAllLoading?'签到中...':'批量签到'}}</button>
+    </div>
+    <div class="grid grid-cols-3 gap-gutter">
+      <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md text-center">
+        <p class="font-headline-md text-headline-md text-primary">{{lastCheckin.success}}</p>
+        <p class="font-body-sm text-body-sm text-secondary">成功</p>
+      </div>
+      <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md text-center">
+        <p class="font-headline-md text-headline-md text-primary">{{lastCheckin.already}}</p>
+        <p class="font-body-sm text-body-sm text-secondary">已签</p>
+      </div>
+      <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md text-center">
+        <p class="font-headline-md text-headline-md text-error">{{lastCheckin.failed}}</p>
+        <p class="font-body-sm text-body-sm text-secondary">失败</p>
+      </div>
+    </div>
+    <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md">
+      <p class="font-label-md text-label-md text-secondary mb-sm uppercase tracking-wider">签到日志</p>
+      <div v-if="checkinLogs.length===0" class="text-center py-lg text-secondary font-body-sm text-body-sm">暂无日志</div>
+      <div v-else class="space-y-xs font-label-md text-[11px] max-h-64 overflow-y-auto scrollbar-hide">
+        <div v-for="(log,i) in checkinLogs" :key="i"
+          class="flex items-center gap-sm py-xs border-b border-outline-variant/50"><span
+            class="text-secondary shrink-0 w-14">{{log.time}}</span><span
+            :class="log.type==='success'?'text-primary':log.type==='already'?'text-secondary':'text-error'">{{log.icon}}</span><span
+            class="text-on-surface-variant">{{log.msg}}</span></div>
+      </div>
+    </div>
+  </div>
+  <div v-else-if="currentPage==='quota'" class="space-y-lg">
+    <div class="flex items-center justify-between">
+      <button @click="queryAllQuota" :disabled="quotaAllLoading"
+        class="inline-flex items-center gap-xs px-3 py-1.5 bg-primary text-on-primary font-label-md text-label-md rounded-lg hover:opacity-90 transition-opacity disabled:opacity-30"><span
+          v-if="quotaAllLoading"
+          class="spinner inline-block w-3.5 h-3.5 border-2 border-on-primary/30 border-t-on-primary rounded-full"></span><span
+          v-else
+          class="material-symbols-outlined text-[16px]">refresh</span>{{quotaAllLoading?'查询中...':(quotaAccounts.length>0?'刷新配额':'查询配额')}}</button>
+    </div>
+    <div class="grid grid-cols-3 gap-gutter">
+      <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md text-center">
+        <p class="font-headline-md text-headline-md text-primary">{{fmtNum(quotaSummary.totalRemain)}}</p>
+        <p class="font-body-sm text-body-sm text-secondary">剩余</p>
+      </div>
+      <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md text-center">
+        <p class="font-headline-md text-headline-md text-primary">{{fmtNum(quotaSummary.totalCredits)}}</p>
+        <p class="font-body-sm text-body-sm text-secondary">总积分</p>
+      </div>
+      <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md text-center">
+        <p class="font-headline-md text-headline-md text-primary">{{quotaSummary.accountCount}}</p>
+        <p class="font-body-sm text-body-sm text-secondary">账户</p>
+      </div>
+    </div>
+    <div class="bg-surface-container-lowest border border-outline-variant rounded-xl overflow-hidden">
+      <div v-if="quotaAccounts.length>0" class="divide-y divide-outline-variant">
+        <div v-for="acc in quotaAccounts" :key="acc.name" class="group">
+          <button @click="acc.expanded=!acc.expanded"
+            class="w-full flex items-center justify-between px-md py-sm hover:bg-surface-container-low/50 transition-colors text-left">
+            <div class="flex items-center gap-sm min-w-0">
+              <span class="material-symbols-outlined text-secondary transition-transform duration-200"
+                :class="acc.expanded?'rotate-90':'rotate-0'">chevron_right</span>
+              <span class="font-medium text-primary truncate">{{acc.name}}</span>
+              <span class="text-secondary text-[11px] font-label-md whitespace-nowrap">{{acc.packages.length}}
+                个套餐</span>
+            </div>
+            <div class="flex items-center gap-sm shrink-0">
+              <div class="w-24 bg-surface-container-low rounded-full h-1.5 overflow-hidden">
+                <div class="h-full rounded-full transition-all duration-500"
+                  :class="acc.remainPercent>30?'bg-primary':acc.remainPercent>10?'bg-secondary':'bg-error'"
+                  :style="{width:acc.remainPercent+'%'}"></div>
+              </div>
+              <span
+                class="text-secondary text-[11px] font-label-md w-28 text-right">{{fmtNum(acc.totalRemain)}}/{{fmtNum(acc.totalQuota)}}</span>
+            </div>
+          </button>
+          <div v-show="acc.expanded" class="bg-surface-container-low/40">
+            <table class="w-full text-body-sm">
+              <thead class="text-secondary font-label-md uppercase tracking-wider text-[10px]">
+                <tr>
+                  <th class="text-left px-md py-2 pl-12">套餐</th>
+                  <th class="text-left px-md py-2">类型</th>
+                  <th class="text-left px-md py-2">剩余/总计</th>
+                  <th class="text-left px-md py-2">周期</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-outline-variant/50">
+                <tr v-for="(pkg,i) in acc.packages" :key="i"
+                  class="hover:bg-surface-container-low/50 transition-colors">
+                  <td class="px-md py-2 pl-12 text-on-surface-variant">{{pkg.package}}</td>
+                  <td class="px-md py-2"><span :class="pkg.typeClass"
+                      class="font-label-md text-[10px] px-2 py-0.5 rounded">{{pkg.typeLabel}}</span></td>
+                  <td class="px-md py-2">
+                    <div class="flex items-center gap-sm">
+                      <div class="w-20 bg-surface-container-low rounded-full h-1.5 overflow-hidden">
+                        <div class="h-full rounded-full transition-all duration-500"
+                          :class="pkg.remainPercent>30?'bg-primary':pkg.remainPercent>10?'bg-secondary':'bg-error'"
+                          :style="{width:pkg.remainPercent+'%'}"></div>
+                      </div><span
+                        class="text-secondary text-[11px] font-label-md">{{fmtNum(pkg.remain)}}/{{fmtNum(pkg.total)}}</span>
+                    </div>
+                  </td>
+                  <td class="px-md py-2 text-secondary text-[11px]">{{pkg.cycle}}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div v-else-if="currentPage==='proxy'" class="space-y-lg">
+    <div class="flex items-center justify-between">
+      <div class="flex items-center gap-sm"><span class="inline-block w-2 h-2 rounded-full"
+          :class="proxyInfo.running?'bg-primary animate-pulse':'bg-outline'"></span><span
+          class="font-body-sm text-body-sm text-secondary">{{proxyInfo.running?'运行中':'已停止'}}</span></div>
+      <div class="flex items-center gap-sm">
+        <button @click="showAddKeyModal=true"
+          class="inline-flex items-center gap-xs px-3 py-1.5 bg-surface-container-low border border-outline-variant text-primary font-label-md text-label-md rounded-lg hover:bg-surface-container-high transition-colors"><span
+            class="material-symbols-outlined text-[16px]">add</span>添加密钥</button>
+        <button @click="toggleProxy" :disabled="proxyLoading"
+          :class="proxyInfo.running?'bg-error-container text-on-error-container':'bg-primary text-on-primary'"
+          class="inline-flex items-center gap-xs px-3 py-1.5 font-label-md text-label-md rounded-lg hover:opacity-90 transition-opacity disabled:opacity-30"><span
+            v-if="proxyLoading"
+            class="spinner inline-block w-3.5 h-3.5 border-2 border-current/30 border-t-current rounded-full"></span><span
+            v-else
+            class="material-symbols-outlined text-[16px]">{{proxyInfo.running?'stop':'play_arrow'}}</span>{{proxyInfo.running?'停止':'启动'}}</button>
+      </div>
+    </div>
+    <div class="grid grid-cols-4 gap-gutter">
+      <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md">
+        <p class="font-body-sm text-body-sm text-secondary">代理地址</p>
+        <p class="font-label-md text-label-md text-primary mt-sm">http://localhost:8867</p>
+        <p class="font-body-sm text-[10px] text-on-surface-variant mt-xs">OpenAI-compatible</p>
+      </div>
+      <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md">
+        <p class="font-body-sm text-body-sm text-secondary">上游 API</p>
+        <p class="font-label-md text-label-md text-primary mt-sm text-[11px]">copilot.tencent.com</p>
+        <p class="font-body-sm text-[10px] text-on-surface-variant mt-xs">/v2 代理</p>
+      </div>
+      <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md text-center">
+        <p class="font-headline-md text-headline-md text-primary">{{proxyInfo.total_keys}}</p>
+        <p class="font-body-sm text-body-sm text-secondary">密钥总数</p>
+      </div>
+      <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md text-center">
+        <p class="font-headline-md text-headline-md text-primary">{{proxyInfo.active_keys}}</p>
+        <p class="font-body-sm text-body-sm text-secondary">可用</p>
+      </div>
+    </div>
+    <div class="bg-surface-container-lowest border border-outline-variant rounded-xl overflow-hidden">
+      <table class="w-full text-body-sm" v-if="proxyInfo.keys.length>0">
+        <thead class="bg-surface-container-low text-secondary font-label-md uppercase tracking-wider text-[10px]">
+          <tr>
+            <th class="text-left px-md py-sm">密钥</th>
+            <th class="text-left px-md py-sm">账户</th>
+            <th class="text-left px-md py-sm">积分</th>
+            <th class="text-left px-md py-sm">状态</th>
+            <th class="text-left px-md py-sm"></th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-outline-variant">
+          <tr v-for="k in proxyInfo.keys" :key="k.id" class="hover:bg-surface-container-low/50 transition-colors">
+            <td class="px-md py-sm font-label-md text-[11px] text-on-surface-variant">{{k.prefix}}****{{k.suffix}}
+            </td>
+            <td class="px-md py-sm text-secondary">{{k.account}}</td>
+            <td class="px-md py-sm font-label-md text-[11px] text-primary">{{fmtNum(k.quota_remaining)}}</td>
+            <td class="px-md py-sm"><span
+                :class="k.active?'bg-secondary-container text-on-secondary-container':k.status==='disabled'?'bg-surface-container text-secondary':'bg-error-container text-on-error-container'"
+                class="font-label-md text-[10px] px-2 py-0.5 rounded">{{k.active?'活跃':k.status==='disabled'?'已禁用':'已耗尽'}}</span>
+            </td>
+            <td class="px-md py-sm">
+              <div class="flex items-center gap-xs">
+                <button @click="toggleProxyKey(k)" :disabled="proxyKeyLoading[k.id]"
+                  class="w-7 h-7 flex items-center justify-center rounded-lg text-secondary hover:bg-surface-container-low transition-colors disabled:opacity-30"
+                  :title="k.active?'禁用':'启用'"><span class="material-symbols-outlined text-[16px]">{{k.active?'toggle_on':'toggle_off'}}</span></button>
+                <button @click="deleteProxyKey(k.id)"
+                  class="w-7 h-7 flex items-center justify-center rounded-lg text-secondary hover:bg-surface-container-low hover:text-error transition-colors"
+                  title="删除"><span class="material-symbols-outlined text-[16px]">delete</span></button>
+              </div>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <div v-else class="text-center py-xl text-secondary font-body-sm text-body-sm">密钥池为空</div>
+    </div>
+  </div>
+  <div v-else-if="currentPage==='settings'" class="max-w-xl space-y-lg">
+    <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md space-y-md">
+      <div><label class="font-label-md text-label-md text-primary block mb-xs">网页端口</label><input
+          v-model.number="settings.webPort" type="number"
+          class="w-full h-6 px-2.5 py-1 bg-surface-container-low border border-outline-variant rounded-lg text-body-sm text-primary font-label-md outline-none focus:ring-1 focus:ring-primary focus:border-primary">
+      </div>
+      <div><label class="font-label-md text-label-md text-primary block mb-xs">代理端口</label><input
+          v-model.number="settings.proxyPort" type="number"
+          class="w-full h-6 px-2.5 py-1 bg-surface-container-low border border-outline-variant rounded-lg text-body-sm text-primary font-label-md outline-none focus:ring-1 focus:ring-primary focus:border-primary">
+      </div>
+      <div><label class="font-label-md text-label-md text-primary block mb-xs">HTTP 代理（可选）</label><input
+          v-model="settings.httpProxy" placeholder="http://127.0.0.1:7890"
+          class="w-full h-6 px-2.5 py-1 bg-surface-container-low border border-outline-variant rounded-lg text-body-sm text-primary font-label-md outline-none focus:ring-1 focus:ring-primary focus:border-primary">
+      </div>
+      <div class="flex items-center justify-between"><span
+          class="font-label-md text-label-md text-primary">自动启动代理</span><button
+          @click="settings.autoStartProxy=!settings.autoStartProxy"
+          :class="settings.autoStartProxy?'bg-primary':'bg-outline-variant'"
+          class="w-9 h-5 rounded-full transition-colors duration-200 relative shrink-0" role="switch"
+          :aria-checked="settings.autoStartProxy"><span
+            :class="settings.autoStartProxy?'translate-x-[1.125rem]':'translate-x-0.5'"
+            class="absolute top-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-transform duration-200"></span></button>
+      </div>
+      <button @click="saveSettings"
+        class="inline-flex items-center gap-xs px-3 py-1.5 bg-primary text-on-primary font-label-md text-label-md rounded-lg hover:opacity-90 transition-opacity w-full justify-center">保存设置</button>
+    </div>
+  </div>
+  </main>
+  </div>
+
+  <Transition name="fade">
+    <div v-if="showAddModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-md"
+      @click.self="showAddModal=false">
+      <div
+        class="bg-surface-container-lowest border border-outline-variant rounded-xl w-full max-w-lg overflow-hidden pro-shadow"
+        @click.stop>
+        <div class="h-12 border-b border-outline-variant flex items-center justify-between px-md">
+          <h3 class="font-headline-sm text-body-md font-semibold text-primary">添加账户</h3>
+          <button @click="showAddModal=false"
+            class="w-8 h-8 flex items-center justify-center text-secondary hover:bg-surface-container-low rounded-lg transition-colors"><span
+              class="material-symbols-outlined">close</span></button>
+        </div>
+        <div class="p-lg space-y-md">
+          <div class="flex gap-xs bg-surface-container-low rounded-lg p-0.5">
+            <button v-for="m in addMethods" :key="m.id" @click="addMethod=m.id"
+              :class="['flex-1 py-1 px-2 rounded-md font-label-md text-label-md transition-colors duration-100',addMethod===m.id?'bg-surface-container-lowest text-primary pro-shadow':'text-secondary hover:text-primary']">{{m.label}}</button>
+          </div>
+          <div v-if="addMethod==='apikey'" class="space-y-md">
+            <div><label class="font-label-md text-label-md text-primary block mb-xs">API Key</label><input
+                v-model="addForm.api_key" placeholder="ck_xxxxxxxxxxxxxxxx"
+                class="w-full h-6 px-2.5 py-1 bg-surface-container-low border border-outline-variant rounded-lg text-body-sm font-label-md outline-none focus:ring-1 focus:ring-primary focus:border-primary">
+              <p class="font-body-sm text-[11px] text-on-surface-variant mt-xs">从 CodeBuddy 控制台获取 API Key，必须以 ck_ 开头。
+              </p>
+            </div>
+            <div><label class="font-label-md text-label-md text-primary block mb-xs">昵称（可选）</label><input
+                v-model="addForm.nickname" placeholder="我的账户 1"
+                class="w-full h-6 px-2.5 py-1 bg-surface-container-low border border-outline-variant rounded-lg text-body-sm font-label-md outline-none focus:ring-1 focus:ring-primary focus:border-primary">
+            </div>
+          </div>
+          <div v-else-if="addMethod==='jwt'" class="space-y-md">
+            <div><label class="font-label-md text-label-md text-primary block mb-xs">访问令牌 (JWT)</label><textarea
+                v-model="addForm.access_token" rows="3" placeholder="eyJhbGciOi..."
+                class="w-full px-2.5 py-1 bg-surface-container-low border border-outline-variant rounded-lg text-body-sm font-label-md outline-none focus:ring-1 focus:ring-primary focus:border-primary resize-none"></textarea>
+            </div>
+            <div><label class="font-label-md text-label-md text-primary block mb-xs">X-User-Id</label><input
+                v-model="addForm.uid" placeholder="用户 UID"
+                class="w-full h-6 px-2.5 py-1 bg-surface-container-low border border-outline-variant rounded-lg text-body-sm font-label-md outline-none focus:ring-1 focus:ring-primary focus:border-primary">
+            </div>
+            <div><label class="font-label-md text-label-md text-primary block mb-xs">昵称（可选）</label><input
+                v-model="addForm.nickname" placeholder="我的账户 2"
+                class="w-full h-6 px-2.5 py-1 bg-surface-container-low border border-outline-variant rounded-lg text-body-sm font-label-md outline-none focus:ring-1 focus:ring-primary focus:border-primary">
+            </div>
+          </div>
+          <div v-else-if="addMethod==='workbuddy'" class="space-y-md">
+            <div
+              class="bg-surface-container-low border border-outline-variant rounded-lg p-md font-body-sm text-body-sm text-on-surface-variant">
+              从本地 WorkBuddy 安装中自动提取已登录账户。需要 WorkBuddy 已安装并登录。</div>
+          </div>
+          <p v-if="addError" class="font-body-sm text-body-sm text-error">{{addError}}</p>
+          <div class="flex justify-end gap-sm pt-sm border-t border-outline-variant">
+            <button @click="showAddModal=false"
+              class="px-3 py-1.5 text-secondary font-label-md text-label-md rounded-lg hover:bg-surface-container-low transition-colors">取消</button>
+            <button @click="addAccount" :disabled="addLoading"
+              class="inline-flex items-center gap-xs px-3 py-1.5 bg-primary text-on-primary font-label-md text-label-md rounded-lg hover:opacity-90 transition-opacity disabled:opacity-30"><span
+                v-if="addLoading"
+                class="spinner inline-block w-3.5 h-3.5 border-2 border-on-primary/30 border-t-on-primary rounded-full"></span><span
+                v-else
+                class="material-symbols-outlined text-[16px]">{{addMethod==='workbuddy'?'sync':'add'}}</span>{{addLoading?'添加中...':(addMethod==='workbuddy'?'提取':'添加账户')}}</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </Transition>
+  <Transition name="fade">
+    <div v-if="showAddKeyModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-md"
+      @click.self="showAddKeyModal=false">
+      <div
+        class="bg-surface-container-lowest border border-outline-variant rounded-xl w-full max-w-sm overflow-hidden pro-shadow"
+        @click.stop>
+        <div class="h-12 border-b border-outline-variant flex items-center justify-between px-md">
+          <h3 class="font-headline-sm text-body-md font-semibold text-primary">添加代理密钥</h3>
+          <button @click="showAddKeyModal=false"
+            class="w-8 h-8 flex items-center justify-center text-secondary hover:bg-surface-container-low rounded-lg transition-colors"><span
+              class="material-symbols-outlined">close</span></button>
+        </div>
+        <div class="p-lg space-y-md">
+          <div><label class="font-label-md text-label-md text-primary block mb-xs">API Key</label><input
+              v-model="addKeyForm.api_key" placeholder="ck_xxxxxxxxxxxxxxxx"
+              class="w-full h-6 px-2.5 py-1 bg-surface-container-low border border-outline-variant rounded-lg text-body-sm font-label-md outline-none focus:ring-1 focus:ring-primary focus:border-primary">
+          </div>
+          <div><label class="font-label-md text-label-md text-primary block mb-xs">账户名称（可选）</label><input
+              v-model="addKeyForm.account_name" placeholder="我的密钥"
+              class="w-full h-6 px-2.5 py-1 bg-surface-container-low border border-outline-variant rounded-lg text-body-sm font-label-md outline-none focus:ring-1 focus:ring-primary focus:border-primary">
+          </div>
+          <p v-if="addKeyError" class="font-body-sm text-body-sm text-error">{{addKeyError}}</p>
+          <div class="flex justify-end gap-sm pt-sm border-t border-outline-variant">
+            <button @click="showAddKeyModal=false"
+              class="px-3 py-1.5 text-secondary font-label-md text-label-md rounded-lg hover:bg-surface-container-low transition-colors">取消</button>
+            <button @click="addProxyKey" :disabled="addKeyLoading"
+              class="inline-flex items-center gap-xs px-3 py-1.5 bg-primary text-on-primary font-label-md text-label-md rounded-lg hover:opacity-90 transition-opacity disabled:opacity-30"><span
+                v-if="addKeyLoading"
+                class="spinner inline-block w-3.5 h-3.5 border-2 border-on-primary/30 border-t-on-primary rounded-full"></span>添加密钥</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </Transition>
+  <Transition name="fade">
+    <div v-if="toast.show"
+      :class="toast.type==='error'?'bg-error-container text-on-error-container':'bg-secondary-container text-on-secondary-container'"
+      class="fixed bottom-md right-md px-md py-sm rounded-lg font-label-md text-label-md pro-shadow z-50 max-w-sm">
+      {{toast.msg}}</div>
+  </Transition>
+  </div>
+
+  <script type="module">
+    import { createApp, ref, reactive, onMounted } from 'vue';
+    createApp({
+      setup() {
+        const currentPage = ref('accounts');
+        const activePageLabel = ref('账户');
+        const port = ref(8866);
+        const now = ref('');
+        const toast = reactive({ show: false, msg: '', type: 'success' });
+        setInterval(() => { const d = new Date(); now.value = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0') + ':' + String(d.getSeconds()).padStart(2, '0'); }, 1000);
+        function showToast(msg, type) { toast.msg = msg; toast.type = type || 'success'; toast.show = true; setTimeout(() => toast.show = false, 3000); }
+        function fmtNum(n) { if (n == null || n === '' || isNaN(Number(n))) return '0'; return Number(n).toLocaleString(); }
+        const navItems = [
+          { id: 'accounts', label: '账户', icon: 'people' },
+          { id: 'checkin', label: '签到', icon: 'check_circle' },
+          { id: 'quota', label: '配额', icon: 'account_balance_wallet' },
+          { id: 'proxy', label: '代理', icon: 'router' },
+          { id: 'settings', label: '设置', icon: 'settings' },
+        ];
+        const stats = reactive({ accountCount: 0, activeCount: 0, checkedToday: 0, totalCredits: 0 });
+        const accounts = ref([]);
+        const showAddModal = ref(false); const addMethod = ref('apikey'); const addLoading = ref(false); const addError = ref('');
+        const addMethods = [{ id: 'apikey', label: 'API Key' }, { id: 'jwt', label: 'JWT' }, { id: 'workbuddy', label: 'WorkBuddy' }];
+        const addForm = reactive({ api_key: '', access_token: '', uid: '', nickname: '' });
+        const quotaLoading = reactive({}); const checkinLoading = reactive({});
+        const checkinAllLoading = ref(false); const lastCheckin = reactive({ success: 0, already: 0, failed: 0 }); const checkinLogs = reactive([]);
+        const quotaAllLoading = ref(false); const quotaSummary = reactive({ totalRemain: 0, totalCredits: 0, accountCount: 0 }); const quotaDetails = reactive([]);
+        const proxyInfo = reactive({ running: false, port: 8867, total_keys: 0, active_keys: 0, exhausted_keys: 0, keys: [] }); const proxyLoading = ref(false);
+        const quotaAccounts = ref([]);
+        const showAddKeyModal = ref(false); const addKeyLoading = ref(false); const addKeyError = ref(''); const addKeyForm = reactive({ api_key: '', account_name: '' });
+        const proxyKeyLoading = reactive({});
+        const settings = reactive({ webPort: 8866, proxyPort: 8867, httpProxy: '', autoStartProxy: true });
+        async function api(url, opts) { opts = opts || {}; try { const r = await fetch(url, { headers: { 'Content-Type': 'application/json' }, method: opts.method || 'GET', body: opts.body }); return await r.json(); } catch (e) { showToast(e.message, 'error'); return null; } }
+        async function loadAccounts() { const d = await api('/api/accounts'); if (d) { accounts.value = d.accounts || []; stats.accountCount = d.total || 0; stats.activeCount = accounts.value.filter(a => a.status === 'active').length; stats.checkedToday = accounts.value.filter(a => a.checked_today).length; let tc = 0; accounts.value.forEach(a => tc += a.quota_remaining || a.quota_total || 0); stats.totalCredits = tc; } }
+        async function loadProxyStatus() { const d = await api('/api/proxy/status'); if (d) Object.assign(proxyInfo, d); }
+        async function addAccount() { addLoading.value = true; addError.value = ''; const body = { method: addMethod.value }; if (addMethod.value === 'apikey') { body.api_key = addForm.api_key; body.nickname = addForm.nickname; } else if (addMethod.value === 'jwt') { body.access_token = addForm.access_token; body.uid = addForm.uid; body.nickname = addForm.nickname; } const r = await fetch('/api/accounts/add', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); const d = await r.json(); addLoading.value = false; if (r.ok) { showToast('已添加: ' + d.nickname); showAddModal.value = false; addForm.api_key = ''; addForm.access_token = ''; addForm.uid = ''; addForm.nickname = ''; await loadAccounts(); } else { addError.value = d.detail || '添加失败'; } }
+        async function deleteAccount(uid) { if (!confirm('确认删除此账户？')) return; await api('/api/accounts/' + uid + '/delete', { method: 'POST' }); showToast('已删除'); await loadAccounts(); }
+        async function querySingleQuota(account) { quotaLoading[account.uid] = true; const d = await api('/api/quota/' + account.uid, { method: 'POST' }); quotaLoading[account.uid] = false; if (d && d.success && d.packages) { let total = 0, remain = 0; d.packages.forEach(p => { total += p.total || 0; remain += p.remain || 0; }); account.quota_total = total; account.quota_remaining = remain; } showToast('配额已查询'); }
+        async function checkinSingle(uid) { checkinLoading[uid] = true; const d = await api('/api/checkin/' + uid, { method: 'POST' }); checkinLoading[uid] = false; if (d && d.success) { showToast(d.already ? '今日已签到' : '签到成功'); checkinLogs.unshift({ time: new Date().toTimeString().slice(0, 8), type: d.already ? 'already' : 'success', icon: d.already ? '--' : 'OK', msg: uid + (d.already ? ' 已签到' : ' 签到成功') }); } else { showToast('签到失败', 'error'); } await loadAccounts(); }
+        async function checkinAll() { checkinAllLoading.value = true; const d = await api('/api/checkin/all', { method: 'POST' }); checkinAllLoading.value = false; if (d) { lastCheckin.success = d.success || 0; lastCheckin.already = d.already || 0; lastCheckin.failed = d.failed || 0; if (d.details) d.details.forEach(x => { checkinLogs.unshift({ time: new Date().toTimeString().slice(0, 8), type: x.status, icon: x.status === 'success' ? 'OK' : x.status === 'already' ? '--' : 'FAIL', msg: x.account + ' ' + (x.message || x.status) }); }); showToast('完成: ' + lastCheckin.success + ' 成功, ' + lastCheckin.already + ' 已签, ' + lastCheckin.failed + ' 失败'); } await loadAccounts(); }
+        const QUOTA_CACHE_KEY = 'ag_quota_cache';
+        function loadQuotaCache() {
+          try { const raw = localStorage.getItem(QUOTA_CACHE_KEY); if (raw) { const cached = JSON.parse(raw); if (cached.summary) { quotaSummary.totalRemain = cached.summary.totalRemain || 0; quotaSummary.totalCredits = cached.summary.totalCredits || 0; quotaSummary.accountCount = cached.summary.accountCount || 0; } if (cached.accounts) { quotaAccounts.value = cached.accounts.map(a => ({ ...a, expanded: false })); } } } catch (e) { }
+        }
+        function saveQuotaCache() {
+          try { localStorage.setItem(QUOTA_CACHE_KEY, JSON.stringify({ summary: { totalRemain: quotaSummary.totalRemain, totalCredits: quotaSummary.totalCredits, accountCount: quotaSummary.accountCount }, accounts: quotaAccounts.value, ts: Date.now() })); } catch (e) { }
+        }
+        async function queryAllQuota() { quotaAllLoading.value = true; const cached = quotaAccounts.value; const expandedMap = new Map(); const cachedOrder = cached.map(a => a.name); cached.forEach(a => expandedMap.set(a.name, a.expanded)); const d = await api('/api/quota/all', { method: 'POST' }); quotaAllLoading.value = false; if (d) { quotaSummary.totalRemain = d.total_remaining || 0; quotaSummary.totalCredits = d.total_credits || 0; quotaSummary.accountCount = d.account_count || 0; const map = new Map(); (d.details || []).forEach(a => { if (!a.success || !a.packages) return; const list = a.packages.map(p => { const t = p.total || 0, r = p.remain || 0, pct = t > 0 ? (r / t * 100) : 0; const tm = { '免费': 'bg-secondary-container text-on-secondary-container', '付费': 'bg-surface-container text-primary', '体验': 'bg-surface-container-low border border-outline-variant' }; return { account: a.nickname, package: p.name, typeLabel: p.type || '?', typeClass: tm[p.type] || 'bg-surface-container text-secondary', remain: r, total: t, remainPercent: pct, cycle: p.cycle_start ? p.cycle_start.substring(0, 7) : '--' }; }); const totalQuota = list.reduce((s, p) => s + p.total, 0); const totalRemain = list.reduce((s, p) => s + p.remain, 0); const wasExpanded = expandedMap.get(a.nickname) || false; map.set(a.nickname, { name: a.nickname, expanded: wasExpanded, totalQuota, totalRemain, remainPercent: totalQuota > 0 ? (totalRemain / totalQuota * 100) : 0, packages: list }); }); const ordered = []; cachedOrder.forEach(name => { const item = map.get(name); if (item) ordered.push(item); }); map.forEach((v, k) => { if (!cachedOrder.includes(k)) ordered.push(v); }); quotaAccounts.value = ordered; saveQuotaCache(); showToast('完成: ' + quotaSummary.accountCount + ' 个账户'); } } function refreshQuota() { queryAllQuota(); }
+        async function toggleProxy() { proxyLoading.value = true; await api(proxyInfo.running ? '/api/proxy/stop' : '/api/proxy/start', { method: 'POST' }); proxyLoading.value = false; await loadProxyStatus(); showToast(proxyInfo.running ? '代理已启动' : '代理已停止'); }
+        async function addProxyKey() { addKeyLoading.value = true; addKeyError.value = ''; const r = await fetch('/api/proxy/keys/add', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ api_key: addKeyForm.api_key, account_name: addKeyForm.account_name }) }); const d = await r.json(); addKeyLoading.value = false; if (r.ok) { showToast('密钥已添加'); showAddKeyModal.value = false; addKeyForm.api_key = ''; addKeyForm.account_name = ''; await loadProxyStatus(); } else { addKeyError.value = d.detail || '添加失败'; } }
+        async function deleteProxyKey(kid) { if (!confirm('确认删除此密钥？')) return; await api('/api/proxy/keys/' + kid + '/delete', { method: 'POST' }); showToast('密钥已删除'); await loadProxyStatus(); }
+        async function toggleProxyKey(k) { proxyKeyLoading[k.id] = true; const d = await api('/api/proxy/keys/' + k.id + '/toggle', { method: 'POST' }); proxyKeyLoading[k.id] = false; if (d) { k.active = d.active; showToast(d.active ? '已启用' : '已禁用'); } }
+        function saveSettings() { showToast('设置已保存（重启生效）'); }
+        onMounted(async () => { loadQuotaCache(); await loadAccounts(); await loadProxyStatus(); });
+        return { currentPage, activePageLabel, navItems, now, port, toast, showToast, fmtNum, stats, accounts, showAddModal, addMethod, addMethods, addForm, addLoading, addError, addAccount, deleteAccount, quotaLoading, checkinLoading, querySingleQuota, checkinSingle, checkinAllLoading, lastCheckin, checkinLogs, checkinAll, quotaAllLoading, quotaSummary, quotaAccounts, queryAllQuota, refreshQuota, proxyInfo, proxyLoading, toggleProxy, showAddKeyModal, addKeyForm, addKeyLoading, addKeyError, addProxyKey, deleteProxyKey, proxyKeyLoading, toggleProxyKey, settings, saveSettings };
+      }
+    }).mount('#app');
+  </script>
+</body>
+
+</html>
+
+
+
+

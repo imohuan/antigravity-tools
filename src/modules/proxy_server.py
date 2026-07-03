@@ -1,4 +1,4 @@
-"""本地 API 中转代理服务
+﻿"""本地 API 中转代理服务
 
 功能：
 - 管理上游 Key 池（主 Key）
@@ -892,16 +892,31 @@ class ProxyDatabase:
         with self._lock:
             return dict(self._data.get("daily_stats", {}).get(category, {}).get(key_id, {}).get(today, {}))
     _points_query_timestamps: dict = {}  # {key_id: last_query_epoch}
+    _points_query_locks: dict = {}       # {key_id: threading.Lock} 防并发重复查分
 
     def refresh_key_points_if_needed(self, key_id: str):
-        """请求完成后异步查分，限频 1 分钟/次。查到后调用 sync_quota_to_key 更新积分。"""
+        """请求完成后异步查分，限频 5 分钟/次，带 per-key 锁防并发重复查询。"""
         import time as _time
         now = _time.time()
         last = ProxyDatabase._points_query_timestamps.get(key_id, 0)
         if now - last < 300:
             return  # 5 分钟内已查过，跳过
 
-        ProxyDatabase._points_query_timestamps[key_id] = now
+        # per-key 锁：防止同一 key 的多个并发请求同时触发查分
+        lock = ProxyDatabase._points_query_locks.setdefault(key_id, threading.Lock())
+        acquired = lock.acquire(blocking=False)
+        if not acquired:
+            logger.debug(f"[自动查分] Key {key_id} 已有查分任务进行中，跳过")
+            return
+
+        # 双重检查：拿到锁后再确认一次时间戳（可能上一个查分刚更新完）
+        try:
+            last2 = ProxyDatabase._points_query_timestamps.get(key_id, 0)
+            if now - last2 < 300:
+                return
+            ProxyDatabase._points_query_timestamps[key_id] = now
+        finally:
+            lock.release()
 
         # 找到该 Key 的 api_key
         with self._lock:
@@ -924,18 +939,12 @@ class ProxyDatabase:
                 }, timeout=10)
                 if resp.status_code == 200:
                     data = resp.json()
-                    # 兼容两种响应结构：
-                    # 旧格式: {"accounts": [...]} (顶层)
-                    # 新格式: {"data":{"Response":{"Data":{"Accounts": [...]}}}}
                     accounts = data.get("accounts", [])
                     if not accounts:
-                        # 尝试新格式
                         try:
                             accounts = data["data"]["Response"]["Data"]["Accounts"]
                         except (KeyError, TypeError):
                             accounts = []
-                    # 关键防护：accounts 为空说明上游返回了异常数据（维护/限流/格式变更），
-                    # 不能当成 0 分处理，否则会把所有 Key 全部误禁用
                     if not accounts:
                         logger.warning(f"[自动查分] Key {key_id} 查分返回空 accounts，跳过更新（不误禁用）")
                         return
@@ -943,7 +952,6 @@ class ProxyDatabase:
                     total_credits = 0.0
                     pkgs = []
                     for acc in accounts:
-                        # 兼容新旧字段名
                         remain = float(acc.get("cycle_remain", acc.get("CycleCapacityRemain", acc.get("CapacityRemain", 0))))
                         total = float(acc.get("cycle_total", acc.get("CycleCapacitySize", acc.get("CapacitySize", 0))))
                         total_remain += remain
@@ -1781,7 +1789,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             self._send_json(200, {
                 "object": "api.index",
                 "message": "Antigravity Proxy is running",
-                "version": "1.6.2",
+                "version": "1.6.1",
             })
             return
 
@@ -2941,3 +2949,5 @@ class ProxyServer:
     @property
     def base_url(self) -> str:
         return f"http://{self.host}:{self.port}"
+
+
