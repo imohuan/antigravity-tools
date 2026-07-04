@@ -19,7 +19,7 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse
 import uvicorn
 
-from src.utils.store import init_db
+from src.utils.store import init_db, load_setting
 
 app = FastAPI(title="Antigravity Tools", version="1.0.0")
 
@@ -49,6 +49,16 @@ async def index():
 def main():
     """Entry point for `python -m web.server`"""
     init_db()
+
+    # Auto-start proxy if the setting is enabled
+    if load_setting("autoStartProxy", "True") == "True":
+        from web.api.proxy import proxy_start
+        result = proxy_start()
+        if result.get("success"):
+            print(f"  代理已自动启动 :8867")
+        else:
+            print(f"  代理自动启动失败: {result.get('error', 'unknown')}")
+
     port = int(os.environ.get("PORT", 8866))
     host = os.environ.get("HOST", "0.0.0.0")
 
