@@ -621,21 +621,26 @@ class ProxyDatabase:
             self._data.setdefault("upstream_keys", []).append(key_data)
             self._save()
 
+    def _find_key_index(self, key_id: str) -> int:
+        """Find a key by key_id or api_key, return its index. -1 if not found."""
+        keys = self._data.get("upstream_keys", [])
+        for i, k in enumerate(keys):
+            if k.get("key_id") == key_id or k.get("api_key") == key_id:
+                return i
+        return -1
+
     def update_upstream_key(self, key_id: str, updates: dict):
         with self._lock:
-            keys = self._data.setdefault("upstream_keys", [])
-            for k in keys:
-                if k.get("key_id") == key_id:
-                    k.update(updates)
-                    break
+            idx = self._find_key_index(key_id)
+            if idx >= 0:
+                self._data["upstream_keys"][idx].update(updates)
             self._save()
 
     def delete_upstream_key(self, key_id: str):
         with self._lock:
-            self._data["upstream_keys"] = [
-                k for k in self._data.get("upstream_keys", [])
-                if k.get("key_id") != key_id
-            ]
+            idx = self._find_key_index(key_id)
+            if idx >= 0:
+                self._data["upstream_keys"].pop(idx)
             self._save()
 
     def sync_quota_to_key(self, api_key_or_token: str, remaining_credits: float, total_credits: float,

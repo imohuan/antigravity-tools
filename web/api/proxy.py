@@ -49,7 +49,7 @@ def proxy_status():
         "active_keys": len(active_keys),
         "exhausted_keys": len(keys) - len(active_keys),
         "keys": [{
-            "id": k.get("key_id", ""),
+            "id": k.get("key_id") or k.get("api_key", ""),
             "prefix": (k.get("api_key", "") or "")[:16],
             "suffix": (k.get("api_key", "") or "")[-4:],
             "account": k.get("label", ""),
@@ -102,7 +102,7 @@ def proxy_add_key(req: AddKeyRequest):
 
 @router.post("/proxy/keys/{key_id}/delete")
 def proxy_delete_key(key_id: str):
-    """Remove a key from the pool"""
+    """Remove a key from the pool (matches by key_id or api_key)"""
     db = _get_db()
     db.delete_upstream_key(key_id)
     return {"success": True}
@@ -110,10 +110,10 @@ def proxy_delete_key(key_id: str):
 
 @router.post("/proxy/keys/{key_id}/toggle")
 def proxy_toggle_key(key_id: str):
-    """Toggle a key's active status"""
+    """Toggle a key's active status (matches by key_id or api_key)"""
     db = _get_db()
     keys = db.get_upstream_keys()
-    key = next((k for k in keys if k.get("key_id") == key_id), None)
+    key = next((k for k in keys if k.get("key_id") == key_id or k.get("api_key") == key_id), None)
     if not key:
         raise HTTPException(status_code=404, detail="Key not found")
     current = key.get("status", "active")
