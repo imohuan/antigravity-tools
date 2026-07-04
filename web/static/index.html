@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh-CN">
 
 <head>
@@ -170,333 +170,333 @@
             </table>
           </div>
         </div>
-  <div v-else-if="currentPage==='checkin'" class="space-y-lg">
-    <div class="flex items-center justify-between">
-      <button @click="checkinAll" :disabled="checkinAllLoading"
-        class="inline-flex items-center gap-xs px-3 py-1.5 bg-primary text-on-primary font-label-md text-label-md rounded-lg hover:opacity-90 transition-opacity disabled:opacity-30"><span
-          v-if="checkinAllLoading"
-          class="spinner inline-block w-3.5 h-3.5 border-2 border-on-primary/30 border-t-on-primary rounded-full"></span><span
-          v-else
-          class="material-symbols-outlined text-[16px]">check_circle</span>{{checkinAllLoading?'签到中...':'批量签到'}}</button>
-    </div>
-    <div class="grid grid-cols-3 gap-gutter">
-      <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md text-center">
-        <p class="font-headline-md text-headline-md text-primary">{{lastCheckin.success}}</p>
-        <p class="font-body-sm text-body-sm text-secondary">成功</p>
-      </div>
-      <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md text-center">
-        <p class="font-headline-md text-headline-md text-primary">{{lastCheckin.already}}</p>
-        <p class="font-body-sm text-body-sm text-secondary">已签</p>
-      </div>
-      <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md text-center">
-        <p class="font-headline-md text-headline-md text-error">{{lastCheckin.failed}}</p>
-        <p class="font-body-sm text-body-sm text-secondary">失败</p>
-      </div>
-    </div>
-    <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md">
-      <p class="font-label-md text-label-md text-secondary mb-sm uppercase tracking-wider">签到日志</p>
-      <div v-if="checkinLogs.length===0" class="text-center py-lg text-secondary font-body-sm text-body-sm">暂无日志</div>
-      <div v-else class="space-y-xs font-label-md text-[11px] max-h-64 overflow-y-auto scrollbar-hide">
-        <div v-for="(log,i) in checkinLogs" :key="i"
-          class="flex items-center gap-sm py-xs border-b border-outline-variant/50"><span
-            class="text-secondary shrink-0 w-14">{{log.time}}</span><span
-            :class="log.type==='success'?'text-primary':log.type==='already'?'text-secondary':'text-error'">{{log.icon}}</span><span
-            class="text-on-surface-variant">{{log.msg}}</span></div>
-      </div>
-    </div>
-  </div>
-  <div v-else-if="currentPage==='quota'" class="space-y-lg">
-    <div class="flex items-center justify-between">
-      <button @click="queryAllQuota" :disabled="quotaAllLoading"
-        class="inline-flex items-center gap-xs px-3 py-1.5 bg-primary text-on-primary font-label-md text-label-md rounded-lg hover:opacity-90 transition-opacity disabled:opacity-30"><span
-          v-if="quotaAllLoading"
-          class="spinner inline-block w-3.5 h-3.5 border-2 border-on-primary/30 border-t-on-primary rounded-full"></span><span
-          v-else
-          class="material-symbols-outlined text-[16px]">refresh</span>{{quotaAllLoading?'查询中...':(quotaAccounts.length>0?'刷新配额':'查询配额')}}</button>
-    </div>
-    <div class="grid grid-cols-3 gap-gutter">
-      <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md text-center">
-        <p class="font-headline-md text-headline-md text-primary">{{fmtNum(quotaSummary.totalRemain)}}</p>
-        <p class="font-body-sm text-body-sm text-secondary">剩余</p>
-      </div>
-      <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md text-center">
-        <p class="font-headline-md text-headline-md text-primary">{{fmtNum(quotaSummary.totalCredits)}}</p>
-        <p class="font-body-sm text-body-sm text-secondary">总积分</p>
-      </div>
-      <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md text-center">
-        <p class="font-headline-md text-headline-md text-primary">{{quotaSummary.accountCount}}</p>
-        <p class="font-body-sm text-body-sm text-secondary">账户</p>
-      </div>
-    </div>
-    <div class="bg-surface-container-lowest border border-outline-variant rounded-xl overflow-hidden">
-      <div v-if="quotaAccounts.length>0" class="divide-y divide-outline-variant">
-        <div v-for="acc in quotaAccounts" :key="acc.name" class="group">
-          <button @click="acc.expanded=!acc.expanded"
-            class="w-full flex items-center justify-between px-md py-sm hover:bg-surface-container-low/50 transition-colors text-left">
-            <div class="flex items-center gap-sm min-w-0">
-              <span class="material-symbols-outlined text-secondary transition-all duration-200 left-0.5"
-                :class="acc.expanded?'rotate-90':'rotate-0'">chevron_right</span>
-              <span class="font-medium text-primary truncate">{{acc.name}}</span>
-              <span class="text-secondary text-[11px] font-label-md whitespace-nowrap">{{acc.packages.length}}
-                个套餐</span>
+        <div v-else-if="currentPage==='checkin'" class="space-y-lg">
+          <div class="flex items-center justify-between">
+            <button @click="checkinAll" :disabled="checkinAllLoading"
+              class="inline-flex items-center gap-xs px-3 py-1.5 bg-primary text-on-primary font-label-md text-label-md rounded-lg hover:opacity-90 transition-opacity disabled:opacity-30"><span
+                v-if="checkinAllLoading"
+                class="spinner inline-block w-3.5 h-3.5 border-2 border-on-primary/30 border-t-on-primary rounded-full"></span><span
+                v-else
+                class="material-symbols-outlined text-[16px]">check_circle</span>{{checkinAllLoading?'签到中...':'批量签到'}}</button>
+          </div>
+          <div class="grid grid-cols-3 gap-gutter">
+            <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md text-center">
+              <p class="font-headline-md text-headline-md text-primary">{{lastCheckin.success}}</p>
+              <p class="font-body-sm text-body-sm text-secondary">成功</p>
             </div>
-            <div class="flex items-center gap-sm shrink-0">
-              <div class="w-24 bg-surface-container-low rounded-full h-1.5 overflow-hidden">
-                <div class="h-full rounded-full transition-all duration-500"
-                  :class="acc.remainPercent>30?'bg-primary':acc.remainPercent>10?'bg-secondary':'bg-error'"
-                  :style="{width:acc.remainPercent+'%'}"></div>
+            <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md text-center">
+              <p class="font-headline-md text-headline-md text-primary">{{lastCheckin.already}}</p>
+              <p class="font-body-sm text-body-sm text-secondary">已签</p>
+            </div>
+            <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md text-center">
+              <p class="font-headline-md text-headline-md text-error">{{lastCheckin.failed}}</p>
+              <p class="font-body-sm text-body-sm text-secondary">失败</p>
+            </div>
+          </div>
+          <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md">
+            <p class="font-label-md text-label-md text-secondary mb-sm uppercase tracking-wider">签到日志</p>
+            <div v-if="checkinLogs.length===0" class="text-center py-lg text-secondary font-body-sm text-body-sm">暂无日志
+            </div>
+            <div v-else class="space-y-xs font-label-md text-[11px] max-h-64 overflow-y-auto scrollbar-hide">
+              <div v-for="(log,i) in checkinLogs" :key="i"
+                class="flex items-center gap-sm py-xs border-b border-outline-variant/50"><span
+                  class="text-secondary shrink-0 w-14">{{log.time}}</span><span
+                  :class="log.type==='success'?'text-primary':log.type==='already'?'text-secondary':'text-error'">{{log.icon}}</span><span
+                  class="text-on-surface-variant">{{log.msg}}</span></div>
+            </div>
+          </div>
+        </div>
+        <div v-else-if="currentPage==='quota'" class="space-y-lg">
+          <div class="flex items-center justify-between">
+            <button @click="queryAllQuota" :disabled="quotaAllLoading"
+              class="inline-flex items-center gap-xs px-3 py-1.5 bg-primary text-on-primary font-label-md text-label-md rounded-lg hover:opacity-90 transition-opacity disabled:opacity-30"><span
+                v-if="quotaAllLoading"
+                class="spinner inline-block w-3.5 h-3.5 border-2 border-on-primary/30 border-t-on-primary rounded-full"></span><span
+                v-else
+                class="material-symbols-outlined text-[16px]">refresh</span>{{quotaAllLoading?'查询中...':(quotaAccounts.length>0?'刷新配额':'查询配额')}}</button>
+          </div>
+          <div class="grid grid-cols-3 gap-gutter">
+            <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md text-center">
+              <p class="font-headline-md text-headline-md text-primary">{{fmtNum(quotaSummary.totalRemain)}}</p>
+              <p class="font-body-sm text-body-sm text-secondary">剩余</p>
+            </div>
+            <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md text-center">
+              <p class="font-headline-md text-headline-md text-primary">{{fmtNum(quotaSummary.totalCredits)}}</p>
+              <p class="font-body-sm text-body-sm text-secondary">总积分</p>
+            </div>
+            <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md text-center">
+              <p class="font-headline-md text-headline-md text-primary">{{quotaSummary.accountCount}}</p>
+              <p class="font-body-sm text-body-sm text-secondary">账户</p>
+            </div>
+          </div>
+          <div class="bg-surface-container-lowest border border-outline-variant rounded-xl overflow-hidden">
+            <div v-if="quotaAccounts.length>0" class="divide-y divide-outline-variant">
+              <div v-for="acc in quotaAccounts" :key="acc.name" class="group">
+                <button @click="acc.expanded=!acc.expanded"
+                  class="w-full flex items-center justify-between px-md py-sm hover:bg-surface-container-low/50 transition-colors text-left">
+                  <div class="flex items-center gap-sm min-w-0">
+                    <span class="material-symbols-outlined text-secondary transition-all duration-200 left-0.5"
+                      :class="acc.expanded?'rotate-90':'rotate-0'">chevron_right</span>
+                    <span class="font-medium text-primary truncate">{{acc.name}}</span>
+                    <span class="text-secondary text-[11px] font-label-md whitespace-nowrap">{{acc.packages.length}}
+                      个套餐</span>
+                  </div>
+                  <div class="flex items-center gap-sm shrink-0">
+                    <div class="w-24 bg-surface-container-low rounded-full h-1.5 overflow-hidden">
+                      <div class="h-full rounded-full transition-all duration-500"
+                        :class="acc.remainPercent>30?'bg-primary':acc.remainPercent>10?'bg-secondary':'bg-error'"
+                        :style="{width:acc.remainPercent+'%'}"></div>
+                    </div>
+                    <span
+                      class="text-secondary text-[11px] font-label-md w-28 text-right">{{fmtNum(acc.totalRemain)}}/{{fmtNum(acc.totalQuota)}}</span>
+                  </div>
+                </button>
+                <div v-show="acc.expanded" class="bg-surface-container-low/40">
+                  <table class="w-full text-body-sm">
+                    <thead class="text-secondary font-label-md uppercase tracking-wider text-[10px]">
+                      <tr>
+                        <th class="text-left px-md py-2 pl-12">套餐</th>
+                        <th class="text-left px-md py-2">类型</th>
+                        <th class="text-left px-md py-2">剩余/总计</th>
+                        <th class="text-left px-md py-2">周期</th>
+                      </tr>
+                    </thead>
+                    <tbody class="divide-y divide-outline-variant/50">
+                      <tr v-for="(pkg,i) in acc.packages" :key="i"
+                        class="hover:bg-surface-container-low/50 transition-colors">
+                        <td class="px-md py-2 pl-12 text-on-surface-variant">{{pkg.package}}</td>
+                        <td class="px-md py-2"><span :class="pkg.typeClass"
+                            class="font-label-md text-[10px] px-2 py-0.5 rounded">{{pkg.typeLabel}}</span></td>
+                        <td class="px-md py-2">
+                          <div class="flex items-center gap-sm">
+                            <div class="w-20 bg-surface-container-low rounded-full h-1.5 overflow-hidden">
+                              <div class="h-full rounded-full transition-all duration-500"
+                                :class="pkg.remainPercent>30?'bg-primary':pkg.remainPercent>10?'bg-secondary':'bg-error'"
+                                :style="{width:pkg.remainPercent+'%'}"></div>
+                            </div><span
+                              class="text-secondary text-[11px] font-label-md">{{fmtNum(pkg.remain)}}/{{fmtNum(pkg.total)}}</span>
+                          </div>
+                        </td>
+                        <td class="px-md py-2 text-secondary text-[11px]">{{pkg.cycle}}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
               </div>
-              <span
-                class="text-secondary text-[11px] font-label-md w-28 text-right">{{fmtNum(acc.totalRemain)}}/{{fmtNum(acc.totalQuota)}}</span>
             </div>
-          </button>
-          <div v-show="acc.expanded" class="bg-surface-container-low/40">
-            <table class="w-full text-body-sm">
-              <thead class="text-secondary font-label-md uppercase tracking-wider text-[10px]">
+          </div>
+        </div>
+        <div v-else-if="currentPage==='proxy'" class="space-y-lg">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-sm"><span class="inline-block w-2 h-2 rounded-full"
+                :class="proxyInfo.running?'bg-primary animate-pulse':'bg-outline'"></span><span
+                class="font-body-sm text-body-sm text-secondary">{{proxyInfo.running?'运行中':'已停止'}}</span></div>
+            <div class="flex items-center gap-sm">
+              <button @click="showAddKeyModal=true"
+                class="inline-flex items-center gap-xs px-3 py-1.5 bg-surface-container-low border border-outline-variant text-primary font-label-md text-label-md rounded-lg hover:bg-surface-container-high transition-colors"><span
+                  class="material-symbols-outlined text-[16px]">add</span>添加密钥</button>
+              <button @click="toggleProxy" :disabled="proxyLoading"
+                :class="proxyInfo.running?'bg-error-container text-on-error-container':'bg-primary text-on-primary'"
+                class="inline-flex items-center gap-xs px-3 py-1.5 font-label-md text-label-md rounded-lg hover:opacity-90 transition-opacity disabled:opacity-30"><span
+                  v-if="proxyLoading"
+                  class="spinner inline-block w-3.5 h-3.5 border-2 border-current/30 border-t-current rounded-full"></span><span
+                  v-else
+                  class="material-symbols-outlined text-[16px]">{{proxyInfo.running?'stop':'play_arrow'}}</span>{{proxyInfo.running?'停止':'启动'}}</button>
+            </div>
+          </div>
+          <div class="grid grid-cols-4 gap-gutter">
+            <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md">
+              <p class="font-body-sm text-body-sm text-secondary">代理地址</p>
+              <p class="font-label-md text-label-md text-primary mt-sm">http://localhost:8867</p>
+              <p class="font-body-sm text-[10px] text-on-surface-variant mt-xs">OpenAI-compatible</p>
+            </div>
+            <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md">
+              <p class="font-body-sm text-body-sm text-secondary">上游 API</p>
+              <p class="font-label-md text-label-md text-primary mt-sm text-[11px]">copilot.tencent.com</p>
+              <p class="font-body-sm text-[10px] text-on-surface-variant mt-xs">/v2 代理</p>
+            </div>
+            <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md text-center">
+              <p class="font-headline-md text-headline-md text-primary">{{proxyInfo.total_keys}}</p>
+              <p class="font-body-sm text-body-sm text-secondary">密钥总数</p>
+            </div>
+            <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md text-center">
+              <p class="font-headline-md text-headline-md text-primary">{{proxyInfo.active_keys}}</p>
+              <p class="font-body-sm text-body-sm text-secondary">可用</p>
+            </div>
+          </div>
+          <div class="bg-surface-container-lowest border border-outline-variant rounded-xl overflow-hidden">
+            <table class="w-full text-body-sm" v-if="proxyInfo.keys.length>0">
+              <thead class="bg-surface-container-low text-secondary font-label-md uppercase tracking-wider text-[10px]">
                 <tr>
-                  <th class="text-left px-md py-2 pl-12">套餐</th>
-                  <th class="text-left px-md py-2">类型</th>
-                  <th class="text-left px-md py-2">剩余/总计</th>
-                  <th class="text-left px-md py-2">周期</th>
+                  <th class="text-left px-md py-sm">密钥</th>
+                  <th class="text-left px-md py-sm">账户</th>
+                  <th class="text-left px-md py-sm">积分</th>
+                  <th class="text-left px-md py-sm">状态</th>
+                  <th class="text-left px-md py-sm"></th>
                 </tr>
               </thead>
-              <tbody class="divide-y divide-outline-variant/50">
-                <tr v-for="(pkg,i) in acc.packages" :key="i"
-                  class="hover:bg-surface-container-low/50 transition-colors">
-                  <td class="px-md py-2 pl-12 text-on-surface-variant">{{pkg.package}}</td>
-                  <td class="px-md py-2"><span :class="pkg.typeClass"
-                      class="font-label-md text-[10px] px-2 py-0.5 rounded">{{pkg.typeLabel}}</span></td>
-                  <td class="px-md py-2">
-                    <div class="flex items-center gap-sm">
-                      <div class="w-20 bg-surface-container-low rounded-full h-1.5 overflow-hidden">
-                        <div class="h-full rounded-full transition-all duration-500"
-                          :class="pkg.remainPercent>30?'bg-primary':pkg.remainPercent>10?'bg-secondary':'bg-error'"
-                          :style="{width:pkg.remainPercent+'%'}"></div>
-                      </div><span
-                        class="text-secondary text-[11px] font-label-md">{{fmtNum(pkg.remain)}}/{{fmtNum(pkg.total)}}</span>
+              <tbody class="divide-y divide-outline-variant">
+                <tr v-for="k in proxyInfo.keys" :key="k.id" class="hover:bg-surface-container-low/50 transition-colors">
+                  <td class="px-md py-sm font-label-md text-[11px] text-on-surface-variant">{{k.prefix}}****{{k.suffix}}
+                  </td>
+                  <td class="px-md py-sm text-secondary">{{k.account}}</td>
+                  <td class="px-md py-sm font-label-md text-[11px] text-primary">{{fmtNum(k.quota_remaining)}}</td>
+                  <td class="px-md py-sm"><span
+                      :class="k.active?'bg-secondary-container text-on-secondary-container':k.status==='disabled'?'bg-surface-container text-secondary':'bg-error-container text-on-error-container'"
+                      class="font-label-md text-[10px] px-2 py-0.5 rounded">{{k.active?'活跃':k.status==='disabled'?'已禁用':'已耗尽'}}</span>
+                  </td>
+                  <td class="px-md py-sm">
+                    <div class="flex items-center gap-xs">
+                      <button @click="toggleProxyKey(k)" :disabled="proxyKeyLoading[k.id]"
+                        :class="k.active?'bg-primary':'bg-outline'"
+                        class="relative w-9 h-5 rounded-full transition-colors duration-200 focus:outline-none disabled:opacity-30"
+                        :title="k.active?'禁用':'启用'"><span :class="k.active?'translate-x-[16px]':'translate-x-[1px]'"
+                          class="absolute top-0.5 left-0 w-4 h-4 bg-white rounded-full shadow transition-all duration-200 left-0.5"></span>
+                      </button>
+                      <button @click="deleteProxyKey(k.id)"
+                        class="w-7 h-7 flex items-center justify-center rounded-lg text-secondary hover:bg-surface-container-low hover:text-error transition-colors"
+                        title="删除"><span class="material-symbols-outlined text-[16px]">delete</span></button>
                     </div>
                   </td>
-                  <td class="px-md py-2 text-secondary text-[11px]">{{pkg.cycle}}</td>
                 </tr>
               </tbody>
             </table>
+            <div v-else class="text-center py-xl text-secondary font-body-sm text-body-sm">密钥池为空</div>
           </div>
         </div>
-      </div>
+        <div v-else-if="currentPage==='settings'" class="max-w-xl space-y-lg">
+          <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md space-y-md">
+            <div><label class="font-label-md text-label-md text-primary block mb-xs">网页端口</label><input
+                v-model.number="settings.webPort" type="number"
+                class="w-full h-6 px-2.5 py-1 bg-surface-container-low border border-outline-variant rounded-lg text-body-sm text-primary font-label-md outline-none focus:ring-1 focus:ring-primary focus:border-primary">
+            </div>
+            <div><label class="font-label-md text-label-md text-primary block mb-xs">代理端口</label><input
+                v-model.number="settings.proxyPort" type="number"
+                class="w-full h-6 px-2.5 py-1 bg-surface-container-low border border-outline-variant rounded-lg text-body-sm text-primary font-label-md outline-none focus:ring-1 focus:ring-primary focus:border-primary">
+            </div>
+            <div><label class="font-label-md text-label-md text-primary block mb-xs">HTTP 代理（可选）</label><input
+                v-model="settings.httpProxy" placeholder="http://127.0.0.1:7890"
+                class="w-full h-6 px-2.5 py-1 bg-surface-container-low border border-outline-variant rounded-lg text-body-sm text-primary font-label-md outline-none focus:ring-1 focus:ring-primary focus:border-primary">
+            </div>
+            <div class="flex items-center justify-between"><span
+                class="font-label-md text-label-md text-primary">自动启动代理</span><button
+                @click="settings.autoStartProxy=!settings.autoStartProxy"
+                :class="settings.autoStartProxy?'bg-primary':'bg-outline'"
+                class="relative w-9 h-5 rounded-full transition-colors duration-200 focus:outline-none shrink-0" role="switch"
+                :aria-checked="settings.autoStartProxy"><span
+                  :class="settings.autoStartProxy?'translate-x-[16px]':'translate-x-[1px]'"
+                  class="absolute top-0.5 left-0 w-4 h-4 bg-white rounded-full shadow transition-all duration-200 left-0.5"></span></button>
+            </div>
+            <button @click="saveSettings"
+              class="inline-flex items-center gap-xs px-3 py-1.5 bg-primary text-on-primary font-label-md text-label-md rounded-lg hover:opacity-90 transition-opacity w-full justify-center">保存设置</button>
+          </div>
+        </div>
+      </main>
     </div>
-  </div>
-  <div v-else-if="currentPage==='proxy'" class="space-y-lg">
-    <div class="flex items-center justify-between">
-      <div class="flex items-center gap-sm"><span class="inline-block w-2 h-2 rounded-full"
-          :class="proxyInfo.running?'bg-primary animate-pulse':'bg-outline'"></span><span
-          class="font-body-sm text-body-sm text-secondary">{{proxyInfo.running?'运行中':'已停止'}}</span></div>
-      <div class="flex items-center gap-sm">
-        <button @click="showAddKeyModal=true"
-          class="inline-flex items-center gap-xs px-3 py-1.5 bg-surface-container-low border border-outline-variant text-primary font-label-md text-label-md rounded-lg hover:bg-surface-container-high transition-colors"><span
-            class="material-symbols-outlined text-[16px]">add</span>添加密钥</button>
-        <button @click="toggleProxy" :disabled="proxyLoading"
-          :class="proxyInfo.running?'bg-error-container text-on-error-container':'bg-primary text-on-primary'"
-          class="inline-flex items-center gap-xs px-3 py-1.5 font-label-md text-label-md rounded-lg hover:opacity-90 transition-opacity disabled:opacity-30"><span
-            v-if="proxyLoading"
-            class="spinner inline-block w-3.5 h-3.5 border-2 border-current/30 border-t-current rounded-full"></span><span
-            v-else
-            class="material-symbols-outlined text-[16px]">{{proxyInfo.running?'stop':'play_arrow'}}</span>{{proxyInfo.running?'停止':'启动'}}</button>
-      </div>
-    </div>
-    <div class="grid grid-cols-4 gap-gutter">
-      <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md">
-        <p class="font-body-sm text-body-sm text-secondary">代理地址</p>
-        <p class="font-label-md text-label-md text-primary mt-sm">http://localhost:8867</p>
-        <p class="font-body-sm text-[10px] text-on-surface-variant mt-xs">OpenAI-compatible</p>
-      </div>
-      <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md">
-        <p class="font-body-sm text-body-sm text-secondary">上游 API</p>
-        <p class="font-label-md text-label-md text-primary mt-sm text-[11px]">copilot.tencent.com</p>
-        <p class="font-body-sm text-[10px] text-on-surface-variant mt-xs">/v2 代理</p>
-      </div>
-      <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md text-center">
-        <p class="font-headline-md text-headline-md text-primary">{{proxyInfo.total_keys}}</p>
-        <p class="font-body-sm text-body-sm text-secondary">密钥总数</p>
-      </div>
-      <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md text-center">
-        <p class="font-headline-md text-headline-md text-primary">{{proxyInfo.active_keys}}</p>
-        <p class="font-body-sm text-body-sm text-secondary">可用</p>
-      </div>
-    </div>
-    <div class="bg-surface-container-lowest border border-outline-variant rounded-xl overflow-hidden">
-      <table class="w-full text-body-sm" v-if="proxyInfo.keys.length>0">
-        <thead class="bg-surface-container-low text-secondary font-label-md uppercase tracking-wider text-[10px]">
-          <tr>
-            <th class="text-left px-md py-sm">密钥</th>
-            <th class="text-left px-md py-sm">账户</th>
-            <th class="text-left px-md py-sm">积分</th>
-            <th class="text-left px-md py-sm">状态</th>
-            <th class="text-left px-md py-sm"></th>
-          </tr>
-        </thead>
-        <tbody class="divide-y divide-outline-variant">
-          <tr v-for="k in proxyInfo.keys" :key="k.id" class="hover:bg-surface-container-low/50 transition-colors">
-            <td class="px-md py-sm font-label-md text-[11px] text-on-surface-variant">{{k.prefix}}****{{k.suffix}}
-            </td>
-            <td class="px-md py-sm text-secondary">{{k.account}}</td>
-            <td class="px-md py-sm font-label-md text-[11px] text-primary">{{fmtNum(k.quota_remaining)}}</td>
-            <td class="px-md py-sm"><span
-                :class="k.active?'bg-secondary-container text-on-secondary-container':k.status==='disabled'?'bg-surface-container text-secondary':'bg-error-container text-on-error-container'"
-                class="font-label-md text-[10px] px-2 py-0.5 rounded">{{k.active?'活跃':k.status==='disabled'?'已禁用':'已耗尽'}}</span>
-            </td>
-            <td class="px-md py-sm">
-            <div class="flex items-center gap-xs">
-             <button @click="toggleProxyKey(k)" :disabled="proxyKeyLoading[k.id]"
-               :class="k.active?'bg-primary':'bg-outline'"
-               class="relative w-9 h-5 rounded-full transition-colors duration-200 focus:outline-none disabled:opacity-30"
-              :title="k.active?'禁用':'启用'"><span
-                :class="k.active?'translate-x-[18px]':'translate-x-0.5'"
-                class="absolute top-0.5 left-0 w-4 h-4 bg-white rounded-full shadow transition-all duration-200 left-0.5"></span>
-             </button>
-               <button @click="deleteProxyKey(k.id)"
-                  class="w-7 h-7 flex items-center justify-center rounded-lg text-secondary hover:bg-surface-container-low hover:text-error transition-colors"
-                  title="删除"><span class="material-symbols-outlined text-[16px]">delete</span></button>
-              </div>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-      <div v-else class="text-center py-xl text-secondary font-body-sm text-body-sm">密钥池为空</div>
-    </div>
-  </div>
-  <div v-else-if="currentPage==='settings'" class="max-w-xl space-y-lg">
-    <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md space-y-md">
-      <div><label class="font-label-md text-label-md text-primary block mb-xs">网页端口</label><input
-          v-model.number="settings.webPort" type="number"
-          class="w-full h-6 px-2.5 py-1 bg-surface-container-low border border-outline-variant rounded-lg text-body-sm text-primary font-label-md outline-none focus:ring-1 focus:ring-primary focus:border-primary">
-      </div>
-      <div><label class="font-label-md text-label-md text-primary block mb-xs">代理端口</label><input
-          v-model.number="settings.proxyPort" type="number"
-          class="w-full h-6 px-2.5 py-1 bg-surface-container-low border border-outline-variant rounded-lg text-body-sm text-primary font-label-md outline-none focus:ring-1 focus:ring-primary focus:border-primary">
-      </div>
-      <div><label class="font-label-md text-label-md text-primary block mb-xs">HTTP 代理（可选）</label><input
-          v-model="settings.httpProxy" placeholder="http://127.0.0.1:7890"
-          class="w-full h-6 px-2.5 py-1 bg-surface-container-low border border-outline-variant rounded-lg text-body-sm text-primary font-label-md outline-none focus:ring-1 focus:ring-primary focus:border-primary">
-      </div>
-      <div class="flex items-center justify-between"><span
-          class="font-label-md text-label-md text-primary">自动启动代理</span><button
-       @click="settings.autoStartProxy=!settings.autoStartProxy"
-       :class="settings.autoStartProxy?'bg-primary':'bg-outline-variant'"
-       class="w-9 h-5 rounded-full transition-colors duration-200 relative shrink-0" role="switch"
-     :aria-checked="settings.autoStartProxy"><span
-       :class="settings.autoStartProxy?'translate-x-[1.125rem]':''"
-       class="absolute top-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-all duration-200 left-0.5"></span></button>
-      </div>
-      <button @click="saveSettings"
-        class="inline-flex items-center gap-xs px-3 py-1.5 bg-primary text-on-primary font-label-md text-label-md rounded-lg hover:opacity-90 transition-opacity w-full justify-center">保存设置</button>
-    </div>
-  </div>
-  </main>
-  </div>
 
-  <Transition name="fade">
-    <div v-if="showAddModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-md"
-      @click.self="showAddModal=false">
-      <div
-        class="bg-surface-container-lowest border border-outline-variant rounded-xl w-full max-w-lg overflow-hidden pro-shadow"
-        @click.stop>
-        <div class="h-12 border-b border-outline-variant flex items-center justify-between px-md">
-          <h3 class="font-headline-sm text-body-md font-semibold text-primary">添加账户</h3>
-          <button @click="showAddModal=false"
-            class="w-8 h-8 flex items-center justify-center text-secondary hover:bg-surface-container-low rounded-lg transition-colors"><span
-              class="material-symbols-outlined">close</span></button>
-        </div>
-        <div class="p-lg space-y-md">
-          <div class="flex gap-xs bg-surface-container-low rounded-lg p-0.5">
-            <button v-for="m in addMethods" :key="m.id" @click="addMethod=m.id"
-              :class="['flex-1 py-1 px-2 rounded-md font-label-md text-label-md transition-colors duration-100',addMethod===m.id?'bg-surface-container-lowest text-primary pro-shadow':'text-secondary hover:text-primary']">{{m.label}}</button>
-          </div>
-          <div v-if="addMethod==='apikey'" class="space-y-md">
-            <div><label class="font-label-md text-label-md text-primary block mb-xs">API Key</label><input
-                v-model="addForm.api_key" placeholder="ck_xxxxxxxxxxxxxxxx"
-                class="w-full h-6 px-2.5 py-1 bg-surface-container-low border border-outline-variant rounded-lg text-body-sm font-label-md outline-none focus:ring-1 focus:ring-primary focus:border-primary">
-              <p class="font-body-sm text-[11px] text-on-surface-variant mt-xs">从 CodeBuddy 控制台获取 API Key，必须以 ck_ 开头。
-              </p>
-            </div>
-            <div><label class="font-label-md text-label-md text-primary block mb-xs">昵称（可选）</label><input
-                v-model="addForm.nickname" placeholder="我的账户 1"
-                class="w-full h-6 px-2.5 py-1 bg-surface-container-low border border-outline-variant rounded-lg text-body-sm font-label-md outline-none focus:ring-1 focus:ring-primary focus:border-primary">
-            </div>
-          </div>
-          <div v-else-if="addMethod==='jwt'" class="space-y-md">
-            <div><label class="font-label-md text-label-md text-primary block mb-xs">访问令牌 (JWT)</label><textarea
-                v-model="addForm.access_token" rows="3" placeholder="eyJhbGciOi..."
-                class="w-full px-2.5 py-1 bg-surface-container-low border border-outline-variant rounded-lg text-body-sm font-label-md outline-none focus:ring-1 focus:ring-primary focus:border-primary resize-none"></textarea>
-            </div>
-            <div><label class="font-label-md text-label-md text-primary block mb-xs">X-User-Id</label><input
-                v-model="addForm.uid" placeholder="用户 UID"
-                class="w-full h-6 px-2.5 py-1 bg-surface-container-low border border-outline-variant rounded-lg text-body-sm font-label-md outline-none focus:ring-1 focus:ring-primary focus:border-primary">
-            </div>
-            <div><label class="font-label-md text-label-md text-primary block mb-xs">昵称（可选）</label><input
-                v-model="addForm.nickname" placeholder="我的账户 2"
-                class="w-full h-6 px-2.5 py-1 bg-surface-container-low border border-outline-variant rounded-lg text-body-sm font-label-md outline-none focus:ring-1 focus:ring-primary focus:border-primary">
-            </div>
-          </div>
-          <div v-else-if="addMethod==='workbuddy'" class="space-y-md">
-            <div
-              class="bg-surface-container-low border border-outline-variant rounded-lg p-md font-body-sm text-body-sm text-on-surface-variant">
-              从本地 WorkBuddy 安装中自动提取已登录账户。需要 WorkBuddy 已安装并登录。</div>
-          </div>
-          <p v-if="addError" class="font-body-sm text-body-sm text-error">{{addError}}</p>
-          <div class="flex justify-end gap-sm pt-sm border-t border-outline-variant">
+    <Transition name="fade">
+      <div v-if="showAddModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-md"
+        @click.self="showAddModal=false">
+        <div
+          class="bg-surface-container-lowest border border-outline-variant rounded-xl w-full max-w-lg overflow-hidden pro-shadow"
+          @click.stop>
+          <div class="h-12 border-b border-outline-variant flex items-center justify-between px-md">
+            <h3 class="font-headline-sm text-body-md font-semibold text-primary">添加账户</h3>
             <button @click="showAddModal=false"
-              class="px-3 py-1.5 text-secondary font-label-md text-label-md rounded-lg hover:bg-surface-container-low transition-colors">取消</button>
-            <button @click="addAccount" :disabled="addLoading"
-              class="inline-flex items-center gap-xs px-3 py-1.5 bg-primary text-on-primary font-label-md text-label-md rounded-lg hover:opacity-90 transition-opacity disabled:opacity-30"><span
-                v-if="addLoading"
-                class="spinner inline-block w-3.5 h-3.5 border-2 border-on-primary/30 border-t-on-primary rounded-full"></span><span
-                v-else
-                class="material-symbols-outlined text-[16px]">{{addMethod==='workbuddy'?'sync':'add'}}</span>{{addLoading?'添加中...':(addMethod==='workbuddy'?'提取':'添加账户')}}</button>
+              class="w-8 h-8 flex items-center justify-center text-secondary hover:bg-surface-container-low rounded-lg transition-colors"><span
+                class="material-symbols-outlined">close</span></button>
+          </div>
+          <div class="p-lg space-y-md">
+            <div class="flex gap-xs bg-surface-container-low rounded-lg p-0.5">
+              <button v-for="m in addMethods" :key="m.id" @click="addMethod=m.id"
+                :class="['flex-1 py-1 px-2 rounded-md font-label-md text-label-md transition-colors duration-100',addMethod===m.id?'bg-surface-container-lowest text-primary pro-shadow':'text-secondary hover:text-primary']">{{m.label}}</button>
+            </div>
+            <div v-if="addMethod==='apikey'" class="space-y-md">
+              <div><label class="font-label-md text-label-md text-primary block mb-xs">API Key</label><input
+                  v-model="addForm.api_key" placeholder="ck_xxxxxxxxxxxxxxxx"
+                  class="w-full h-6 px-2.5 py-1 bg-surface-container-low border border-outline-variant rounded-lg text-body-sm font-label-md outline-none focus:ring-1 focus:ring-primary focus:border-primary">
+                <p class="font-body-sm text-[11px] text-on-surface-variant mt-xs">从 CodeBuddy 控制台获取 API Key，必须以 ck_ 开头。
+                </p>
+              </div>
+              <div><label class="font-label-md text-label-md text-primary block mb-xs">昵称（可选）</label><input
+                  v-model="addForm.nickname" placeholder="我的账户 1"
+                  class="w-full h-6 px-2.5 py-1 bg-surface-container-low border border-outline-variant rounded-lg text-body-sm font-label-md outline-none focus:ring-1 focus:ring-primary focus:border-primary">
+              </div>
+            </div>
+            <div v-else-if="addMethod==='jwt'" class="space-y-md">
+              <div><label class="font-label-md text-label-md text-primary block mb-xs">访问令牌 (JWT)</label><textarea
+                  v-model="addForm.access_token" rows="3" placeholder="eyJhbGciOi..."
+                  class="w-full px-2.5 py-1 bg-surface-container-low border border-outline-variant rounded-lg text-body-sm font-label-md outline-none focus:ring-1 focus:ring-primary focus:border-primary resize-none"></textarea>
+              </div>
+              <div><label class="font-label-md text-label-md text-primary block mb-xs">X-User-Id</label><input
+                  v-model="addForm.uid" placeholder="用户 UID"
+                  class="w-full h-6 px-2.5 py-1 bg-surface-container-low border border-outline-variant rounded-lg text-body-sm font-label-md outline-none focus:ring-1 focus:ring-primary focus:border-primary">
+              </div>
+              <div><label class="font-label-md text-label-md text-primary block mb-xs">昵称（可选）</label><input
+                  v-model="addForm.nickname" placeholder="我的账户 2"
+                  class="w-full h-6 px-2.5 py-1 bg-surface-container-low border border-outline-variant rounded-lg text-body-sm font-label-md outline-none focus:ring-1 focus:ring-primary focus:border-primary">
+              </div>
+            </div>
+            <div v-else-if="addMethod==='workbuddy'" class="space-y-md">
+              <div
+                class="bg-surface-container-low border border-outline-variant rounded-lg p-md font-body-sm text-body-sm text-on-surface-variant">
+                从本地 WorkBuddy 安装中自动提取已登录账户。需要 WorkBuddy 已安装并登录。</div>
+            </div>
+            <p v-if="addError" class="font-body-sm text-body-sm text-error">{{addError}}</p>
+            <div class="flex justify-end gap-sm pt-sm border-t border-outline-variant">
+              <button @click="showAddModal=false"
+                class="px-3 py-1.5 text-secondary font-label-md text-label-md rounded-lg hover:bg-surface-container-low transition-colors">取消</button>
+              <button @click="addAccount" :disabled="addLoading"
+                class="inline-flex items-center gap-xs px-3 py-1.5 bg-primary text-on-primary font-label-md text-label-md rounded-lg hover:opacity-90 transition-opacity disabled:opacity-30"><span
+                  v-if="addLoading"
+                  class="spinner inline-block w-3.5 h-3.5 border-2 border-on-primary/30 border-t-on-primary rounded-full"></span><span
+                  v-else
+                  class="material-symbols-outlined text-[16px]">{{addMethod==='workbuddy'?'sync':'add'}}</span>{{addLoading?'添加中...':(addMethod==='workbuddy'?'提取':'添加账户')}}</button>
+            </div>
           </div>
         </div>
       </div>
-    </div>
-  </Transition>
-  <Transition name="fade">
-    <div v-if="showAddKeyModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-md"
-      @click.self="showAddKeyModal=false">
-      <div
-        class="bg-surface-container-lowest border border-outline-variant rounded-xl w-full max-w-sm overflow-hidden pro-shadow"
-        @click.stop>
-        <div class="h-12 border-b border-outline-variant flex items-center justify-between px-md">
-          <h3 class="font-headline-sm text-body-md font-semibold text-primary">添加代理密钥</h3>
-          <button @click="showAddKeyModal=false"
-            class="w-8 h-8 flex items-center justify-center text-secondary hover:bg-surface-container-low rounded-lg transition-colors"><span
-              class="material-symbols-outlined">close</span></button>
-        </div>
-        <div class="p-lg space-y-md">
-          <div><label class="font-label-md text-label-md text-primary block mb-xs">API Key</label><input
-              v-model="addKeyForm.api_key" placeholder="ck_xxxxxxxxxxxxxxxx"
-              class="w-full h-6 px-2.5 py-1 bg-surface-container-low border border-outline-variant rounded-lg text-body-sm font-label-md outline-none focus:ring-1 focus:ring-primary focus:border-primary">
-          </div>
-          <div><label class="font-label-md text-label-md text-primary block mb-xs">账户名称（可选）</label><input
-              v-model="addKeyForm.account_name" placeholder="我的密钥"
-              class="w-full h-6 px-2.5 py-1 bg-surface-container-low border border-outline-variant rounded-lg text-body-sm font-label-md outline-none focus:ring-1 focus:ring-primary focus:border-primary">
-          </div>
-          <p v-if="addKeyError" class="font-body-sm text-body-sm text-error">{{addKeyError}}</p>
-          <div class="flex justify-end gap-sm pt-sm border-t border-outline-variant">
+    </Transition>
+    <Transition name="fade">
+      <div v-if="showAddKeyModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-md"
+        @click.self="showAddKeyModal=false">
+        <div
+          class="bg-surface-container-lowest border border-outline-variant rounded-xl w-full max-w-sm overflow-hidden pro-shadow"
+          @click.stop>
+          <div class="h-12 border-b border-outline-variant flex items-center justify-between px-md">
+            <h3 class="font-headline-sm text-body-md font-semibold text-primary">添加代理密钥</h3>
             <button @click="showAddKeyModal=false"
-              class="px-3 py-1.5 text-secondary font-label-md text-label-md rounded-lg hover:bg-surface-container-low transition-colors">取消</button>
-            <button @click="addProxyKey" :disabled="addKeyLoading"
-              class="inline-flex items-center gap-xs px-3 py-1.5 bg-primary text-on-primary font-label-md text-label-md rounded-lg hover:opacity-90 transition-opacity disabled:opacity-30"><span
-                v-if="addKeyLoading"
-                class="spinner inline-block w-3.5 h-3.5 border-2 border-on-primary/30 border-t-on-primary rounded-full"></span>添加密钥</button>
+              class="w-8 h-8 flex items-center justify-center text-secondary hover:bg-surface-container-low rounded-lg transition-colors"><span
+                class="material-symbols-outlined">close</span></button>
+          </div>
+          <div class="p-lg space-y-md">
+            <div><label class="font-label-md text-label-md text-primary block mb-xs">API Key</label><input
+                v-model="addKeyForm.api_key" placeholder="ck_xxxxxxxxxxxxxxxx"
+                class="w-full h-6 px-2.5 py-1 bg-surface-container-low border border-outline-variant rounded-lg text-body-sm font-label-md outline-none focus:ring-1 focus:ring-primary focus:border-primary">
+            </div>
+            <div><label class="font-label-md text-label-md text-primary block mb-xs">账户名称（可选）</label><input
+                v-model="addKeyForm.account_name" placeholder="我的密钥"
+                class="w-full h-6 px-2.5 py-1 bg-surface-container-low border border-outline-variant rounded-lg text-body-sm font-label-md outline-none focus:ring-1 focus:ring-primary focus:border-primary">
+            </div>
+            <p v-if="addKeyError" class="font-body-sm text-body-sm text-error">{{addKeyError}}</p>
+            <div class="flex justify-end gap-sm pt-sm border-t border-outline-variant">
+              <button @click="showAddKeyModal=false"
+                class="px-3 py-1.5 text-secondary font-label-md text-label-md rounded-lg hover:bg-surface-container-low transition-colors">取消</button>
+              <button @click="addProxyKey" :disabled="addKeyLoading"
+                class="inline-flex items-center gap-xs px-3 py-1.5 bg-primary text-on-primary font-label-md text-label-md rounded-lg hover:opacity-90 transition-opacity disabled:opacity-30"><span
+                  v-if="addKeyLoading"
+                  class="spinner inline-block w-3.5 h-3.5 border-2 border-on-primary/30 border-t-on-primary rounded-full"></span>添加密钥</button>
+            </div>
           </div>
         </div>
       </div>
-    </div>
-  </Transition>
-  <Transition name="fade">
-    <div v-if="toast.show"
-      :class="toast.type==='error'?'bg-error-container text-on-error-container':'bg-secondary-container text-on-secondary-container'"
-      class="fixed bottom-md right-md px-md py-sm rounded-lg font-label-md text-label-md pro-shadow z-50 max-w-sm">
-      {{toast.msg}}</div>
-  </Transition>
+    </Transition>
+    <Transition name="fade">
+      <div v-if="toast.show"
+        :class="toast.type==='error'?'bg-error-container text-on-error-container':'bg-secondary-container text-on-secondary-container'"
+        class="fixed bottom-md right-md px-md py-sm rounded-lg font-label-md text-label-md pro-shadow z-50 max-w-sm">
+        {{toast.msg}}</div>
+    </Transition>
   </div>
 
   <script type="module">
@@ -551,8 +551,9 @@
         async function addProxyKey() { addKeyLoading.value = true; addKeyError.value = ''; const r = await fetch('/api/proxy/keys/add', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ api_key: addKeyForm.api_key, account_name: addKeyForm.account_name }) }); const d = await r.json(); addKeyLoading.value = false; if (r.ok) { showToast('密钥已添加'); showAddKeyModal.value = false; addKeyForm.api_key = ''; addKeyForm.account_name = ''; await loadProxyStatus(); } else { addKeyError.value = d.detail || '添加失败'; } }
         async function deleteProxyKey(kid) { if (!confirm('确认删除此密钥？')) return; await api('/api/proxy/keys/' + kid + '/delete', { method: 'POST' }); showToast('密钥已删除'); await loadProxyStatus(); }
         async function toggleProxyKey(k) { proxyKeyLoading[k.id] = true; const d = await api('/api/proxy/keys/' + k.id + '/toggle', { method: 'POST' }); proxyKeyLoading[k.id] = false; if (d) { k.active = d.active; showToast(d.active ? '已启用' : '已禁用'); } }
-        function saveSettings() { showToast('设置已保存（重启生效）'); }
-        onMounted(async () => { loadQuotaCache(); await loadAccounts(); await loadProxyStatus(); });
+        async function saveSettings() { const r = await api('/api/settings', { method: 'POST', body: JSON.stringify({ webPort: settings.webPort, proxyPort: settings.proxyPort, httpProxy: settings.httpProxy, autoStartProxy: settings.autoStartProxy }) }); if (r && r.success) { showToast('设置已保存（重启生效）'); } else { showToast('保存失败', 'error'); } }
+        async function loadSettings() { const d = await api('/api/settings'); if (d) { settings.webPort = d.webPort || 8866; settings.proxyPort = d.proxyPort || 8867; settings.httpProxy = d.httpProxy || ''; settings.autoStartProxy = d.autoStartProxy !== undefined ? d.autoStartProxy : true; } }
+        onMounted(async () => { loadQuotaCache(); await loadSettings(); await loadAccounts(); await loadProxyStatus(); });
         return { currentPage, activePageLabel, navItems, now, port, toast, showToast, fmtNum, stats, accounts, showAddModal, addMethod, addMethods, addForm, addLoading, addError, addAccount, deleteAccount, quotaLoading, checkinLoading, querySingleQuota, checkinSingle, checkinAllLoading, lastCheckin, checkinLogs, checkinAll, quotaAllLoading, quotaSummary, quotaAccounts, queryAllQuota, refreshQuota, proxyInfo, proxyLoading, toggleProxy, showAddKeyModal, addKeyForm, addKeyLoading, addKeyError, addProxyKey, deleteProxyKey, proxyKeyLoading, toggleProxyKey, settings, saveSettings };
       }
     }).mount('#app');
@@ -560,7 +561,3 @@
 </body>
 
 </html>
-
-
-
-

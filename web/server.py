@@ -28,11 +28,13 @@ from web.api.accounts import router as accounts_router
 from web.api.checkin import router as checkin_router
 from web.api.quota import router as quota_router
 from web.api.proxy import router as proxy_router
+from web.api.settings import router as settings_router
 
 app.include_router(accounts_router, prefix="/api")
 app.include_router(checkin_router, prefix="/api")
 app.include_router(quota_router, prefix="/api")
 app.include_router(proxy_router, prefix="/api")
+app.include_router(settings_router, prefix="/api")
 
 # --- Static files (SPA) ---
 _static_dir = Path(__file__).parent / "static"
