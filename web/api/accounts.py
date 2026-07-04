@@ -28,6 +28,7 @@ class ImportAccountItem(BaseModel):
     method: str  # "apikey" | "jwt"
     api_key: Optional[str] = None
     access_token: Optional[str] = None
+    auth_token: Optional[str] = None  # alias for access_token (export compatibility)
     uid: Optional[str] = None
     domain: Optional[str] = "www.codebuddy.cn"
     nickname: Optional[str] = None
@@ -141,8 +142,12 @@ def import_accounts(req: ImportRequest):
 
     for item in req.items:
         try:
+            # Normalize: accept both access_token and auth_token
+            access_token = item.access_token or getattr(item, 'auth_token', None)
+            api_key = item.api_key
+
             if item.method == "apikey":
-                if not item.api_key or not item.api_key.startswith("ck_"):
+                if not api_key or not api_key.startswith("ck_"):
                     errors.append(f"Invalid API Key (must start with ck_): {item.nickname or 'unknown'}")
                     failed += 1
                     continue
@@ -152,21 +157,21 @@ def import_accounts(req: ImportRequest):
                     plan_type=PlanType.FREE,
                     created_at=datetime.now(),
                 )
-                account.api_key = item.api_key
-                account.auth_token = item.api_key
-                client = ApiClient.from_api_key(item.api_key)
+                account.api_key = api_key
+                account.auth_token = api_key
+                client = ApiClient.from_api_key(api_key)
                 qr = client.get_user_resource()
                 if not qr.get("success"):
                     errors.append(f"API Key verification failed for {item.nickname or 'unknown'}: {qr.get('error', 'unknown')}")
                     failed += 1
                     continue
-                account.uid = item.api_key[:32]
+                account.uid = api_key[:32]
                 account.quota.credits_remaining = qr.get("remaining_credits", 0)
                 account.quota.credits_total = qr.get("total_credits", 0)
-                account.nickname = item.nickname or f"Key-{item.api_key[:8]}"
+                account.nickname = item.nickname or f"Key-{api_key[:8]}"
 
             elif item.method == "jwt":
-                if not item.access_token:
+                if not access_token:
                     errors.append(f"Access token required for {item.nickname or 'unknown'}")
                     failed += 1
                     continue
@@ -180,10 +185,10 @@ def import_accounts(req: ImportRequest):
                     plan_type=PlanType.FREE,
                     created_at=datetime.now(),
                 )
-                account.auth_token = item.access_token
+                account.auth_token = access_token
                 account.uid = item.uid
                 account.domain = item.domain or "www.codebuddy.cn"
-                client = ApiClient(access_token=item.access_token, uid=item.uid, domain=account.domain)
+                client = ApiClient(access_token=access_token, uid=item.uid, domain=account.domain)
                 qr = client.get_user_resource()
                 if not qr.get("success"):
                     errors.append(f"JWT verification failed for {item.nickname or 'unknown'}: {qr.get('error', 'unknown')}")
@@ -236,6 +241,7 @@ def export_accounts(req: ExportRequest):
             "plan_type": a.plan_type.value,
             "domain": a.domain,
             "api_key": a.api_key,
+            "access_token": a.auth_token,
             "auth_token": a.auth_token,
         })
 
