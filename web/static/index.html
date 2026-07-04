@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh-CN">
 
 <head>
@@ -234,7 +234,7 @@
           <button @click="acc.expanded=!acc.expanded"
             class="w-full flex items-center justify-between px-md py-sm hover:bg-surface-container-low/50 transition-colors text-left">
             <div class="flex items-center gap-sm min-w-0">
-              <span class="material-symbols-outlined text-secondary transition-transform duration-200"
+              <span class="material-symbols-outlined text-secondary transition-all duration-200 left-0.5"
                 :class="acc.expanded?'rotate-90':'rotate-0'">chevron_right</span>
               <span class="font-medium text-primary truncate">{{acc.name}}</span>
               <span class="text-secondary text-[11px] font-label-md whitespace-nowrap">{{acc.packages.length}}
@@ -345,11 +345,15 @@
                 class="font-label-md text-[10px] px-2 py-0.5 rounded">{{k.active?'活跃':k.status==='disabled'?'已禁用':'已耗尽'}}</span>
             </td>
             <td class="px-md py-sm">
-              <div class="flex items-center gap-xs">
-                <button @click="toggleProxyKey(k)" :disabled="proxyKeyLoading[k.id]"
-                  class="w-7 h-7 flex items-center justify-center rounded-lg text-secondary hover:bg-surface-container-low transition-colors disabled:opacity-30"
-                  :title="k.active?'禁用':'启用'"><span class="material-symbols-outlined text-[16px]">{{k.active?'toggle_on':'toggle_off'}}</span></button>
-                <button @click="deleteProxyKey(k.id)"
+            <div class="flex items-center gap-xs">
+             <button @click="toggleProxyKey(k)" :disabled="proxyKeyLoading[k.id]"
+               :class="k.active?'bg-primary':'bg-outline'"
+               class="relative w-9 h-5 rounded-full transition-colors duration-200 focus:outline-none disabled:opacity-30"
+              :title="k.active?'禁用':'启用'"><span
+                :class="k.active?'translate-x-[18px]':'translate-x-0.5'"
+                class="absolute top-0.5 left-0 w-4 h-4 bg-white rounded-full shadow transition-all duration-200 left-0.5"></span>
+             </button>
+               <button @click="deleteProxyKey(k.id)"
                   class="w-7 h-7 flex items-center justify-center rounded-lg text-secondary hover:bg-surface-container-low hover:text-error transition-colors"
                   title="删除"><span class="material-symbols-outlined text-[16px]">delete</span></button>
               </div>
@@ -376,12 +380,12 @@
       </div>
       <div class="flex items-center justify-between"><span
           class="font-label-md text-label-md text-primary">自动启动代理</span><button
-          @click="settings.autoStartProxy=!settings.autoStartProxy"
-          :class="settings.autoStartProxy?'bg-primary':'bg-outline-variant'"
-          class="w-9 h-5 rounded-full transition-colors duration-200 relative shrink-0" role="switch"
-          :aria-checked="settings.autoStartProxy"><span
-            :class="settings.autoStartProxy?'translate-x-[1.125rem]':'translate-x-0.5'"
-            class="absolute top-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-transform duration-200"></span></button>
+       @click="settings.autoStartProxy=!settings.autoStartProxy"
+       :class="settings.autoStartProxy?'bg-primary':'bg-outline-variant'"
+       class="w-9 h-5 rounded-full transition-colors duration-200 relative shrink-0" role="switch"
+     :aria-checked="settings.autoStartProxy"><span
+       :class="settings.autoStartProxy?'translate-x-[1.125rem]':''"
+       class="absolute top-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-all duration-200 left-0.5"></span></button>
       </div>
       <button @click="saveSettings"
         class="inline-flex items-center gap-xs px-3 py-1.5 bg-primary text-on-primary font-label-md text-label-md rounded-lg hover:opacity-90 transition-opacity w-full justify-center">保存设置</button>
