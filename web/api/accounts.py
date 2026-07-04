@@ -1,10 +1,11 @@
 ﻿"""Account management API routes"""
 
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
-from typing import Optional
+from typing import List, Optional
 from datetime import datetime
 import logging
+
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
 from src.models import Account, Platform, AccountStatus, PlanType
 from src.utils.store import load_accounts, save_account, delete_account
@@ -23,6 +24,23 @@ class AddAccountRequest(BaseModel):
     nickname: Optional[str] = None
 
 
+class ImportAccountItem(BaseModel):
+    method: str  # "apikey" | "jwt"
+    api_key: Optional[str] = None
+    access_token: Optional[str] = None
+    uid: Optional[str] = None
+    domain: Optional[str] = "www.codebuddy.cn"
+    nickname: Optional[str] = None
+
+
+class ImportRequest(BaseModel):
+    items: List[ImportAccountItem]
+
+
+class ExportRequest(BaseModel):
+    uids: List[str]
+
+
 @router.get("/accounts")
 def list_accounts():
     """Get all accounts"""
@@ -36,6 +54,9 @@ def list_accounts():
             "status": a.status.value,
             "plan_type": a.plan_type.value,
             "api_key": a.api_key[:20] + "..." if len(a.api_key) > 20 else a.api_key,
+            "has_api_key": bool(a.api_key),
+            "auth_token": a.auth_token[:20] + "..." if len(a.auth_token) > 20 else a.auth_token,
+            "has_auth_token": bool(a.auth_token),
             "quota_remaining": a.quota.credits_remaining,
             "quota_total": a.quota.credits_total,
             "checked_today": a.checkin.checked_today,
@@ -104,3 +125,118 @@ def remove_account(uid: str):
     delete_account(uid)
     logger.info(f"Account deleted: {target.display_name}")
     return {"success": True}
+
+
+@router.post("/accounts/import")
+def import_accounts(req: ImportRequest):
+    """Bulk import accounts from JSON config"""
+    total = len(req.items)
+    if total == 0:
+        return {"success": True, "total": 0, "added": 0, "failed": 0, "errors": []}
+
+    added = 0
+    failed = 0
+    errors = []
+    existing_uids = {a.uid for a in load_accounts()}
+
+    for item in req.items:
+        try:
+            if item.method == "apikey":
+                if not item.api_key or not item.api_key.startswith("ck_"):
+                    errors.append(f"Invalid API Key (must start with ck_): {item.nickname or 'unknown'}")
+                    failed += 1
+                    continue
+                account = Account(
+                    platform=Platform.CODEBUDDY,
+                    status=AccountStatus.ACTIVE,
+                    plan_type=PlanType.FREE,
+                    created_at=datetime.now(),
+                )
+                account.api_key = item.api_key
+                account.auth_token = item.api_key
+                client = ApiClient.from_api_key(item.api_key)
+                qr = client.get_user_resource()
+                if not qr.get("success"):
+                    errors.append(f"API Key verification failed for {item.nickname or 'unknown'}: {qr.get('error', 'unknown')}")
+                    failed += 1
+                    continue
+                account.uid = item.api_key[:32]
+                account.quota.credits_remaining = qr.get("remaining_credits", 0)
+                account.quota.credits_total = qr.get("total_credits", 0)
+                account.nickname = item.nickname or f"Key-{item.api_key[:8]}"
+
+            elif item.method == "jwt":
+                if not item.access_token:
+                    errors.append(f"Access token required for {item.nickname or 'unknown'}")
+                    failed += 1
+                    continue
+                if not item.uid:
+                    errors.append(f"UID required for {item.nickname or 'unknown'}")
+                    failed += 1
+                    continue
+                account = Account(
+                    platform=Platform.CODEBUDDY,
+                    status=AccountStatus.ACTIVE,
+                    plan_type=PlanType.FREE,
+                    created_at=datetime.now(),
+                )
+                account.auth_token = item.access_token
+                account.uid = item.uid
+                account.domain = item.domain or "www.codebuddy.cn"
+                client = ApiClient(access_token=item.access_token, uid=item.uid, domain=account.domain)
+                qr = client.get_user_resource()
+                if not qr.get("success"):
+                    errors.append(f"JWT verification failed for {item.nickname or 'unknown'}: {qr.get('error', 'unknown')}")
+                    failed += 1
+                    continue
+                account.quota.credits_remaining = qr.get("remaining_credits", 0)
+                account.quota.credits_total = qr.get("total_credits", 0)
+                account.nickname = item.nickname or item.uid[:12]
+
+            else:
+                errors.append(f"Unknown method: {item.method}")
+                failed += 1
+                continue
+
+            if account.uid in existing_uids:
+                errors.append(f"Duplicate account skipped: {account.nickname}")
+                failed += 1
+                continue
+
+            save_account(account)
+            existing_uids.add(account.uid)
+            added += 1
+            logger.info(f"Imported account: {account.display_name}")
+        except Exception as e:
+            errors.append(f"Import error for {item.nickname or 'unknown'}: {str(e)}")
+            failed += 1
+
+    return {"success": True, "total": total, "added": added, "failed": failed, "errors": errors}
+
+
+@router.post("/accounts/export")
+def export_accounts(req: ExportRequest):
+    """Export selected accounts with full credentials"""
+    accounts = load_accounts()
+    export_map = {a.uid: a for a in accounts}
+    result = []
+    not_found = []
+
+    for uid in req.uids:
+        a = export_map.get(uid)
+        if not a:
+            not_found.append(uid)
+            continue
+        result.append({
+            "method": "apikey" if a.api_key and a.api_key.startswith("ck_") else "jwt",
+            "uid": a.uid,
+            "nickname": a.nickname or a.uid,
+            "platform": a.platform.value,
+            "status": a.status.value,
+            "plan_type": a.plan_type.value,
+            "domain": a.domain,
+            "api_key": a.api_key,
+            "auth_token": a.auth_token,
+        })
+
+    return {"success": True, "accounts": result, "not_found": not_found}
