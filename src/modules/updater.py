@@ -246,6 +246,29 @@ def _verify_sha256(file_path: Path, expected: str) -> bool:
     return sha256.hexdigest() == expected
 
 
+def _ps_quote(value) -> str:
+    """Return a PowerShell single-quoted literal."""
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+def _get_powershell_exe() -> str | None:
+    """Locate Windows PowerShell for post-exit update scripts."""
+    candidates = [
+        shutil.which("powershell.exe"),
+        os.path.join(
+            os.environ.get("SystemRoot", r"C:\Windows"),
+            "System32",
+            "WindowsPowerShell",
+            "v1.0",
+            "powershell.exe",
+        ),
+    ]
+    for candidate in candidates:
+        if candidate and os.path.isfile(candidate):
+            return candidate
+    return None
+
+
 def _apply_src_only_update(zip_path: Path) -> bool:
     """增量更新：只替换 src/ 目录
 
@@ -275,6 +298,15 @@ def _apply_src_only_update(zip_path: Path) -> bool:
                     break
         if not extracted_src.exists():
             logger.error("增量包中未找到 src/ 目录")
+            return False
+
+        target_version_file = extracted_src / "VERSION"
+        if not target_version_file.exists():
+            logger.error("增量包缺少 src/VERSION，拒绝应用")
+            return False
+        target_version = target_version_file.read_text(encoding="utf-8").strip()
+        if not target_version:
+            logger.error("增量包 src/VERSION 为空，拒绝应用")
             return False
 
         # [v1.6.1-fix] 把解压后的 src 复制到批处理旁边，避免临时目录被清理
@@ -326,30 +358,81 @@ def _apply_src_only_update(zip_path: Path) -> bool:
             if not src_dir.exists():
                 logger.error(f"Windows src 目录不存在: {src_dir}")
                 return False
+            powershell_exe = _get_powershell_exe()
+            if not powershell_exe:
+                logger.error("未找到 powershell.exe，无法执行 Windows 增量更新")
+                return False
 
             ps_path = Path(tempfile.gettempdir()) / "ag_src_updater.ps1"
-            ps_content = f"""Start-Sleep -Seconds 2
+            log_path = Path(tempfile.gettempdir()) / "ag_update_error.log"
+            ps_content = f"""$ErrorActionPreference = "Stop"
+$LogPath = {_ps_quote(log_path)}
+$SrcDir = {_ps_quote(src_dir)}
+$StableCopy = {_ps_quote(stable_copy)}
+$TmpDir = {_ps_quote(tmp_dir)}
+$CurrentExe = {_ps_quote(current_exe)}
+$ScriptPath = {_ps_quote(ps_path)}
+$TargetVersion = {_ps_quote(target_version)}
+$OldPid = {os.getpid()}
 
-while (Get-Process -Id {os.getpid()} -ErrorAction SilentlyContinue) {{
-    Start-Sleep -Milliseconds 500
+function Write-UpdateLog([string]$Message) {{
+    $ts = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
+    "$ts $Message" | Add-Content -LiteralPath $LogPath -Encoding UTF8
 }}
 
-$ErrorActionPreference = "Stop"
+try {{
+    "update script started" | Out-File -LiteralPath $LogPath -Encoding UTF8
+    Write-UpdateLog "waiting old pid: $OldPid"
+    Start-Sleep -Seconds 2
 
-Remove-Item -LiteralPath '{src_dir}' -Recurse -Force -ErrorAction SilentlyContinue
-Copy-Item -LiteralPath '{stable_copy}' -Destination '{src_dir}' -Recurse -Force
+    while (Get-Process -Id $OldPid -ErrorAction SilentlyContinue) {{
+        Start-Sleep -Milliseconds 500
+    }}
+    Write-UpdateLog "old process exited"
 
-if (-not (Test-Path -LiteralPath '{src_dir}\\VERSION')) {{
-    "VERSION missing after copy" | Out-File -LiteralPath '$TEMP\\ag_update_error.log' -Encoding utf8
-    exit 12
+    if (-not (Test-Path -LiteralPath $StableCopy)) {{
+        throw "stable src copy missing: $StableCopy"
+    }}
+
+    if (Test-Path -LiteralPath $SrcDir) {{
+        Remove-Item -LiteralPath $SrcDir -Recurse -Force
+    }}
+    if (Test-Path -LiteralPath $SrcDir) {{
+        throw "delete src failed: $SrcDir"
+    }}
+
+    $ParentDir = Split-Path -Parent $SrcDir
+    if (-not (Test-Path -LiteralPath $ParentDir)) {{
+        New-Item -ItemType Directory -Path $ParentDir -Force | Out-Null
+    }}
+
+    Copy-Item -LiteralPath $StableCopy -Destination $SrcDir -Recurse -Force
+
+    $VersionFile = Join-Path $SrcDir "VERSION"
+    if (-not (Test-Path -LiteralPath $VersionFile)) {{
+        throw "VERSION missing after copy: $VersionFile"
+    }}
+
+    $ActualVersion = (Get-Content -LiteralPath $VersionFile -Raw).Trim()
+    if ($ActualVersion -ne $TargetVersion) {{
+        throw "VERSION verify failed: expected $TargetVersion, got $ActualVersion"
+    }}
+    Write-UpdateLog "version verified: $ActualVersion"
+
+    Remove-Item -LiteralPath $TmpDir -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $StableCopy -Recurse -Force -ErrorAction SilentlyContinue
+
+    $ExeDir = Split-Path -Parent $CurrentExe
+    Start-Process -FilePath $CurrentExe -WorkingDirectory $ExeDir
+    Write-UpdateLog "restart launched: $CurrentExe"
+
+    Remove-Item -LiteralPath $ScriptPath -Force -ErrorAction SilentlyContinue
 }}
-
-Remove-Item -LiteralPath '{tmp_dir}' -Recurse -Force -ErrorAction SilentlyContinue
-Remove-Item -LiteralPath '{stable_copy}' -Recurse -Force -ErrorAction SilentlyContinue
-
-Start-Process -FilePath '{current_exe}' -WindowStyle Hidden
-
-Remove-Item -LiteralPath '{ps_path}' -Force -ErrorAction SilentlyContinue
+catch {{
+    $err = ($_ | Out-String).Trim()
+    Write-UpdateLog "ERROR: $err"
+    exit 1
+}}
 """
             ps_path.write_text(ps_content, encoding="utf-8-sig")
 
@@ -357,23 +440,16 @@ Remove-Item -LiteralPath '{ps_path}' -Force -ErrorAction SilentlyContinue
             startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
             startupinfo.wShowWindow = 0
 
-            # 用 -Command 方式执行，避免 -File 方式被执行策略拦截
-            # 把脚本内容编码为 Base64，避免中文路径编码问题
-            import base64
-            ps_bytes = ps_content.encode("utf-16-le")
-            ps_b64 = base64.b64encode(ps_bytes).decode("ascii")
-
             subprocess.Popen(
                 [
-                    "powershell",
+                    powershell_exe,
                     "-NoProfile",
                     "-NonInteractive",
-                    "-WindowStyle", "Hidden",
                     "-ExecutionPolicy", "Bypass",
-                    "-EncodedCommand", ps_b64,
+                    "-File", str(ps_path),
                 ],
                 startupinfo=startupinfo,
-                creationflags=subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS,
+                creationflags=subprocess.CREATE_NO_WINDOW,
             )
 
             logger.info("Windows 增量更新 PowerShell 已启动")
@@ -461,65 +537,144 @@ def _apply_frozen_update_mac(zip_path: Path) -> bool:
 
 
 def _apply_frozen_update_windows(zip_path: Path) -> bool:
-    """Windows 打包模式：批处理替换"""
+    """Windows 打包模式：PowerShell 等待退出后替换整个应用目录"""
     import subprocess
 
     try:
         current_exe = Path(sys.executable)
         app_dir = current_exe.parent
+        powershell_exe = _get_powershell_exe()
+        if not powershell_exe:
+            logger.error("未找到 powershell.exe，无法执行 Windows 完整包更新")
+            return False
 
-        with tempfile.TemporaryDirectory(prefix="ag_update_") as tmp_dir:
-            tmp = Path(tmp_dir)
-            with zipfile.ZipFile(zip_path, "r") as zf:
-                zf.extractall(tmp)
+        tmp_dir = Path(tempfile.gettempdir()) / "ag_full_update"
+        if tmp_dir.exists():
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+        tmp_dir.mkdir(parents=True, exist_ok=True)
 
-            new_exe = None
-            for exe_path in tmp.rglob("*.exe"):
-                if "Antigravity Tools" in exe_path.name or "antigravity" in exe_path.name.lower():
-                    new_exe = exe_path
-                    break
-            if not new_exe:
-                for exe_path in tmp.rglob("*.exe"):
-                    new_exe = exe_path
-                    break
-            if not new_exe:
-                logger.error("更新包中未找到 exe 文件")
-                return False
+        with zipfile.ZipFile(zip_path, "r") as zf:
+            zf.extractall(tmp_dir)
 
-            new_app_dir = new_exe.parent
+        new_exe = None
+        for exe_path in tmp_dir.rglob("*.exe"):
+            if "Antigravity Tools" in exe_path.name or "antigravity" in exe_path.name.lower():
+                new_exe = exe_path
+                break
+        if not new_exe:
+            for exe_path in tmp_dir.rglob("*.exe"):
+                new_exe = exe_path
+                break
+        if not new_exe:
+            logger.error("更新包中未找到 exe 文件")
+            return False
 
-            bat_path = Path(tempfile.gettempdir()) / "ag_updater.bat"
-            bat_content = f"""@echo off
-chcp 65001 >nul 2>&1
-timeout /t 2 /nobreak >nul
+        new_app_dir = new_exe.parent
+        target_version = ""
+        version_file = new_app_dir / "_internal" / "src" / "VERSION"
+        if version_file.exists():
+            target_version = version_file.read_text(encoding="utf-8").strip()
 
-:wait_loop
-tasklist /fi "pid eq {os.getpid()}" 2>nul | find "{os.getpid()}" >nul
-if %errorlevel% == 0 goto wait_loop
+        stable_app = Path(tempfile.gettempdir()) / "ag_full_stable"
+        if stable_app.exists():
+            shutil.rmtree(stable_app, ignore_errors=True)
+        shutil.copytree(new_app_dir, stable_app)
 
-timeout /t 1 /nobreak >nul
+        ps_path = Path(tempfile.gettempdir()) / "ag_full_updater.ps1"
+        log_path = Path(tempfile.gettempdir()) / "ag_update_error.log"
+        ps_content = f"""$ErrorActionPreference = "Stop"
+$LogPath = {_ps_quote(log_path)}
+$AppDir = {_ps_quote(app_dir)}
+$StableApp = {_ps_quote(stable_app)}
+$TmpDir = {_ps_quote(tmp_dir)}
+$CurrentExe = {_ps_quote(current_exe)}
+$ScriptPath = {_ps_quote(ps_path)}
+$TargetVersion = {_ps_quote(target_version)}
+$OldPid = {os.getpid()}
 
-robocopy "{new_app_dir}" "{app_dir}" /E /IS /IT /NFL /NDL /NJH /NJS /nc /ns /np
+function Write-UpdateLog([string]$Message) {{
+    $ts = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
+    "$ts $Message" | Add-Content -LiteralPath $LogPath -Encoding UTF8
+}}
 
-start "" "{current_exe}"
+try {{
+    "full update script started" | Out-File -LiteralPath $LogPath -Encoding UTF8
+    Write-UpdateLog "waiting old pid: $OldPid"
+    Start-Sleep -Seconds 2
 
-del "%~f0"
+    while (Get-Process -Id $OldPid -ErrorAction SilentlyContinue) {{
+        Start-Sleep -Milliseconds 500
+    }}
+    Write-UpdateLog "old process exited"
+
+    if (-not (Test-Path -LiteralPath $StableApp)) {{
+        throw "stable app copy missing: $StableApp"
+    }}
+
+    if (Test-Path -LiteralPath $AppDir) {{
+        Remove-Item -LiteralPath $AppDir -Recurse -Force
+    }}
+    if (Test-Path -LiteralPath $AppDir) {{
+        throw "delete app dir failed: $AppDir"
+    }}
+
+    New-Item -ItemType Directory -Path $AppDir -Force | Out-Null
+    Get-ChildItem -LiteralPath $StableApp -Force | ForEach-Object {{
+        Copy-Item -LiteralPath $_.FullName -Destination $AppDir -Recurse -Force
+    }}
+
+    if (-not (Test-Path -LiteralPath $CurrentExe)) {{
+        throw "exe missing after copy: $CurrentExe"
+    }}
+
+    if ($TargetVersion) {{
+        $VersionFile = Join-Path $AppDir "_internal\\src\\VERSION"
+        if (-not (Test-Path -LiteralPath $VersionFile)) {{
+            throw "VERSION missing after full copy: $VersionFile"
+        }}
+        $ActualVersion = (Get-Content -LiteralPath $VersionFile -Raw).Trim()
+        if ($ActualVersion -ne $TargetVersion) {{
+            throw "VERSION verify failed: expected $TargetVersion, got $ActualVersion"
+        }}
+        Write-UpdateLog "version verified: $ActualVersion"
+    }}
+
+    Remove-Item -LiteralPath $TmpDir -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $StableApp -Recurse -Force -ErrorAction SilentlyContinue
+
+    $ExeDir = Split-Path -Parent $CurrentExe
+    Start-Process -FilePath $CurrentExe -WorkingDirectory $ExeDir
+    Write-UpdateLog "restart launched: $CurrentExe"
+
+    Remove-Item -LiteralPath $ScriptPath -Force -ErrorAction SilentlyContinue
+}}
+catch {{
+    $err = ($_ | Out-String).Trim()
+    Write-UpdateLog "ERROR: $err"
+    exit 1
+}}
 """
 
-            bat_path.write_text(bat_content, encoding="gbk", errors="replace")
+        ps_path.write_text(ps_content, encoding="utf-8-sig")
 
-            startupinfo = subprocess.STARTUPINFO()
-            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            startupinfo.wShowWindow = 0
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo.wShowWindow = 0
 
-            subprocess.Popen(
-                ["cmd", "/c", str(bat_path)],
-                startupinfo=startupinfo,
-                creationflags=subprocess.CREATE_NO_WINDOW,
-            )
+        subprocess.Popen(
+            [
+                powershell_exe,
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy", "Bypass",
+                "-File", str(ps_path),
+            ],
+            startupinfo=startupinfo,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
 
-            logger.info("更新批处理已启动，即将退出应用以完成更新")
-            return True
+        logger.info("Windows 完整包更新 PowerShell 已启动，即将退出应用以完成更新")
+        return True
 
     except Exception as e:
         logger.error(f"Windows 打包模式更新失败: {e}")
