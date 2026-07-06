@@ -467,18 +467,12 @@ def _normalize_messages_for_upstream(messages: list) -> int:
                 # 已经是标准 OpenAI 格式，保持不变
                 new_content.append(part)
             elif part_type in ("input_image", "image"):
-                image = part.get("image")
-                # image 是 blob_ref 对象（有 blob_id），保持原样透传
-                if isinstance(image, dict) and "blob_id" in image:
-                    new_content.append(part)
+                url = _image_url_from_part(part)
+                if url and (url.startswith("http://") or url.startswith("https://")):
+                    new_content.append({"type": "image_url", "image_url": {"url": url}})
+                    normalized_count += 1
                 else:
-                    # 尝试提取 data URI（复用已有的 _image_url_from_part）
-                    url = _image_url_from_part(part)
-                    if url:
-                        new_content.append({"type": "image_url", "image_url": {"url": url}})
-                        normalized_count += 1
-                    else:
-                        new_content.append(part)
+                    new_content.append(part)
             elif part_type == "image_blob_ref":
                 # 顶层 image_blob_ref，保持原样透传
                 new_content.append(part)
@@ -486,6 +480,56 @@ def _normalize_messages_for_upstream(messages: list) -> int:
                 new_content.append(part)
         msg["content"] = new_content
     return normalized_count
+
+
+def _remove_unsupported_inline_images(messages: list) -> int:
+    """Remove image payload formats that copilot.tencent.com/v2 rejects."""
+    if not isinstance(messages, list):
+        return 0
+
+    removed_count = 0
+    for msg in messages:
+        if not isinstance(msg, dict):
+            continue
+        content = msg.get("content")
+        if not isinstance(content, list):
+            continue
+
+        new_content = []
+        removed_in_message = 0
+        for part in content:
+            if not isinstance(part, dict) or not _part_is_image(part):
+                new_content.append(part)
+                continue
+
+            url = _image_url_from_part(part)
+            if (
+                part.get("type") == "image_url"
+                and isinstance(url, str)
+                and (url.startswith("http://") or url.startswith("https://"))
+            ):
+                new_content.append(part)
+                continue
+
+            removed_count += 1
+            removed_in_message += 1
+
+        if removed_in_message:
+            new_content.append({
+                "type": "text",
+                "text": (
+                    "[Image omitted by proxy: upstream chat API rejects inline/base64 "
+                    "image payloads. Please use a public http/https image URL.]"
+                ),
+            })
+        msg["content"] = new_content
+
+    if removed_count:
+        logger.warning(
+            "[image_sanitize] removed %s unsupported inline/base64 image part(s)",
+            removed_count,
+        )
+    return removed_count
 
 
 def _extract_message_text(content) -> str:
@@ -627,9 +671,9 @@ def _build_workbuddy_relay_body(client_body: dict) -> tuple[dict, dict]:
     Build the upstream body for WorkBuddy key-pool relay.
 
     This proxy is not an SDK/Agent adapter. WorkBuddy already speaks most of the
-    body shape its upstream expects, so the relay preserves normal generation
-    fields and only changes fields proven risky by upstream 11133 logs or by the
-    Tencent Agent SDK/Open Platform contracts.
+    body shape its upstream expects, so the relay preserves normal generation and
+    tool fields by default. Only image payload formats proven rejected by the
+    upstream are removed from messages.
     """
     body = copy.deepcopy(client_body)
     body["model"] = body.get("model") or "auto"
@@ -637,25 +681,12 @@ def _build_workbuddy_relay_body(client_body: dict) -> tuple[dict, dict]:
     body["stream"] = True
 
     dropped_fields = []
-    for field in (
-        # Seen in real 11133 logs. The SDK exposes tools as CLI/session config,
-        # not as a raw chat-completions JSON schema array for this relay.
-        "tools",
-        "tool_choice",
-        "parallel_tool_calls",
-        # Seen in real 11133 logs against copilot.tencent.com/v2/chat/completions.
-        "stream_options",
-        "reasoning_effort",
-    ):
-        if field in body:
-            dropped_fields.append(field)
-            body.pop(field, None)
-
     before_strip_images = _detect_multimodal_images(body)
     body["messages"] = _strip_history_images_with_description(body.get("messages", []))
     after_strip_images = _detect_multimodal_images(body)
     normalized_images = _normalize_messages_for_upstream(body.get("messages", []))
-    after_normalize_images = _detect_multimodal_images(body)
+    unsupported_inline_images_removed = _remove_unsupported_inline_images(body.get("messages", []))
+    after_sanitize_images = _detect_multimodal_images(body)
 
     translated_fields = []
     if "max_completion_tokens" in client_body and "max_tokens" not in client_body:
@@ -678,8 +709,9 @@ def _build_workbuddy_relay_body(client_body: dict) -> tuple[dict, dict]:
             before_strip_images.get("image_count", 0) - after_strip_images.get("image_count", 0),
         ),
         "normalized_images": normalized_images,
+        "unsupported_inline_images_removed": unsupported_inline_images_removed,
         "image_stats_before": before_strip_images,
-        "image_stats_after": after_normalize_images,
+        "image_stats_after": after_sanitize_images,
         "has_stream_options": "stream_options" in body,
     }
     return body, meta
@@ -2047,7 +2079,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             self._send_json(200, {
                 "object": "api.index",
                 "message": "Antigravity Proxy is running",
-                "version": "1.6.6",
+                "version": "1.6.7",
             })
             return
 
@@ -2333,6 +2365,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                     or build_meta["dropped_fields"]
                     or build_meta["history_images_replaced"]
                     or build_meta["normalized_images"]
+                    or build_meta["unsupported_inline_images_removed"]
                 ):
                     logger.info(
                         f"[v1.6.6] WorkBuddy Relay 调整字段: "
@@ -2340,7 +2373,8 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                         f"removed_null={build_meta['removed_null_fields']}; "
                         f"translated={build_meta['translated_fields']}; "
                         f"history_images_replaced={build_meta['history_images_replaced']}; "
-                        f"normalized_images={build_meta['normalized_images']}"
+                        f"normalized_images={build_meta['normalized_images']}; "
+                        f"unsupported_inline_images_removed={build_meta['unsupported_inline_images_removed']}"
                     )
 
                 image_stats = _detect_multimodal_images(upstream_request_data)
@@ -2359,6 +2393,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                            f"dropped={build_meta['dropped_fields']}, "
                            f"history_images_replaced={build_meta['history_images_replaced']}, "
                            f"normalized_images={build_meta['normalized_images']}, "
+                           f"unsupported_inline_images_removed={build_meta['unsupported_inline_images_removed']}, "
                            f"mode={build_meta['mode']}, stream_options={build_meta['has_stream_options']}")
 
                 # ─── 发送请求到上游 ───
