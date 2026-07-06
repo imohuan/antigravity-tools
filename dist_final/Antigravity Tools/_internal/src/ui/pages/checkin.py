@@ -183,6 +183,8 @@ class CheckinPage(QWidget):
         self._is_checking = False
         self._current_page = 0    # 当前页码（0-based）
         self._timer_active = False  # 定时签到是否开启
+        self._sort_column = None
+        self._sort_order = Qt.AscendingOrder
         self._setup_ui()
 
         # 定时签到计时器 — 每秒检查一次是否到达设定时间
@@ -248,7 +250,7 @@ class CheckinPage(QWidget):
         for p in Platform:
             self._filter_combo.addItem(p.value, p)
         self._filter_combo.currentIndexChanged.connect(self._on_filter_changed)
-        toolbar.addWidget(self._filter_combo)
+        self._filter_combo.setVisible(False)
 
         # 并发数设置
         toolbar.addWidget(QLabel("并发数:"))
@@ -315,7 +317,11 @@ class CheckinPage(QWidget):
         self._table.setHorizontalHeaderLabels([
             "账号", "平台", "签到状态", "今日积分", "本月积分"
         ])
-        self._table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        header = self._table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.Stretch)
+        header.setSectionsClickable(True)
+        header.setSortIndicatorShown(True)
+        header.sectionClicked.connect(self._on_header_sort)
         self._table.setAlternatingRowColors(True)
         self._table.setSelectionBehavior(QTableWidget.SelectRows)
         self._table.setEditTriggers(QTableWidget.NoEditTriggers)
@@ -405,12 +411,42 @@ class CheckinPage(QWidget):
     # === 数据加载 & 渲染 ===
 
     def _load_accounts(self):
-        """加载全量账号（含筛选）"""
-        accounts = load_accounts()
-        platform = self._filter_combo.currentData()
-        if platform:
-            accounts = [a for a in accounts if a.platform == platform]
-        self._accounts = accounts
+        """加载全量账号"""
+        self._accounts = load_accounts()
+        self._apply_sort()
+
+    def _account_sort_value(self, account: Account, column: int):
+        if column == 0:
+            return account.display_name.lower()
+        if column == 1:
+            return account.platform.value
+        if column == 2:
+            return 0 if account.checkin.checked_today else 1
+        if column == 3:
+            return account.checkin.daily_credit if account.checkin.checked_today else 0
+        if column == 4:
+            return account.checkin.total_credits
+        return ""
+
+    def _apply_sort(self):
+        if self._sort_column is None:
+            return
+        reverse = self._sort_order == Qt.DescendingOrder
+        self._accounts.sort(
+            key=lambda account: self._account_sort_value(account, self._sort_column),
+            reverse=reverse,
+        )
+
+    def _on_header_sort(self, section: int):
+        if self._sort_column == section:
+            self._sort_order = Qt.DescendingOrder if self._sort_order == Qt.AscendingOrder else Qt.AscendingOrder
+        else:
+            self._sort_column = section
+            self._sort_order = Qt.AscendingOrder
+        self._table.horizontalHeader().setSortIndicator(section, self._sort_order)
+        self._apply_sort()
+        self._current_page = 0
+        self._render_page()
 
     def _update_stats(self):
         """更新统计栏"""

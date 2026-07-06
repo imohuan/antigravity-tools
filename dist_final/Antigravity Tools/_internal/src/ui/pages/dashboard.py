@@ -7,7 +7,7 @@ from PySide6.QtCore import Qt
 
 from ...i18n import t
 from ...utils.store import load_accounts
-from ...models import Platform, AccountStatus
+from ...models import AccountStatus
 
 
 class StatCard(QFrame):
@@ -85,16 +85,6 @@ class DashboardPage(QWidget):
 
         content_layout.addLayout(grid)
 
-        # 平台分布
-        platform_label = QLabel("📦 平台分布")
-        platform_label.setStyleSheet("font-size: 16px; font-weight: 600; margin-top: 8px;")
-        content_layout.addWidget(platform_label)
-
-        self._platform_container = QWidget()
-        self._platform_layout = QHBoxLayout(self._platform_container)
-        self._platform_layout.setSpacing(12)
-        content_layout.addWidget(self._platform_container)
-
         # 签到状态分布
         checkin_label = QLabel("🎯 签到状态")
         checkin_label.setStyleSheet("font-size: 16px; font-weight: 600; margin-top: 8px;")
@@ -128,29 +118,6 @@ class DashboardPage(QWidget):
             self._card_quota.set_value(f"{total_credits:.0f}")
         else:
             self._card_quota.set_value("--")
-
-        # 平台分布
-        while self._platform_layout.count():
-            item = self._platform_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-
-        platform_counts = {}
-        for a in accounts:
-            name = a.platform.value
-            platform_counts[name] = platform_counts.get(name, 0) + 1
-
-        for platform_name, count in platform_counts.items():
-            card = StatCard(
-                platform_name.upper(),
-                str(count),
-                "📦",
-                "#4DA3E8"
-            )
-            card.setMaximumWidth(150)
-            self._platform_layout.addWidget(card)
-
-        self._platform_layout.addStretch()
 
         # 签到状态分布
         while self._checkin_layout.count():

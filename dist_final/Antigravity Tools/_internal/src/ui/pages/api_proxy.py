@@ -481,6 +481,10 @@ class ApiProxyPage(QWidget):
         self.setObjectName("content_area")
         self._proxy_server: ProxyServer = None
         self._db = ProxyDatabase.get_instance()
+        self._keys_sort_column = None
+        self._keys_sort_order = Qt.AscendingOrder
+        self._subkeys_sort_column = None
+        self._subkeys_sort_order = Qt.AscendingOrder
         self._setup_ui()
 
         # 日志自动刷新定时器
@@ -662,6 +666,11 @@ class ApiProxyPage(QWidget):
         self._chk_keys_today.clicked.connect(self._toggle_keys_today)
         keys_toolbar.addWidget(self._chk_keys_today)
 
+        self._keys_search_input = QLineEdit()
+        self._keys_search_input.setPlaceholderText("🔍 搜索上游 Key...")
+        self._keys_search_input.textChanged.connect(lambda _text: self._refresh_upstream_keys())
+        keys_toolbar.addWidget(self._keys_search_input)
+
         keys_toolbar.addStretch()
         keys_layout.addLayout(keys_toolbar)
 
@@ -671,7 +680,11 @@ class ApiProxyPage(QWidget):
         self._keys_table.setHorizontalHeaderLabels([
             "Key ID", "标签", "状态", "调用次数", "积分", "Token", "积分消耗", "缓存命中", "操作"
         ])
-        self._keys_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        keys_header = self._keys_table.horizontalHeader()
+        keys_header.setSectionResizeMode(QHeaderView.Stretch)
+        keys_header.setSectionsClickable(True)
+        keys_header.setSortIndicatorShown(True)
+        keys_header.sectionClicked.connect(self._on_keys_header_sort)
         self._keys_table.setAlternatingRowColors(True)
         self._keys_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self._keys_table.setSelectionBehavior(QTableWidget.SelectRows)
@@ -750,7 +763,11 @@ class ApiProxyPage(QWidget):
         self._subkeys_table.setHorizontalHeaderLabels([
             "API Key", "标签", "状态", "模型限制", "已用/上限", "总积分", "调用模式", "RPM", "Token", "积分消耗", "缓存命中", "操作"
         ])
-        self._subkeys_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        subkeys_header = self._subkeys_table.horizontalHeader()
+        subkeys_header.setSectionResizeMode(QHeaderView.Stretch)
+        subkeys_header.setSectionsClickable(True)
+        subkeys_header.setSortIndicatorShown(True)
+        subkeys_header.sectionClicked.connect(self._on_subkeys_header_sort)
         self._subkeys_table.setAlternatingRowColors(True)
         self._subkeys_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self._subkeys_table.setSelectionBehavior(QTableWidget.SelectRows)
@@ -1017,6 +1034,87 @@ class ApiProxyPage(QWidget):
 
         dlg.exec()
 
+    @staticmethod
+    def _points_remaining(points) -> float:
+        try:
+            text = str(points or "")
+            if "/" in text:
+                return float(text.split("/", 1)[0])
+            return float(text)
+        except (TypeError, ValueError):
+            return -1.0
+
+    def _key_sort_value(self, key: dict, column: int):
+        if column == 0:
+            return key.get("key_id", "").lower()
+        if column == 1:
+            return key.get("label", "").lower()
+        if column == 2:
+            return key.get("status", "active")
+        if column == 3:
+            return key.get("used_count", 0)
+        if column == 4:
+            return self._points_remaining(key.get("points", ""))
+        if column == 5:
+            return key.get("total_tokens", 0)
+        if column == 6:
+            return key.get("total_credits", 0.0)
+        if column == 7:
+            total_t = key.get("total_tokens", 0)
+            cached = key.get("total_cached_tokens", 0)
+            return cached / total_t if total_t else 0
+        return ""
+
+    def _subkey_sort_value(self, sub_key: dict, column: int):
+        allowed_key_ids = sub_key.get("allowed_key_ids", [])
+        if column == 0:
+            return sub_key.get("api_key", "").lower()
+        if column == 1:
+            return sub_key.get("label", "").lower()
+        if column == 2:
+            return 0 if sub_key.get("is_active", True) else 1
+        if column == 3:
+            return ",".join(sub_key.get("allowed_models", []))
+        if column == 4:
+            return sub_key.get("used_count", 0)
+        if column == 5:
+            return self._db.get_total_points_for_sub_key(allowed_key_ids if allowed_key_ids else None)
+        if column == 6:
+            return sub_key.get("key_mode", 1)
+        if column == 7:
+            return sub_key.get("rate_limit_rpm", 0)
+        if column == 8:
+            return sub_key.get("total_tokens", 0)
+        if column == 9:
+            return sub_key.get("total_credits", 0.0)
+        if column == 10:
+            total_t = sub_key.get("total_tokens", 0)
+            cached = sub_key.get("total_cached_tokens", 0)
+            return cached / total_t if total_t else 0
+        return ""
+
+    def _on_keys_header_sort(self, section: int):
+        if section >= self._keys_table.columnCount() - 1:
+            return
+        if self._keys_sort_column == section:
+            self._keys_sort_order = Qt.DescendingOrder if self._keys_sort_order == Qt.AscendingOrder else Qt.AscendingOrder
+        else:
+            self._keys_sort_column = section
+            self._keys_sort_order = Qt.AscendingOrder
+        self._keys_table.horizontalHeader().setSortIndicator(section, self._keys_sort_order)
+        self._refresh_upstream_keys()
+
+    def _on_subkeys_header_sort(self, section: int):
+        if section >= self._subkeys_table.columnCount() - 1:
+            return
+        if self._subkeys_sort_column == section:
+            self._subkeys_sort_order = Qt.DescendingOrder if self._subkeys_sort_order == Qt.AscendingOrder else Qt.AscendingOrder
+        else:
+            self._subkeys_sort_column = section
+            self._subkeys_sort_order = Qt.AscendingOrder
+        self._subkeys_table.horizontalHeader().setSortIndicator(section, self._subkeys_sort_order)
+        self._refresh_sub_keys()
+
     def _refresh_upstream_keys(self, reload_from_disk=False):
         """刷新上游 Key 列表
 
@@ -1047,15 +1145,27 @@ class ApiProxyPage(QWidget):
         # 自动回填：对 points 为空的上游 Key，从账号已保存的积分数据中填充
         self._sync_points_from_accounts(keys)
 
-        # 排序：使用中置顶 → 最近使用 → 其他按原顺序
-        keys.sort(key=lambda k: (
-            0 if k.get("key_id", "") in concurrent_keys else 1,  # 使用中排最前
-            -(k.get("last_used_at", "") > ""),                    # 有使用时间的排前面
-            k.get("last_used_at", ""),                             # 按最近使用时间降序需要取负，这里用字符串逆序
-        ), reverse=False)
-        # last_used_at 是 ISO 字符串，字符串排序天然升序，需要单独逆序
-        keys.sort(key=lambda k: k.get("last_used_at", ""), reverse=True)
-        # 使用中的重新置顶（上面的排序会打乱）
+        search = self._keys_search_input.text().strip().lower() if hasattr(self, "_keys_search_input") else ""
+        if search:
+            keys = [
+                k for k in keys
+                if search in k.get("key_id", "").lower()
+                or search in k.get("label", "").lower()
+                or search in k.get("status", "").lower()
+                or search in k.get("api_key", "").lower()
+                or search in str(k.get("points", "")).lower()
+            ]
+
+        if self._keys_sort_column is None:
+            # 默认排序：最近使用优先
+            keys.sort(key=lambda k: k.get("last_used_at", ""), reverse=True)
+        else:
+            keys.sort(
+                key=lambda k: self._key_sort_value(k, self._keys_sort_column),
+                reverse=self._keys_sort_order == Qt.DescendingOrder,
+            )
+
+        # 使用中的 Key 永远置顶；稳定排序会保留组内原有顺序。
         if concurrent_keys:
             keys.sort(key=lambda k: 0 if k.get("key_id", "") in concurrent_keys else 1)
 
@@ -1596,6 +1706,11 @@ class ApiProxyPage(QWidget):
     def _refresh_sub_keys(self):
         """刷新子 API Key 列表"""
         sub_keys = self._db.get_sub_api_keys()
+        if self._subkeys_sort_column is not None:
+            sub_keys.sort(
+                key=lambda sk: self._subkey_sort_value(sk, self._subkeys_sort_column),
+                reverse=self._subkeys_sort_order == Qt.DescendingOrder,
+            )
         self._subkeys_table.setRowCount(len(sub_keys))
 
         # 预加载上游 Key 数据，用于汇总积分

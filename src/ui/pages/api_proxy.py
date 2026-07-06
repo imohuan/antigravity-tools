@@ -9,6 +9,7 @@
 """
 
 import json
+import os
 import secrets
 
 from PySide6.QtWidgets import (
@@ -133,6 +134,150 @@ def _apply_model_protocol_fields(entry: dict, images: bool):
         "zaiToolStream": True,
     }
     return entry
+
+
+def _read_existing_models(target_path: str) -> list:
+    """读取 models.json 中已有的模型列表。
+
+    兼容两种格式：
+    - WorkBuddy：裸数组 ``[ {...}, {...} ]``
+    - CodeBuddy：包裹对象 ``{"models": [ {...} ]}``
+
+    文件不存在或解析失败时返回空列表（不抛异常）。
+    """
+    if not os.path.exists(target_path):
+        return []
+    try:
+        with open(target_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, OSError, ValueError):
+        return []
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict) and isinstance(data.get("models"), list):
+        return data["models"]
+    return []
+
+
+def _incremental_merge_models(existing: list, new_entries: list):
+    """增量合并模型列表。
+
+    匹配规则：当且仅当 ``id`` 与 ``name`` 都相同视为同一模型：
+    - 已存在：替换该条目，并做“保留字段合并”——以旧条目为底，新条目字段覆盖之，
+      旧条目中独有的字段（新条目未提供）予以保留。
+    - 不存在：追加到列表末尾。
+
+    Returns:
+        (merged_list, replaced_count, added_count)
+    """
+    merged = list(existing)
+    # 建立 (id, name) -> 索引 的查找表（仅记录首次出现位置，避免重复条目互相覆盖）
+    index = {}
+    for i, m in enumerate(merged):
+        if not isinstance(m, dict):
+            continue
+        key = (str(m.get("id", "")).strip(), str(m.get("name", "")).strip())
+        if key not in index:
+            index[key] = i
+
+    replaced = 0
+    added = 0
+    for entry in new_entries:
+        key = (str(entry.get("id", "")).strip(), str(entry.get("name", "")).strip())
+        if key in index:
+            idx = index[key]
+            base = dict(merged[idx]) if isinstance(merged[idx], dict) else {}
+            base.update(entry)  # 新字段覆盖旧字段，旧字段中独有的保留
+            merged[idx] = base
+            replaced += 1
+        else:
+            merged.append(entry)
+            index[key] = len(merged) - 1
+            added += 1
+    return merged, replaced, added
+
+
+def _write_models_json(target_path: str, merged: list, wrapper: str) -> None:
+    """将合并后的模型列表写回 models.json。
+
+    Args:
+        wrapper: ``"array"`` => WorkBuddy 裸数组；``"object"`` => CodeBuddy ``{"models": [...]}``
+    """
+    os.makedirs(os.path.dirname(target_path), exist_ok=True)
+    with open(target_path, "w", encoding="utf-8") as f:
+        if wrapper == "object":
+            json.dump({"models": merged}, f, ensure_ascii=False, indent=2)
+        else:
+            json.dump(merged, f, ensure_ascii=False, indent=2)
+
+
+class ModelSelectDialog(QDialog):
+    """模型多选对话框 —— 让用户勾选需要配置的模型。
+
+    采用增量写入策略：未勾选的模型在 models.json 中保持不变。
+    默认全部勾选，用户可按需取消。
+    """
+
+    def __init__(self, title: str, base_url: str, models: list, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setMinimumWidth(480)
+        self._model_ids = list(models)
+        self._setup_ui(base_url)
+
+    def _setup_ui(self, base_url: str):
+        from PySide6.QtWidgets import QListWidget, QListWidgetItem
+
+        layout = QVBoxLayout(self)
+
+        info = QLabel(
+            "请勾选要配置的模型（增量写入，未勾选的模型保留不变）。\n"
+            f"接口地址: {base_url}"
+        )
+        info.setWordWrap(True)
+        layout.addWidget(info)
+
+        # 全选 / 全不选
+        btn_row = QHBoxLayout()
+        btn_all = QPushButton("全选")
+        btn_none = QPushButton("全不选")
+        btn_all.clicked.connect(lambda: self._set_all(True))
+        btn_none.clicked.connect(lambda: self._set_all(False))
+        btn_row.addWidget(btn_all)
+        btn_row.addWidget(btn_none)
+        btn_row.addStretch()
+        layout.addLayout(btn_row)
+
+        self._list = QListWidget()
+        self._list.setMaximumHeight(320)
+        for mid in self._model_ids:
+            item = QListWidgetItem(mid)
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setCheckState(Qt.Checked)  # 默认全选
+            self._list.addItem(item)
+        layout.addWidget(self._list)
+
+        btn_box = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        btn_box.accepted.connect(self.accept)
+        btn_box.rejected.connect(self.reject)
+        layout.addWidget(btn_box)
+
+    def _set_all(self, checked: bool):
+        """勾选或取消全部模型。"""
+        state = Qt.Checked if checked else Qt.Unchecked
+        for i in range(self._list.count()):
+            self._list.item(i).setCheckState(state)
+
+    def selected_models(self) -> list:
+        """返回勾选的模型 id 列表（保持原始顺序）。"""
+        result = []
+        for i in range(self._list.count()):
+            item = self._list.item(i)
+            if item.checkState() == Qt.Checked:
+                result.append(self._model_ids[i])
+        return result
 
 
 class CreateSubKeyDialog(QDialog):
@@ -2027,18 +2172,26 @@ class ApiProxyPage(QWidget):
     # ─── 一键配置 WorkBuddy / CodeBuddy ───
 
     SUPPORTED_CONFIG_MODELS = [
-        "hy3-preview", "hunyuan-chat", "hunyuan-2.0-thinking",
+        "hy3", "hy3-preview", "hunyuan-chat", "hunyuan-2.0-thinking",
         "deepseek-v4-pro", "deepseek-v4-flash",
         "deepseek-v3-2-volc", "deepseek-v3-1", "deepseek-v3-0324", "deepseek-r1",
         "glm-5.2", "glm-5.1", "glm-5.0", "glm-5.0-turbo", "glm-5v-turbo", "glm-4.7", "glm-4.6",
-        "kimi-k2.6", "kimi-k2.5",
+        "kimi-k2.6", "kimi-k2.5", "kimi-k2.7-code",
         "minimax-m3", "minimax-m2.7", "minimax-m2.5",
         "auto",
     ]
 
+    # 模型显示名（按截图大小写处理；未列出的模型显示名等于 id）
+    # 注意：图片文件名使用小写 id，与此处显示名解耦
+    MODEL_DISPLAY_NAMES = {
+        "hy3": "Hy3",
+        "kimi-k2.7-code": "Kimi-K2.7-Code",
+    }
+
     # 模型能力定义 (tool_call, images, reasoning)
-    # 不支持图片的模型 images=False，避免 WorkBuddy 发图片导致报错
+    # 全部模型均支持图片输入（vision: true），避免 WorkBuddy 误判禁图
     MODEL_CAPABILITIES = {
+        "hy3":                      (True,  True,  True),
         "hy3-preview":              (True,  True,  True),
         "hunyuan-chat":             (True,  True,  True),
         "hunyuan-2.0-thinking":     (True,  True,  True),
@@ -2048,23 +2201,57 @@ class ApiProxyPage(QWidget):
         "deepseek-v3-1":            (True,  True,  True),
         "deepseek-v3-0324":         (True,  True,  True),
         "deepseek-r1":              (True,  True,  True),
-        "glm-5.2":                  (True,  False, True),
-        "glm-5.1":                  (True,  False, True),
-        "glm-5.0":                  (True,  False, True),
-        "glm-5.0-turbo":            (True,  False, True),
+        "glm-5.2":                  (True,  True,  True),
+        "glm-5.1":                  (True,  True,  True),
+        "glm-5.0":                  (True,  True,  True),
+        "glm-5.0-turbo":            (True,  True,  True),
         "glm-5v-turbo":             (True,  True,  True),
-        "glm-4.7":                  (True,  False, True),
-        "glm-4.6":                  (True,  False, True),
+        "glm-4.7":                  (True,  True,  True),
+        "glm-4.6":                  (True,  True,  True),
         "kimi-k2.6":                (True,  True,  True),
         "kimi-k2.5":                (True,  True,  True),
+        "kimi-k2.7-code":           (True,  True,  True),
         "minimax-m3":               (True,  True,  True),
         "minimax-m2.7":             (True,  True,  True),
         "minimax-m2.5":             (True,  True,  True),
         "auto":                     (True,  True,  True),
     }
 
+    def _build_model_entries(self, selected_ids: list, base_url: str,
+                             api_key: str, include_custom_protocol: bool = True) -> list:
+        """根据选中的模型 id 列表构建 models.json 条目。
+
+        Args:
+            selected_ids: 用户勾选的模型 id 列表
+            base_url: 接口地址
+            api_key: 写入条目的 apiKey
+            include_custom_protocol: 是否写入 useCustomProtocol 字段（WorkBuddy 需要，CodeBuddy 不需要）
+        """
+        entries = []
+        for model_id in selected_ids:
+            tool_call, images, reasoning = self.MODEL_CAPABILITIES.get(model_id, (True, True, True))
+            display_name = self.MODEL_DISPLAY_NAMES.get(model_id, model_id)
+            entry = {
+                "id": model_id,
+                "name": display_name,
+                "vendor": "Custom",
+                "url": base_url,
+                "apiKey": api_key,
+                "supportsToolCall": tool_call,
+                "supportsImages": images,
+                "supportsReasoning": reasoning,
+                "disabledMultimodal": not images,
+            }
+            if include_custom_protocol:
+                entry["useCustomProtocol"] = False
+            _apply_model_protocol_fields(entry, images)
+            ctx = MODEL_CONTEXT_LENGTHS.get(model_id)
+            _apply_context_aliases(entry, ctx)
+            entries.append(entry)
+        return entries
+
     def _config_workbuddy(self, api_key: str):
-        """一键配置 WorkBuddy 的 models.json"""
+        """一键配置 WorkBuddy 的 models.json（用户选择模型 + 增量写入）"""
         port = self._port_spin.value()
         mode = self._listen_mode_combo.currentData() if hasattr(self, '_listen_mode_combo') else "local"
         if mode == "open":
@@ -2073,54 +2260,33 @@ class ApiProxyPage(QWidget):
         else:
             host = "127.0.0.1"
         base_url = f"http://{host}:{port}/v1"
-        reply = QMessageBox.question(
-            self, "一键配置 WorkBuddy",
-            "此操作将覆盖 %USERPROFILE%\\.workbuddy\\models.json 的现有配置！\n\n"
-            f"将使用当前 Key 配置 {len(self.SUPPORTED_CONFIG_MODELS)} 个模型。\n"
-            f"接口地址: {base_url}\n\n"
-            "是否继续？",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if reply != QMessageBox.StandardButton.Yes:
+
+        dlg = ModelSelectDialog("一键配置 WorkBuddy", base_url, self.SUPPORTED_CONFIG_MODELS, self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        selected = dlg.selected_models()
+        if not selected:
+            QMessageBox.information(self, "提示", "未勾选任何模型，已取消配置。")
             return
 
-        import json, os
-
-        models = []
-        for model_id in self.SUPPORTED_CONFIG_MODELS:
-            tool_call, images, reasoning = self.MODEL_CAPABILITIES.get(model_id, (True, False, True))
-            entry = {
-                "id": model_id,
-                "name": model_id,
-                "vendor": "Custom",
-                "url": base_url,
-                "apiKey": api_key,
-                "supportsToolCall": tool_call,
-                "supportsImages": images,
-                "supportsReasoning": reasoning,
-                "disabledMultimodal": not images,
-                "useCustomProtocol": False,
-            }
-            _apply_model_protocol_fields(entry, images)
-            ctx = MODEL_CONTEXT_LENGTHS.get(model_id)
-            _apply_context_aliases(entry, ctx)
-            models.append(entry)
-
+        entries = self._build_model_entries(selected, base_url, api_key, include_custom_protocol=True)
         wb_dir = os.path.join(os.path.expanduser("~"), ".workbuddy")
-        os.makedirs(wb_dir, exist_ok=True)
         target_path = os.path.join(wb_dir, "models.json")
 
-        with open(target_path, "w", encoding="utf-8") as f:
-            json.dump(models, f, ensure_ascii=False, indent=2)
+        existing = _read_existing_models(target_path)
+        merged, replaced, added = _incremental_merge_models(existing, entries)
+        _write_models_json(target_path, merged, wrapper="array")
 
         QMessageBox.information(
             self, "✅ 配置完成",
-            f"WorkBuddy 已配置 {len(models)} 个模型！\n\n文件位置:\n{target_path}"
+            f"WorkBuddy 已配置 {len(entries)} 个模型！\n"
+            f"（新增 {added} 个，更新 {replaced} 个，当前共 {len(merged)} 个模型）\n"
+            f"接口地址: {base_url}\n\n"
+            f"文件位置:\n{target_path}"
         )
 
     def _config_codebuddy(self, api_key: str):
-        """一键配置 CodeBuddy 的 models.json"""
+        """一键配置 CodeBuddy 的 models.json（用户选择模型 + 增量写入）"""
         port = self._port_spin.value()
         mode = self._listen_mode_combo.currentData() if hasattr(self, '_listen_mode_combo') else "local"
         if mode == "open":
@@ -2129,55 +2295,33 @@ class ApiProxyPage(QWidget):
         else:
             host = "127.0.0.1"
         base_url = f"http://{host}:{port}/v1"
-        reply = QMessageBox.question(
-            self, "一键配置 CodeBuddy",
-            "此操作将覆盖 %USERPROFILE%\\.codebuddy\\models.json 的现有配置！\n\n"
-            f"将使用当前 Key 配置 {len(self.SUPPORTED_CONFIG_MODELS)} 个模型。\n"
-            f"接口地址: {base_url}\n\n"
-            "是否继续？",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if reply != QMessageBox.StandardButton.Yes:
+
+        dlg = ModelSelectDialog("一键配置 CodeBuddy", base_url, self.SUPPORTED_CONFIG_MODELS, self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        selected = dlg.selected_models()
+        if not selected:
+            QMessageBox.information(self, "提示", "未勾选任何模型，已取消配置。")
             return
 
-        import json, os
-
-        models = []
-        for model_id in self.SUPPORTED_CONFIG_MODELS:
-            tool_call, images, reasoning = self.MODEL_CAPABILITIES.get(model_id, (True, False, True))
-            entry = {
-                "id": model_id,
-                "name": model_id,
-                "vendor": "Custom",
-                "url": base_url,
-                "apiKey": api_key,
-                "supportsToolCall": tool_call,
-                "supportsImages": images,
-                "supportsReasoning": reasoning,
-                "disabledMultimodal": not images,
-            }
-            _apply_model_protocol_fields(entry, images)
-            ctx = MODEL_CONTEXT_LENGTHS.get(model_id)
-            _apply_context_aliases(entry, ctx)
-            models.append(entry)
-
+        entries = self._build_model_entries(selected, base_url, api_key, include_custom_protocol=False)
         cb_dir = os.path.join(os.path.expanduser("~"), ".codebuddy")
-        os.makedirs(cb_dir, exist_ok=True)
         target_path = os.path.join(cb_dir, "models.json")
 
-        config_data = {"models": models}
-
-        with open(target_path, "w", encoding="utf-8") as f:
-            json.dump(config_data, f, ensure_ascii=False, indent=2)
+        existing = _read_existing_models(target_path)
+        merged, replaced, added = _incremental_merge_models(existing, entries)
+        _write_models_json(target_path, merged, wrapper="object")
 
         QMessageBox.information(
             self, "✅ 配置完成",
-            f"CodeBuddy 已配置 {len(models)} 个模型！\n\n文件位置:\n{target_path}"
+            f"CodeBuddy 已配置 {len(entries)} 个模型！\n"
+            f"（新增 {added} 个，更新 {replaced} 个，当前共 {len(merged)} 个模型）\n"
+            f"接口地址: {base_url}\n\n"
+            f"文件位置:\n{target_path}"
         )
 
     def _config_workbuddy_upstream(self, key_id: str):
-        """一键配置 WorkBuddy（直连上游，不走代理）"""
+        """一键配置 WorkBuddy（直连上游，不走代理；用户选择模型 + 增量写入）"""
         # 查找上游 Key 的 api_key
         keys = self._db.get_upstream_keys()
         api_key = ""
@@ -2194,59 +2338,35 @@ class ApiProxyPage(QWidget):
         # 直连上游，不走本地代理
         base_url = "https://copilot.tencent.com/v2"
 
-        reply = QMessageBox.warning(
-            self, "⚠️ 一键配置 WorkBuddy（直连上游）",
-            "此操作将覆盖 %USERPROFILE%\\.workbuddy\\models.json 的现有配置！\n\n"
-            f"将使用上游 Key「{key_label or key_id}」配置 {len(self.SUPPORTED_CONFIG_MODELS)} 个模型。\n"
-            f"接口地址: {base_url}\n\n"
-            "⚠️ 注意：此配置直连上游，不经过本地代理，只使用当前账号的积分，不会自动切换！\n"
-            "如需自动切换多个账号，请到子 API Key 中配置。\n\n"
-            "是否继续？",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
+        dlg = ModelSelectDialog(
+            "一键配置 WorkBuddy（直连上游）", base_url, self.SUPPORTED_CONFIG_MODELS, self
         )
-        if reply != QMessageBox.StandardButton.Yes:
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        selected = dlg.selected_models()
+        if not selected:
+            QMessageBox.information(self, "提示", "未勾选任何模型，已取消配置。")
             return
 
-        import json, os
-
-        models = []
-        for model_id in self.SUPPORTED_CONFIG_MODELS:
-            tool_call, images, reasoning = self.MODEL_CAPABILITIES.get(model_id, (True, False, True))
-            entry = {
-                "id": model_id,
-                "name": model_id,
-                "vendor": "Custom",
-                "url": base_url,
-                "apiKey": api_key,
-                "supportsToolCall": tool_call,
-                "supportsImages": images,
-                "supportsReasoning": reasoning,
-                "disabledMultimodal": not images,
-                "useCustomProtocol": False,
-            }
-            _apply_model_protocol_fields(entry, images)
-            ctx = MODEL_CONTEXT_LENGTHS.get(model_id)
-            _apply_context_aliases(entry, ctx)
-            models.append(entry)
-
+        entries = self._build_model_entries(selected, base_url, api_key, include_custom_protocol=True)
         wb_dir = os.path.join(os.path.expanduser("~"), ".workbuddy")
-        os.makedirs(wb_dir, exist_ok=True)
         target_path = os.path.join(wb_dir, "models.json")
 
-        with open(target_path, "w", encoding="utf-8") as f:
-            json.dump(models, f, ensure_ascii=False, indent=2)
+        existing = _read_existing_models(target_path)
+        merged, replaced, added = _incremental_merge_models(existing, entries)
+        _write_models_json(target_path, merged, wrapper="array")
 
         QMessageBox.information(
             self, "✅ 配置完成",
-            f"WorkBuddy 已配置 {len(models)} 个模型！\n"
-            f"直连上游: https://copilot.tencent.com/v2\n"
+            f"WorkBuddy 已配置 {len(entries)} 个模型！\n"
+            f"（新增 {added} 个，更新 {replaced} 个，当前共 {len(merged)} 个模型）\n"
+            f"直连上游: {base_url}\n"
             f"使用上游 Key: {key_label or key_id}\n\n"
             f"文件位置:\n{target_path}"
         )
 
     def _config_codebuddy_upstream(self, key_id: str):
-        """一键配置 CodeBuddy（直连上游，不走代理）"""
+        """一键配置 CodeBuddy（直连上游，不走代理；用户选择模型 + 增量写入）"""
         # 查找上游 Key 的 api_key
         keys = self._db.get_upstream_keys()
         api_key = ""
@@ -2263,54 +2383,29 @@ class ApiProxyPage(QWidget):
         # 直连上游，不走本地代理
         base_url = "https://copilot.tencent.com/v2"
 
-        reply = QMessageBox.warning(
-            self, "⚠️ 一键配置 CodeBuddy（直连上游）",
-            "此操作将覆盖 %USERPROFILE%\\.codebuddy\\models.json 的现有配置！\n\n"
-            f"将使用上游 Key「{key_label or key_id}」配置 {len(self.SUPPORTED_CONFIG_MODELS)} 个模型。\n"
-            f"接口地址: {base_url}\n\n"
-            "⚠️ 注意：此配置直连上游，不经过本地代理，只使用当前账号的积分，不会自动切换！\n"
-            "如需自动切换多个账号，请到子 API Key 中配置。\n\n"
-            "是否继续？",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
+        dlg = ModelSelectDialog(
+            "一键配置 CodeBuddy（直连上游）", base_url, self.SUPPORTED_CONFIG_MODELS, self
         )
-        if reply != QMessageBox.StandardButton.Yes:
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        selected = dlg.selected_models()
+        if not selected:
+            QMessageBox.information(self, "提示", "未勾选任何模型，已取消配置。")
             return
 
-        import json, os
-
-        models = []
-        for model_id in self.SUPPORTED_CONFIG_MODELS:
-            tool_call, images, reasoning = self.MODEL_CAPABILITIES.get(model_id, (True, False, True))
-            entry = {
-                "id": model_id,
-                "name": model_id,
-                "vendor": "Custom",
-                "url": base_url,
-                "apiKey": api_key,
-                "supportsToolCall": tool_call,
-                "supportsImages": images,
-                "supportsReasoning": reasoning,
-                "disabledMultimodal": not images,
-            }
-            _apply_model_protocol_fields(entry, images)
-            ctx = MODEL_CONTEXT_LENGTHS.get(model_id)
-            _apply_context_aliases(entry, ctx)
-            models.append(entry)
-
+        entries = self._build_model_entries(selected, base_url, api_key, include_custom_protocol=False)
         cb_dir = os.path.join(os.path.expanduser("~"), ".codebuddy")
-        os.makedirs(cb_dir, exist_ok=True)
         target_path = os.path.join(cb_dir, "models.json")
 
-        config_data = {"models": models}
-
-        with open(target_path, "w", encoding="utf-8") as f:
-            json.dump(config_data, f, ensure_ascii=False, indent=2)
+        existing = _read_existing_models(target_path)
+        merged, replaced, added = _incremental_merge_models(existing, entries)
+        _write_models_json(target_path, merged, wrapper="object")
 
         QMessageBox.information(
             self, "✅ 配置完成",
-            f"CodeBuddy 已配置 {len(models)} 个模型！\n"
-            f"直连上游: https://copilot.tencent.com/v2\n"
+            f"CodeBuddy 已配置 {len(entries)} 个模型！\n"
+            f"（新增 {added} 个，更新 {replaced} 个，当前共 {len(merged)} 个模型）\n"
+            f"直连上游: {base_url}\n"
             f"使用上游 Key: {key_label or key_id}\n\n"
             f"文件位置:\n{target_path}"
         )

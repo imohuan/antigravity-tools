@@ -46,7 +46,7 @@ class AddAccountDialog(QDialog):
         self._platform_combo = QComboBox()
         for p in Platform:
             self._platform_combo.addItem(p.value, p)
-        layout.addRow("平台:", self._platform_combo)
+        self._platform_combo.setVisible(False)
 
         self._uid_input = QLineEdit()
         self._uid_input.setPlaceholderText("UID (自动检测)")
@@ -107,6 +107,12 @@ class AddAccountDialog(QDialog):
         btn_api.setToolTip("直接输入 API Key (ck_xxx) 导入账号")
         btn_api.clicked.connect(self._import_from_api)
         btn_row3.addWidget(btn_api)
+
+        btn_card = QPushButton("卡密导入")
+        btn_card.setObjectName("secondary_btn")
+        btn_card.setToolTip("粘贴格式：昵称----apikey，一行一个")
+        btn_card.clicked.connect(self._import_card_keys)
+        btn_row3.addWidget(btn_card)
 
         layout.addRow(btn_row3)
 
@@ -469,6 +475,73 @@ class AddAccountDialog(QDialog):
         self._status_label.setText(status)
         self._status_label.setStyleSheet("color: #38A169; font-size: 12px;")
 
+    def _import_card_keys(self):
+        """粘贴卡密批量导入，格式：昵称----apikey。"""
+        from PySide6.QtWidgets import QDialogButtonBox, QVBoxLayout
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("卡密导入")
+        dialog.setMinimumSize(520, 360)
+        dlg_layout = QVBoxLayout(dialog)
+
+        hint = QLabel("每行一个账号，格式：昵称----apikey")
+        hint.setStyleSheet("color: #9BA4B0; font-size: 12px;")
+        dlg_layout.addWidget(hint)
+
+        text_edit = QTextEdit()
+        text_edit.setPlaceholderText("张三----ck_xxx\n李四----ck_xxx")
+        dlg_layout.addWidget(text_edit, 1)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, parent=dialog)
+        buttons.button(QDialogButtonBox.Ok).setText("导入")
+        buttons.button(QDialogButtonBox.Cancel).setText(t("common.cancel"))
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        dlg_layout.addWidget(buttons)
+
+        if dialog.exec() != QDialog.Accepted:
+            return
+
+        accounts = []
+        invalid = []
+        for line_no, raw_line in enumerate(text_edit.toPlainText().splitlines(), start=1):
+            line = raw_line.strip()
+            if not line:
+                continue
+            if "----" not in line:
+                invalid.append(str(line_no))
+                continue
+            nickname, api_key = [part.strip() for part in line.split("----", 1)]
+            if not nickname or not api_key:
+                invalid.append(str(line_no))
+                continue
+            accounts.append({
+                "uid": nickname,
+                "nickname": nickname,
+                "auth_token": api_key,
+                "api_key": api_key,
+                "ck": "",
+                "platform": Platform.CODEBUDDY,
+            })
+
+        if not accounts:
+            QMessageBox.warning(self, t("common.warning"), "没有可导入的卡密，请检查格式：昵称----apikey")
+            return
+
+        if invalid:
+            reply = QMessageBox.question(
+                self,
+                "格式提醒",
+                f"有 {len(invalid)} 行格式不正确，将跳过这些行并继续导入吗？",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.Yes,
+            )
+            if reply != QMessageBox.Yes:
+                return
+
+        self._on_batch_accounts_imported(accounts)
+        QMessageBox.information(self, "导入完成", f"已导入 {len(accounts)} 个账号")
+
     def _on_batch_accounts_imported(self, accounts: list):
         """批量导入回调：保存所有账号并通知刷新，同时自动导入到上游Key池"""
         if not accounts:
@@ -778,6 +851,8 @@ class AccountsPage(QWidget):
         self._accounts = []
         self._filtered_accounts = []
         self._current_page = 0
+        self._sort_column = None
+        self._sort_order = Qt.AscendingOrder
         self._setup_ui()
 
     def _setup_ui(self):
@@ -808,7 +883,7 @@ class AccountsPage(QWidget):
         for p in Platform:
             self._filter_combo.addItem(p.value, p)
         self._filter_combo.currentIndexChanged.connect(self._on_filter_changed)
-        toolbar.addWidget(self._filter_combo)
+        self._filter_combo.setVisible(False)
 
         # 搜索框
         self._search_input = QLineEdit()
@@ -825,6 +900,13 @@ class AccountsPage(QWidget):
         self._btn_batch_del.clicked.connect(self._batch_delete)
         self._btn_batch_del.setVisible(False)
         toolbar.addWidget(self._btn_batch_del)
+
+        self._btn_batch_export = QPushButton("批量导出")
+        self._btn_batch_export.setObjectName("secondary_btn")
+        self._btn_batch_export.setCursor(Qt.PointingHandCursor)
+        self._btn_batch_export.clicked.connect(self._export_selected_accounts)
+        self._btn_batch_export.setVisible(False)
+        toolbar.addWidget(self._btn_batch_export)
 
         # 操作按钮
         btn_add = QPushButton(f"➕ {t('accounts.add_account')}")
@@ -845,7 +927,7 @@ class AccountsPage(QWidget):
         self._concurrency_spin.setRange(1, 50)
         self._concurrency_spin.setValue(5)
         self._concurrency_spin.setToolTip("同时查询的线程数，建议5-10")
-        self._concurrency_spin.setFixedWidth(60)
+        self._concurrency_spin.setFixedWidth(80)
         toolbar.addWidget(self._concurrency_spin)
 
         self._btn_query_all = QPushButton("💎 查询全部积分")
@@ -853,6 +935,14 @@ class AccountsPage(QWidget):
         self._btn_query_all.setCursor(Qt.PointingHandCursor)
         self._btn_query_all.clicked.connect(self._query_all_quotas)
         toolbar.addWidget(self._btn_query_all)
+
+        # 检查账号状态按钮
+        self._btn_check_status = QPushButton("🔍 检查账号状态")
+        self._btn_check_status.setObjectName("secondary_btn")
+        self._btn_check_status.setCursor(Qt.PointingHandCursor)
+        self._btn_check_status.setToolTip("批量检测所有账号的 API Key 是否被风控/失效，结果同步到上游 Key 池")
+        self._btn_check_status.clicked.connect(self._check_all_status)
+        toolbar.addWidget(self._btn_check_status)
 
         # 停止按钮
         self._btn_stop_query = QPushButton("⏹ 停止")
@@ -868,13 +958,17 @@ class AccountsPage(QWidget):
 
         content_layout.addLayout(toolbar)
 
-        # 表格 — 列：昵称、UID、积分、TK、CK、API状态
+        # 表格 – 列：昵称、UID、积分、TK、API状态
         self._table = QTableWidget()
-        self._table.setColumnCount(6)
+        self._table.setColumnCount(5)
         self._table.setHorizontalHeaderLabels([
-            "昵称", "UID", "积分", "TK", "CK", "API状态"
+            "昵称", "UID", "积分", "TK", "API状态"
         ])
-        self._table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        header = self._table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.Stretch)
+        header.setSectionsClickable(True)
+        header.setSortIndicatorShown(True)
+        header.sectionClicked.connect(self._on_header_sort)
         self._table.setAlternatingRowColors(True)
         self._table.setSelectionBehavior(QTableWidget.SelectRows)
         self._table.setSelectionMode(QAbstractItemView.ExtendedSelection)
@@ -970,12 +1064,9 @@ class AccountsPage(QWidget):
         self._accounts = load_accounts()
 
     def _apply_filter(self):
-        platform = self._filter_combo.currentData()
         search = self._search_input.text().lower()
 
         filtered = self._accounts
-        if platform:
-            filtered = [a for a in filtered if a.platform == platform]
         if search:
             filtered = [a for a in filtered if
                        search in a.nickname.lower() or
@@ -985,6 +1076,44 @@ class AccountsPage(QWidget):
                        search in a.api_key.lower()]
 
         self._filtered_accounts = filtered
+        self._apply_sort()
+
+    def _account_sort_value(self, account: Account, column: int):
+        if column == 0:
+            return account.display_name.lower()
+        if column == 1:
+            return account.uid.lower()
+        if column == 2:
+            return account.quota.credits_remaining
+        if column == 3:
+            return account.auth_token.lower()
+        if column == 4:
+            return (
+                0 if account.status == AccountStatus.ACTIVE else 1,
+                0 if account.api_key else 1,
+                account.status.value,
+            )
+        return ""
+
+    def _apply_sort(self):
+        if self._sort_column is None:
+            return
+        reverse = self._sort_order == Qt.DescendingOrder
+        self._filtered_accounts.sort(
+            key=lambda account: self._account_sort_value(account, self._sort_column),
+            reverse=reverse,
+        )
+
+    def _on_header_sort(self, section: int):
+        if self._sort_column == section:
+            self._sort_order = Qt.DescendingOrder if self._sort_order == Qt.AscendingOrder else Qt.AscendingOrder
+        else:
+            self._sort_column = section
+            self._sort_order = Qt.AscendingOrder
+        self._table.horizontalHeader().setSortIndicator(section, self._sort_order)
+        self._apply_sort()
+        self._current_page = 0
+        self._render_page()
 
     def _render_page(self):
         """只渲染当前页"""
@@ -1026,34 +1155,19 @@ class AccountsPage(QWidget):
                 tk_item.setForeground(Qt.gray)
             self._table.setItem(row, 3, tk_item)
 
-            # CK列 (ck 截断显示)
-            ck_text = account.ck
-            if ck_text:
-                ck_display = ck_text[:25] + "..." if len(ck_text) > 25 else ck_text
-            else:
-                ck_display = ""
-            ck_item = QTableWidgetItem(ck_display)
-            ck_item.setToolTip(ck_text if ck_text else "")  # 悬停显示完整值
-            if not ck_text:
-                ck_item.setForeground(Qt.gray)
-            self._table.setItem(row, 4, ck_item)
-
-            # API状态列 — 只显示有的凭证，空的就是空
-            status_parts = []
-            if account.api_key:
-                status_parts.append("✅ API")
-            if account.auth_token:
-                status_parts.append("✅ TK")
-            if account.ck:
-                status_parts.append("✅ CK")
-
-            api_status_text = "  ".join(status_parts) if status_parts else "—"
+            has_api = bool(account.api_key)
+            is_normal = account.status == AccountStatus.ACTIVE
+            api_status_text = ("有API" if has_api else "无API") + " · " + ("正常" if is_normal else "异常")
             api_status_item = QTableWidgetItem(api_status_text)
-            if status_parts:
+            if is_normal and has_api:
                 api_status_item.setForeground(Qt.darkGreen)
+            elif not is_normal:
+                api_status_item.setForeground(Qt.red)
             else:
                 api_status_item.setForeground(Qt.gray)
-            self._table.setItem(row, 5, api_status_item)
+            if account.status_reason:
+                api_status_item.setToolTip(account.status_reason)
+            self._table.setItem(row, 4, api_status_item)
 
         self._update_pager()
 
@@ -1095,6 +1209,9 @@ class AccountsPage(QWidget):
 
     def _on_selection_changed(self):
         selected = self._get_selected_accounts()
+        self._btn_batch_export.setVisible(bool(selected))
+        if selected:
+            self._btn_batch_export.setText(f"批量导出 ({len(selected)})")
         if len(selected) > 1:
             self._btn_batch_del.setVisible(True)
             self._btn_batch_del.setText(f"🗑️ 批量删除 ({len(selected)})")
@@ -1120,12 +1237,18 @@ class AccountsPage(QWidget):
             action_copy_api = menu.addAction("📋 复制 API Key")
             action_copy_api.triggered.connect(lambda: self._copy_field(account.api_key, "API Key"))
             menu.addSeparator()
+            action_export = menu.addAction("批量导出")
+            action_export.triggered.connect(lambda: self._export_selected_accounts())
+            menu.addSeparator()
             action_login = menu.addAction("🌐 登录网页")
             action_login.triggered.connect(lambda: self._login_webpage(account))
             menu.addSeparator()
             action_del = menu.addAction("🗑️ 删除账号")
             action_del.triggered.connect(lambda: self._delete_account(account))
         else:
+            action_export = menu.addAction(f"批量导出 ({len(selected)} 个账号)")
+            action_export.triggered.connect(lambda: self._export_selected_accounts())
+            menu.addSeparator()
             action_batch = menu.addAction(f"🗑️ 批量删除 ({len(selected)} 个账号)")
             action_batch.triggered.connect(lambda: self._batch_delete())
 
@@ -1744,10 +1867,13 @@ class AccountsPage(QWidget):
         self._batch_worker.start()
 
     def _stop_query(self):
-        """停止查询"""
+        """停止查询/检测"""
         if hasattr(self, '_batch_worker') and self._batch_worker:
             self._batch_worker.stop()
             self._append_log("⏹ 正在停止查询...")
+        if hasattr(self, '_status_check_worker') and self._status_check_worker:
+            self._status_check_worker.stop()
+            self._append_log("⏹ 正在停止检测...")
         self._btn_stop_query.setEnabled(False)
 
     def _append_log(self, text: str):
@@ -1774,12 +1900,187 @@ class AccountsPage(QWidget):
         self._render_page()
         self.quota_updated.emit()  # 通知其他页面刷新
 
+    def _check_all_status(self):
+        """检查所有账号的 API Key 状态（风控/失效），同步到上游 Key 池"""
+        from PySide6.QtCore import QThread, Signal as QSignal
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        self._load_accounts()
+        accounts_with_key = [a for a in self._accounts if a.api_key]
+        if not accounts_with_key:
+            QMessageBox.information(self, "提示", "没有配置 API Key 的账号，无需检测")
+            return
+
+        max_workers = self._concurrency_spin.value()
+        self._btn_check_status.setEnabled(False)
+        self._btn_query_all.setEnabled(False)
+        self._btn_stop_query.setVisible(True)
+        self._btn_stop_query.setEnabled(True)
+        self._progress_bar.setVisible(True)
+        self._progress_bar.setRange(0, len(accounts_with_key))
+        self._progress_bar.setValue(0)
+        self._log_edit.clear()
+        self._log_edit.setVisible(True)
+        self._append_log(f"🔍 开始检测 {len(accounts_with_key)} 个账号状态，并发数: {max_workers}")
+
+        class StatusCheckWorker(QThread):
+            """后台并发检测 API Key 风控状态线程"""
+            progress = QSignal(str, bool, str)  # nickname, success, status_text
+            done = QSignal(int, int, int, list)  # (正常, 异常, 失败, 异常key列表)
+
+            def __init__(self, accounts, max_workers=5):
+                super().__init__()
+                self._accounts = accounts
+                self.max_workers = max_workers
+                self._stop_flag = False
+
+            def stop(self):
+                self._stop_flag = True
+
+            def _check_one(self, acc):
+                import requests as _requests
+                api_key = acc.api_key
+                nickname = acc.nickname or acc.uid
+                try:
+                    resp = _requests.post(
+                        "https://copilot.tencent.com/v2/chat/completions",
+                        json={
+                            "model": "auto",
+                            "stream": True,
+                            "stream_options": {"include_usage": True},
+                            "messages": [
+                                {"role": "system", "content": "You are a helpful assistant."},
+                                {"role": "user", "content": "hi"},
+                            ],
+                        },
+                        headers={
+                            "Content-Type": "application/json",
+                            "Accept": "application/json, text/event-stream",
+                            "Authorization": f"Bearer {api_key}",
+                        },
+                        timeout=30,
+                        stream=True,
+                    )
+                    if resp.status_code == 200:
+                        return (nickname, True, "正常", api_key, None)
+                    elif resp.status_code == 403 and '"code":11140' in resp.text:
+                        return (nickname, False, "风控异常", api_key, "abnormal")
+                    elif resp.status_code == 401 and "invalid_secret" in resp.text:
+                        return (nickname, False, "Key失效", api_key, None)
+                    elif resp.status_code == 429:
+                        return (nickname, True, "限流(正常)", api_key, None)
+                    else:
+                        return (nickname, False, f"HTTP {resp.status_code}", api_key, None)
+                except Exception as e:
+                    return (nickname, False, f"异常: {e}", api_key, None)
+
+            def run(self):
+                normal = 0
+                abnormal = 0
+                failed = 0
+                abnormal_keys = []
+                with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+                    futures = {executor.submit(self._check_one, acc): acc
+                               for acc in self._accounts}
+                    for future in as_completed(futures):
+                        if self._stop_flag:
+                            executor.shutdown(wait=False, cancel_futures=True)
+                            break
+                        try:
+                            nickname, success, status_text, api_key, flag = future.result()
+                            self.progress.emit(nickname, success, status_text)
+                            if flag == "abnormal":
+                                abnormal += 1
+                                abnormal_keys.append(api_key)
+                            elif success:
+                                normal += 1
+                            else:
+                                failed += 1
+                        except Exception:
+                            failed += 1
+                self.done.emit(normal, abnormal, failed, abnormal_keys)
+
+        worker = StatusCheckWorker(accounts_with_key, max_workers=max_workers)
+
+        def _on_progress(nickname, success, status_text):
+            current = self._progress_bar.value() + 1
+            self._progress_bar.setValue(current)
+            icon = "✅" if success else ("⚠️" if status_text == "风控异常" else "❌")
+            self._append_log(f"{icon} {nickname} → {status_text}")
+
+        def _on_done(normal, abnormal, failed, abnormal_keys):
+            self._btn_check_status.setEnabled(True)
+            self._btn_query_all.setEnabled(True)
+            self._btn_stop_query.setVisible(False)
+            self._btn_stop_query.setEnabled(True)
+            self._progress_bar.setVisible(False)
+
+            # 同步到上游 Key 池
+            try:
+                from ...modules.proxy_server import ProxyDatabase
+                proxy_db = ProxyDatabase.get_instance()
+                all_keys = proxy_db.get_upstream_keys()
+                for k in all_keys:
+                    k_api = k.get("api_key", "")
+                    k_id = k.get("key_id", "")
+                    if k_api in abnormal_keys and k.get("status") != "abnormal":
+                        proxy_db.update_upstream_key(k_id, {"status": "abnormal"})
+                    elif k_api not in abnormal_keys and k.get("status") == "abnormal":
+                        proxy_db.update_upstream_key(k_id, {"status": "active"})
+                proxy_db._dirty = True
+                proxy_db._flush_to_disk()
+                self._append_log("✅ 上游 Key 池已同步")
+            except Exception as e:
+                self._append_log(f"⚠️ 同步上游池失败: {e}")
+
+            msg = f"检测完成：✅ 正常 {normal} 个"
+            if abnormal > 0:
+                msg += f"，⚠️ 异常 {abnormal} 个（已标记到上游池）"
+            if failed > 0:
+                msg += f"，❓ 失败 {failed} 个"
+            self._append_log(msg)
+            QMessageBox.information(self, "检测完成", msg)
+
+        worker.progress.connect(_on_progress)
+        worker.done.connect(_on_done)
+        self._status_check_worker = worker
+        worker.start()
+
     def _copy_field(self, value: str, label: str):
         """复制指定字段到剪贴板"""
         if not value:
             return
         from PySide6.QtWidgets import QApplication
         QApplication.clipboard().setText(value)
+
+    def _export_selected_accounts(self):
+        selected = self._get_selected_accounts()
+        rows = [
+            f"{account.display_name}----{account.api_key}"
+            for account in selected
+            if account.api_key
+        ]
+        if not selected:
+            return
+        if not rows:
+            QMessageBox.warning(self, t("common.warning"), "选中的账号没有可导出的 API Key")
+            return
+
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "导出账号 API Key",
+            "accounts_api_keys.txt",
+            "Text Files (*.txt);;All Files (*)",
+        )
+        if not file_path:
+            return
+
+        try:
+            with open(file_path, "w", encoding="utf-8") as f:
+                f.write("\n".join(rows))
+            QMessageBox.information(self, "导出完成", f"已导出 {len(rows)} 个 API Key")
+        except Exception as e:
+            QMessageBox.warning(self, "导出失败", f"无法写入文件：{e}")
 
     def _sync_delete_key_pool(self, account: Account):
         """删除账号时同步删除 Key 池中对应的 Key"""

@@ -10,6 +10,7 @@
 """
 
 import base64
+import copy
 import hashlib
 import json
 import logging
@@ -56,9 +57,9 @@ SUPPORTED_MODELS = [
     # MiniMax
     "minimax-m3", "minimax-m2.7", "minimax-m2.5",
     # Kimi
-    "kimi-k2.6", "kimi-k2.5",
+    "kimi-k2.6", "kimi-k2.5", "kimi-k2.7-code",
     # 混元
-    "hy3-preview", "hunyuan-chat", "hunyuan-2.0-thinking",
+    "hy3", "hy3-preview", "hunyuan-chat", "hunyuan-2.0-thinking",
 ]
 
 # 模型上下文长度（maxInputTokens），用于 WorkBuddy 客户端判断是否需要压缩上下文
@@ -87,7 +88,9 @@ MODEL_CONTEXT_LENGTHS = {
     # Kimi
     "kimi-k2.6": 256000,               # 256K
     "kimi-k2.5": 1000000,              # 百万级上下文
+    "kimi-k2.7-code": 256000,          # 256K
     # 混元
+    "hy3": 256000,                     # 256K
     "hy3-preview": 256000,             # 256K
     "hunyuan-chat": 256000,            # 256K（混元 2.0 Instruct）
     "hunyuan-2.0-thinking": 256000,    # 256K（混元 2.0 Think）
@@ -95,13 +98,17 @@ MODEL_CONTEXT_LENGTHS = {
 
 MODEL_SUPPORTS_IMAGES = {
     "auto": True,
-    "glm-5.2": True,       # WorkBuddy 官方已支持图片输入
-    "glm-5.1": True,       # WorkBuddy 官方已支持图片输入
-    "glm-5.0": False,
-    "glm-5.0-turbo": False,
+    # GLM 系列：全部支持图片输入
+    "glm-5.2": True,
+    "glm-5.1": True,
+    "glm-5.0": True,
+    "glm-5.0-turbo": True,
     "glm-5v-turbo": True,
-    "glm-4.7": False,
-    "glm-4.6": False,
+    "glm-4.7": True,
+    "glm-4.6": True,
+    # 新增模型
+    "kimi-k2.7-code": True,
+    "hy3": True,
 }
 
 MODEL_MAX_OUTPUT_TOKENS = {
@@ -113,6 +120,9 @@ MODEL_MAX_OUTPUT_TOKENS = {
     "glm-5v-turbo": 8192,
     "glm-4.7": 131072,
     "glm-4.6": 131072,
+    # 新增模型
+    "kimi-k2.7-code": 131072,
+    "hy3": 131072,
 }
 
 IMAGE_UNSUPPORTED_TEXT_MODELS = {m for m, v in MODEL_SUPPORTS_IMAGES.items() if not v}
@@ -193,6 +203,171 @@ def _detect_multimodal_images(request_data: dict) -> dict:
         "data_uri_count": data_uri_count,
         "max_image_chars": max_image_chars,
     }
+
+
+def _truncate_for_log(value: str, limit: int = 1200) -> str:
+    if not isinstance(value, str):
+        value = str(value)
+    if len(value) <= limit:
+        return value
+    return f"{value[:limit]}...(truncated {len(value) - limit} chars)"
+
+
+def _safe_json_for_log(value, limit: int = 8000) -> str:
+    try:
+        text = json.dumps(value, ensure_ascii=False, default=str)
+    except Exception:
+        text = str(value)
+    return _truncate_for_log(text, limit)
+
+
+def _summarize_log_value(value, depth: int = 0):
+    """Return a compact, log-safe summary without leaking huge image payloads."""
+    if depth >= 4:
+        return f"<{type(value).__name__}>"
+    if isinstance(value, str):
+        if value.startswith("data:image/"):
+            media = value.split(";", 1)[0].replace("data:", "")
+            return f"<data-uri {media}, chars={len(value)}>"
+        if len(value) > 300:
+            return f"{value[:300]}...(chars={len(value)})"
+        return value
+    if isinstance(value, (int, float, bool)) or value is None:
+        return value
+    if isinstance(value, list):
+        items = [_summarize_log_value(item, depth + 1) for item in value[:20]]
+        if len(value) > 20:
+            items.append(f"...({len(value) - 20} more)")
+        return items
+    if isinstance(value, dict):
+        result = {}
+        for key, item in list(value.items())[:40]:
+            if key.lower() in ("authorization", "api_key", "apikey", "access_token", "token"):
+                result[key] = "<redacted>"
+            else:
+                result[key] = _summarize_log_value(item, depth + 1)
+        if len(value) > 40:
+            result["..."] = f"{len(value) - 40} more keys"
+        return result
+    return str(value)
+
+
+def _summarize_messages_for_log(messages: list) -> dict:
+    if not isinstance(messages, list):
+        return {"type": type(messages).__name__}
+
+    def summarize_part(part):
+        if isinstance(part, str):
+            return {
+                "type": "text",
+                "chars": len(part),
+                "preview": _truncate_for_log(part, 160),
+            }
+        if not isinstance(part, dict):
+            return {"type": type(part).__name__, "value": _summarize_log_value(part)}
+
+        part_type = part.get("type", "<missing>")
+        summary = {"type": part_type}
+        if part_type == "text":
+            text = part.get("text", "")
+            summary.update({"chars": len(text), "preview": _truncate_for_log(text, 160)})
+            return summary
+
+        image_url = _image_url_from_part(part)
+        if image_url:
+            summary.update({
+                "image": True,
+                "data_uri": image_url.startswith("data:"),
+                "chars": len(image_url),
+                "media": image_url.split(";", 1)[0].replace("data:", "") if image_url.startswith("data:") else "url",
+            })
+            return summary
+
+        for key, value in part.items():
+            if key != "type":
+                summary[key] = _summarize_log_value(value)
+        return summary
+
+    total = len(messages)
+    if total <= 12:
+        selected = list(enumerate(messages))
+    else:
+        selected = list(enumerate(messages[:6])) + list(enumerate(messages[-6:], start=total - 6))
+
+    summarized = []
+    for idx, msg in selected:
+        if not isinstance(msg, dict):
+            summarized.append({"index": idx, "type": type(msg).__name__})
+            continue
+        content = msg.get("content")
+        item = {
+            "index": idx,
+            "role": msg.get("role"),
+            "content_type": type(content).__name__,
+        }
+        if isinstance(content, str):
+            item.update({"chars": len(content), "preview": _truncate_for_log(content, 180)})
+        elif isinstance(content, list):
+            item["parts"] = [summarize_part(part) for part in content[:20]]
+            if len(content) > 20:
+                item["parts"].append({"type": "...", "more": len(content) - 20})
+        else:
+            item["content"] = _summarize_log_value(content)
+        summarized.append(item)
+
+    return {
+        "count": total,
+        "omitted_middle": max(0, total - len(selected)),
+        "items": summarized,
+    }
+
+
+def _summarize_request_for_error_log(request_data: dict, headers: dict, build_meta: dict) -> dict:
+    non_message_fields = {
+        key: _summarize_log_value(value)
+        for key, value in request_data.items()
+        if key != "messages"
+    }
+    header_summary = {}
+    for key, value in headers.items():
+        if key.lower() == "authorization":
+            header_summary[key] = f"Bearer ...{value[-8:]}" if isinstance(value, str) and len(value) > 15 else "<redacted>"
+        else:
+            header_summary[key] = value
+    return {
+        "headers": header_summary,
+        "body_fields": list(request_data.keys()),
+        "non_message_fields": non_message_fields,
+        "messages": _summarize_messages_for_log(request_data.get("messages", [])),
+        "image_stats": _detect_multimodal_images(request_data),
+        "relay_meta": build_meta,
+    }
+
+
+def _parse_upstream_error_for_log(status_code: int, resp_body: str, resp_headers=None) -> dict:
+    detail = {
+        "status": status_code,
+        "body_len": len(resp_body or ""),
+        "raw_body": _truncate_for_log(resp_body or "", 4000),
+    }
+    if resp_headers:
+        detail["content_type"] = resp_headers.get("Content-Type", "")
+        detail["request_id_header"] = (
+            resp_headers.get("X-Request-ID")
+            or resp_headers.get("X-Request-Id")
+            or resp_headers.get("Request-Id")
+        )
+    try:
+        parsed = json.loads(resp_body) if resp_body else None
+    except json.JSONDecodeError:
+        parsed = None
+    if isinstance(parsed, dict):
+        detail["json"] = _summarize_log_value(parsed)
+        detail["code"] = parsed.get("code") or parsed.get("error", {}).get("code")
+        detail["msg"] = parsed.get("msg") or parsed.get("message") or parsed.get("error", {}).get("message")
+        detail["requestId"] = parsed.get("requestId") or parsed.get("request_id")
+        detail["extError"] = parsed.get("extError") or parsed.get("error")
+    return detail
 
 
 # [v1.6.1-fix] 以下三个函数已无调用方（旧图片拦截逻辑移除后成为死代码）
@@ -416,6 +591,49 @@ def _strip_history_images_with_description(messages: list) -> list:
         logger.info(f"[历史图片描述] 替换 {stripped_total} 张历史图片为文本描述")
 
     return new_messages
+
+
+def _build_workbuddy_relay_headers(api_key: str) -> dict:
+    """Build the upstream headers for WorkBuddy API key relay."""
+    return {
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream",
+        "Authorization": f"Bearer {api_key}",
+    }
+
+
+def _build_workbuddy_relay_body(client_body: dict) -> tuple[dict, dict]:
+    """
+    Build the upstream body for WorkBuddy key-pool relay.
+
+    This proxy is not an SDK/Agent adapter. WorkBuddy already speaks the body
+    shape its upstream expects, so the relay should preserve the request body as
+    much as possible and only change what the proxy owns: model fallback,
+    messages validation happened earlier, and upstream streaming.
+    """
+    body = copy.deepcopy(client_body)
+    body["model"] = body.get("model") or "auto"
+    body["messages"] = copy.deepcopy(client_body.get("messages", []))
+    body["stream"] = True
+
+    translated_fields = []
+    if "max_completion_tokens" in client_body and "max_tokens" not in client_body:
+        body["max_tokens"] = client_body.get("max_completion_tokens")
+        translated_fields.append("max_completion_tokens->max_tokens")
+
+    removed_null_fields = []
+    for field in list(body.keys()):
+        if body[field] is None:
+            removed_null_fields.append(field)
+            del body[field]
+
+    meta = {
+        "mode": "workbuddy_relay",
+        "removed_null_fields": removed_null_fields,
+        "translated_fields": translated_fields,
+        "has_stream_options": "stream_options" in body,
+    }
+    return body, meta
 
 
 # 上游 API 路径（copilot.tencent.com/v2 使用 /chat/completions，不是 /v1/chat/completions）
@@ -1441,7 +1659,6 @@ class ProxyRouter:
                         test_data = {
                             "model": "auto",
                             "stream": True,
-                            "stream_options": {"include_usage": True},
                             "max_tokens": 1,
                             "messages": [
                                 {"role": "system", "content": "You are helpful."},
@@ -1451,7 +1668,7 @@ class ProxyRouter:
                         resp = requests.post(
                             f"{upstream_url}{UPSTREAM_CHAT_PATH}",
                             json=test_data,
-                            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                            headers=_build_workbuddy_relay_headers(api_key),
                             timeout=15,
                             proxies={"http": None, "https": None},
                         )
@@ -1781,7 +1998,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             self._send_json(200, {
                 "object": "api.index",
                 "message": "Antigravity Proxy is running",
-                "version": "1.6.3",
+                "version": "1.6.6",
             })
             return
 
@@ -1988,10 +2205,6 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
         #     return
         # ── 旧逻辑结束 ──
 
-        # 图片统计仍保留（用于日志），但不做拦截
-        image_stats = _detect_multimodal_images(request_data)
-        history_strip_stats = {"stripped_images": 0}
-
         # 4. 检查模型是否允许（透传模式跳过）
         if not is_passthrough:
             allowed_models = sub_key.get("allowed_models", [])
@@ -2008,18 +2221,20 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
         target_url = f"{upstream_url}{UPSTREAM_CHAT_PATH}"
 
         # ─── 自动重试循环：最多尝试 3 个不同 Key ───
-        MAX_RETRIES = 3
+        MAX_RETRY_KEYS = 3
+        total_attempts = 0
         tried_key_ids = set()       # 已尝试过的 key_id（换 Key 时加入）
         same_key_retried = set()    # 已同 Key 重试过的 key_id（优化项 #7：RETRY_SAME 每键只重试一次）
         last_error = None           # 最后一次的错误信息
         last_error_status = 503     # 最后一次的错误状态码
         last_cooldown_secs = 0      # 最后一次冷却秒数（用于 Retry-After 头，优化项 #9）
-        _skip_stream_options = False  # 某些模型不支持 stream_options，检测到 400 后去掉重试
+        last_upstream_error_log = None  # 最后一次上游原始错误详情（仅用于本地排查日志）
         _ctx_compressed = [False]    # 上下文是否已压缩过（用 list 包装以便在嵌套函数中修改）
         allowed_key_ids = sub_key.get("allowed_key_ids", [])
         key_mode = sub_key.get("key_mode", 1)
 
-        for attempt in range(1, MAX_RETRIES + 1):
+        while len(tried_key_ids) < MAX_RETRY_KEYS:
+            total_attempts += 1
             # 选择上游 Key（排除已尝试的），带等待队列（优化项 #3）
             upstream_key = self.router.select_key_with_wait(
                 model,
@@ -2042,7 +2257,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                         if kid and not self.router._is_key_schedulable_for_model(kid, model):
                             model_cooldown_count += 1
                 logger.warning(
-                    f"[重试] 第{attempt}次：无可用的上游 Key | "
+                    f"[重试] 第{total_attempts}次：无可用的上游 Key | "
                     f"总计={len(all_keys)} active={active_count} cooldown={cooldown_count} "
                     f"excluded={excluded_count} model_cooldown={model_cooldown_count} "
                     f"tried_key_ids={tried_key_ids}"
@@ -2051,91 +2266,45 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
 
             key_id = upstream_key.get("key_id", "")
             label = upstream_key.get("label", key_id[:8])
-            logger.info(f"[重试] 第{attempt}次尝试 Key: {label}")
+            logger.info(f"[重试] 第{total_attempts}次尝试 Key: {label}")
 
             # 更新并发计数
             self.router.increment_concurrent(key_id)
 
             try:
-                # ─── 构建请求头：纯 API 白名单制（v1.6.1 改动）───
-                # [v1.6.1-CHANGE] 请求头从「3件套(Content-Type+Authorization+X-Request-ID)」
-                #   改为白名单制(Content-Type+Accept+Authorization)，去掉 X-Request-ID(trace头)
-                # [ROLLBACK] 恢复方法：把 req_headers 改回
-                #   {"Content-Type": "application/json",
-                #    "Authorization": f"Bearer {upstream_api_key}",
-                #    "X-Request-ID": secrets.token_hex(16)}
+                # ─── v1.6.6 WorkBuddy Relay：保留客户端 body，只替换上游 Key ───
                 upstream_api_key = upstream_key.get("api_key", "")
-                req_headers = {
-                    "Content-Type": "application/json",
-                    "Accept": "application/json, text/event-stream",
-                    "Authorization": f"Bearer {upstream_api_key}",
-                }
-                logger.info(f"[代理] 使用白名单 API 协议头（Content-Type+Accept+Authorization）")
-
-                # 检查客户端是否要流式
+                req_headers = _build_workbuddy_relay_headers(upstream_api_key)
                 client_wants_stream = request_data.get("stream", False)
-                # copilot 上游只支持流式请求，强制开启 stream
-                request_data["stream"] = True
-                # 请求上游返回 usage 统计（最后一个 chunk 包含 token/credit/缓存信息）
-                if not _skip_stream_options:
-                    request_data.setdefault("stream_options", {})["include_usage"] = True
+                upstream_request_data, build_meta = _build_workbuddy_relay_body(request_data)
 
-                # ─── [v1.6.1-CHANGE] 请求体白名单制：删除非白名单字段 ───
-                # 原样透传会把客户端的未知字段带到上游，可能导致 400。
-                # 白名单只保留上游已知接受的字段，其余删除并记日志。
-                # [ROLLBACK] 注释掉这段 _allowed_body_fields 过滤即可恢复原样透传
-                _allowed_body_fields = {
-                    "model", "messages", "stream", "stream_options",
-                    "temperature", "top_p", "max_tokens", "presence_penalty",
-                    "frequency_penalty", "stop", "tools", "tool_choice", "response_format",
-                    # [v1.6.1-fix] 补充 OpenAI 兼容常用字段
-                    "parallel_tool_calls", "seed", "user", "metadata",
-                    "logprobs", "top_logprobs", "n",
-                    # [v1.6.1-fix] 推理模式相关字段
-                    "reasoning_effort", "thinking",
-                }
-                _removed_fields = [k for k in list(request_data.keys()) if k not in _allowed_body_fields]
-                if _removed_fields:
-                    logger.info(f"[v1.6.1] 请求体白名单过滤，删除字段: {_removed_fields}")
-                    for _k in _removed_fields:
-                        del request_data[_k]
+                if build_meta["removed_null_fields"] or build_meta["translated_fields"]:
+                    logger.info(
+                        f"[v1.6.6] WorkBuddy Relay 调整字段: "
+                        f"removed_null={build_meta['removed_null_fields']}; "
+                        f"translated={build_meta['translated_fields']}"
+                    )
 
-                # ─── [v1.6.1-CHANGE] 历史图片替换为文本描述 ───
-                # 后面已有 assistant 回复的 user 图片消息 → 图片替换成描述
-                # 后面还没有 assistant 回复的 user 图片消息 → 保留原图（第一次发图/最新发图）
-                # [ROLLBACK] 注释掉下面两行即可恢复（只保留 _normalize_messages_for_upstream）
-                request_data["messages"] = _strip_history_images_with_description(
-                    request_data.get("messages", [])
-                )
-
-                # ─── [v1.6.1-CHANGE] messages 图片格式归一化：input_image → image_url ───
-                # 上游纯 API 模式只认 image_url 格式，input_image 会被丢弃导致"读不了图"。
-                # [ROLLBACK] 注释掉下面这行即可恢复原样透传
-                _img_normalized = _normalize_messages_for_upstream(request_data.get("messages", []))
-
-                # [v1.6.1-fix] 图片处理后重新统计，日志里显示真正发给上游的图片数
-                image_stats = _detect_multimodal_images(request_data)
+                image_stats = _detect_multimodal_images(upstream_request_data)
 
                 # 记录请求体大小和消息数（用于排查上下文超长问题）
-                msg_count = len(request_data.get("messages", []))
-                body_size = len(json.dumps(request_data, ensure_ascii=False))
+                msg_count = len(upstream_request_data.get("messages", []))
+                body_size = len(json.dumps(upstream_request_data, ensure_ascii=False))
 
                 # 检测请求是否包含图片内容（排查图片上下文超限问题）
                 has_image = image_stats["image_count"] > 0
 
-                logger.info(f"[代理] 请求准备耗时 {int((time.time()-t0)*1000)}ms, model={model}, key={label}, "
+                logger.info(f"[代理] v1.6.6 WorkBuddy Relay 请求 {int((time.time()-t0)*1000)}ms, model={model}, key={label}, "
                            f"messages={msg_count}, body={body_size}B ({body_size//1024}KB), "
                            f"stream={client_wants_stream}, image={has_image}, images={image_stats['image_count']}, "
-                           f"stripped_images={history_strip_stats['stripped_images']}, "
-                           f"stream_options={request_data.get('stream_options', 'N/A')}, "
-                           f"img_normalized={_img_normalized}")
+                           f"mode={build_meta['mode']}, stream_options={build_meta['has_stream_options']}")
 
                 # ─── 发送请求到上游 ───
                 session = self.router._get_session(upstream_url)
                 t_send = time.time()
                 resp = session.post(
                     target_url,
-                    json=request_data,
+                    json=upstream_request_data,
                     headers=req_headers,
                     timeout=120,
                     stream=True,
@@ -2149,6 +2318,23 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
 
                     # 故障转移分类（优化项 #7）
                     error_type = self.router._classify_error(resp.status_code, resp_body)
+                    upstream_error_log = _parse_upstream_error_for_log(resp.status_code, resp_body, resp.headers)
+                    request_error_log = _summarize_request_for_error_log(
+                        upstream_request_data, req_headers, build_meta
+                    )
+                    last_upstream_error_log = upstream_error_log
+                    logger.warning(
+                        "[上游错误详情] %s",
+                        _safe_json_for_log({
+                            "model": model,
+                            "key": label,
+                            "url": target_url,
+                            "attempt": total_attempts,
+                            "error_type": error_type,
+                            "upstream": upstream_error_log,
+                            "request": request_error_log,
+                        }, limit=16000),
+                    )
 
                     # 根据状态码标记 Key
                     if resp.status_code == 429:
@@ -2212,8 +2398,9 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                         if not _ctx_compressed[0]:
                             logger.warning(f"[压缩] Key {label} 400 input length too long，尝试压缩")
                             result = self._handle_context_too_long(
-                                request_data, upstream_key, model, upstream_url, _ctx_compressed)
+                                upstream_request_data, upstream_key, model, upstream_url, _ctx_compressed)
                             if result != "failed":
+                                request_data = copy.deepcopy(upstream_request_data)
                                 tried_key_ids.discard(key_id)  # 允许同Key重试
                                 continue
                         # 已压缩过还超，返回友好提示
@@ -2238,35 +2425,38 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                             # 标记为 abnormal，不再参与轮询
                             self.router.mark_key_abnormal(key_id)
                         elif resp.status_code == 400:
-                            # 检测是否是 stream_options 不被支持导致的 400
-                            # 日志特征：code:11133 "invalid parameter value"
-                            if "stream_options" in request_data and not _skip_stream_options and (
-                                "11133" in resp_body or "invalid parameter" in resp_body.lower()
-                            ):
-                                logger.warning(
-                                    f"[400] 疑似 stream_options 不被支持, 去掉后同Key重试, "
-                                    f"model={model}, key={label}, resp={resp_body[:200]}"
-                                )
-                                request_data.pop("stream_options", None)
-                                _skip_stream_options = True
-                                continue  # 同 Key 重试（不加入 tried_key_ids）
-                            # 400 但不是空body也不是 input length too long — 记录请求参数用于排查
-                            # 常见原因：stream_options 不被某些模型支持、参数格式错误、上游节点偶发故障
-                            req_params = {k: v for k, v in request_data.items()
-                                         if k not in ("messages",)}
-                            # 检测消息中是否包含图片（排查图片相关 11133）
-                            msg_count = len(request_data.get("messages", []))
-                            has_image = any(
-                                isinstance(m.get("content"), list) and
-                                any(isinstance(p, dict) and p.get("type") == "image_url" for p in m["content"])
-                                for m in request_data.get("messages", [])
+                            # 400 但不是空body也不是 input length too long — 记录真正发给上游的参数用于排查
+                            code = upstream_error_log.get("code")
+                            msg = upstream_error_log.get("msg")
+                            request_id = upstream_error_log.get("requestId") or upstream_error_log.get("request_id_header")
+                            ext_error = upstream_error_log.get("extError")
+                            logger.warning(
+                                "[400排查] %s",
+                                _safe_json_for_log({
+                                    "model": model,
+                                    "key": label,
+                                    "code": code,
+                                    "msg": msg,
+                                    "requestId": request_id,
+                                    "extError": ext_error,
+                                    "raw_body": upstream_error_log.get("raw_body"),
+                                    "request": request_error_log,
+                                }, limit=16000),
                             )
-                            logger.warning(f"[400排查] model={model}, key={label}, "
-                                          f"resp={resp_body[:300]}, "
-                                          f"req_params(excl messages)={req_params}, "
-                                          f"messages={msg_count}, has_image={has_image}, "
-                                          f"stream_options_removed={_skip_stream_options}")
-                            error_detail = f"Key {label} 上游返回 400: {resp_body[:200]}"
+                            error_detail = _safe_json_for_log({
+                                "key": label,
+                                "status": 400,
+                                "code": code,
+                                "msg": msg,
+                                "requestId": request_id,
+                                "extError": ext_error,
+                                "raw_body": upstream_error_log.get("raw_body"),
+                                "request_fields": request_error_log.get("body_fields"),
+                                "non_message_fields": request_error_log.get("non_message_fields"),
+                                "messages": request_error_log.get("messages"),
+                                "image_stats": request_error_log.get("image_stats"),
+                                "relay_meta": build_meta,
+                            }, limit=6000)
                             # 记录到 DB 日志面板，方便用户排查原始 400 错误
                             self._add_log(event="upstream_error", sub_key=sub_key, upstream_key=upstream_key,
                                           model=model, error=error_detail, upstream_status=400)
@@ -2313,7 +2503,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                 start_time = time.time()
                 should_retry, error_msg = self._forward_stream_response(
                     resp, upstream_key, sub_key, model, start_time,
-                    client_wants_stream, key_id, request_data
+                    client_wants_stream, key_id, upstream_request_data
                 )
                 self.router.decrement_concurrent(key_id)
 
@@ -2356,8 +2546,13 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
 
         # ─── 所有重试都失败 ───
         if last_error:
-            error_detail = f"所有重试失败(尝试了{len(tried_key_ids)}个Key): {last_error[:300] if isinstance(last_error, str) else last_error[:300]}"
+            error_detail = f"所有重试失败(请求{total_attempts}次，尝试了{len(tried_key_ids)}个Key): {last_error[:300] if isinstance(last_error, str) else last_error[:300]}"
             logger.error(f"[失败] {error_detail}")
+            if last_upstream_error_log:
+                logger.error(
+                    "[失败详情] last_upstream=%s",
+                    _safe_json_for_log(last_upstream_error_log, limit=8000),
+                )
             self._add_log(event="error", sub_key=sub_key, model=model, error=error_detail)
             # 优化项 #9：429 附带 Retry-After 头
             if last_error_status == 429 and last_cooldown_secs > 0:
@@ -2719,8 +2914,8 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                 if _last_chunk_preview:
                     logger.info(f"[代理] 最后含usage的chunk预览: {_last_chunk_preview}")
                 elif _chunk_count > 0:
-                    logger.warning(f"[代理] 所有 {_chunk_count} 个 chunk 中均未找到 usage 字段! "
-                                  f"上游可能不支持 stream_options.include_usage")
+                    logger.warning(f"[代理] 所有 {_chunk_count} 个 chunk 中均未找到 usage 字段；"
+                                  f"v1.6.6 WorkBuddy Relay 不主动添加 stream_options")
             # 流式转发到此结束，fall through 到下方的统计代码（else 块被跳过）
 
         else:
