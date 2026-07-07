@@ -17,10 +17,12 @@ from .main_window import MainWindow
 
 
 def _is_gui_mode():
-    """检测是否以 pythonw 运行（无控制台）或 PyInstaller 打包模式"""
+    """检测是否以 GUI 模式运行（无控制台）或 PyInstaller 打包模式"""
     if getattr(sys, 'frozen', False):
         return True
-    return sys.executable.endswith("pythonw.exe")
+    # macOS: pythonw 不带 .exe 后缀
+    exe_name = os.path.basename(sys.executable).lower()
+    return exe_name == "pythonw" or exe_name == "pythonw.exe"
 
 
 def _setup_logging():
@@ -139,12 +141,15 @@ def main():
     if not _check_single_instance():
         logger.info("已有 Antigravity Tools 实例在运行，退出重复启动")
         from PySide6.QtWidgets import QMessageBox
-        # 需要短暂事件循环让 socket 消息发送完成
         QMessageBox.warning(None, "提示", "Antigravity Tools 已在运行中！\n如需使用，请在系统托盘或任务栏中找到已打开的窗口。")
         sys.exit(0)
 
-    # 设置默认字体
-    font = QFont("Microsoft YaHei", 10)
+    # 设置默认字体（跨平台）
+    import platform
+    if platform.system() == "Darwin":
+        font = QFont("PingFang SC", 13)  # macOS 中文字体
+    else:
+        font = QFont("Microsoft YaHei", 10)  # Windows 中文字体
     app.setFont(font)
 
     # 创建主窗口

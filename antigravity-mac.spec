@@ -63,18 +63,6 @@ datas = [
     (os.path.join(ROOT, 'src', 'VERSION'), 'src'),
 ]
 
-# ─── Playwright driver ───
-playwright_dir = None
-try:
-    import importlib
-    pw = importlib.import_module('playwright')
-    playwright_dir = os.path.dirname(pw.__file__)
-except ImportError:
-    pass
-
-if playwright_dir and os.path.isdir(os.path.join(playwright_dir, 'driver')):
-    datas.append((os.path.join(playwright_dir, 'driver'), 'playwright/driver'))
-
 # 只收集必要的 Qt 插子目录
 needed_plugin_dirs = ['platforms', 'imageformats', 'styles', 'tls']
 if os.path.isdir(plugins_dir):
@@ -117,24 +105,6 @@ hiddenimports = [
     'cryptography',
     'cffi',
     'pycparser',
-    'playwright',
-    'playwright.async_api',
-    'playwright.sync_api',
-    'playwright._impl',
-    'playwright._impl._api_structures',
-    'playwright._impl._api_types',
-    'playwright._impl._browser',
-    'playwright._impl._browser_context',
-    'playwright._impl._browser_type',
-    'playwright._impl._cdp_session',
-    'playwright._impl._connection',
-    'playwright._impl._element_handle',
-    'playwright._impl._frame',
-    'playwright._impl._helper',
-    'playwright._impl._network',
-    'playwright._impl._page',
-    'playwright._impl._playwright',
-    'playwright._impl._transport',
     'greenlet',
     'pyee',
     'pyee._base',

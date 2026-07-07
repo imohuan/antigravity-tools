@@ -132,7 +132,7 @@ class SettingsPage(QWidget):
         save_setting("startup", str(self._startup_check.isChecked()))
         save_setting("refresh_interval", str(self._refresh_spin.value()))
 
-        # 开机自启动：写入/删除注册表
+        # 开机自启动
         startup_enabled = self._startup_check.isChecked()
         self._set_auto_startup(startup_enabled)
 
@@ -141,31 +141,54 @@ class SettingsPage(QWidget):
 
     @staticmethod
     def _set_auto_startup(enable: bool):
-        """设置 Windows 开机自启动（注册表方式）"""
-        if sys.platform != "win32":
-            return
+        """设置开机自启动（Windows: 注册表 / macOS: LaunchAgent）"""
         try:
-            import winreg
-            key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
-            app_name = "AntigravityTools"
-            if enable:
-                # 获取当前可执行文件路径
-                if getattr(sys, 'frozen', False):
-                    exe_path = sys.executable
-                else:
-                    # 开发模式下用 python 解释器 + main 脚本
-                    exe_path = f'"{sys.executable}" "{os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "main.py"))}"'
-                # 打包模式下直接用 EXE 路径
-                if getattr(sys, 'frozen', False):
-                    exe_path = f'"{exe_path}"'
-                with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_SET_VALUE) as key:
-                    winreg.SetValueEx(key, app_name, 0, winreg.REG_SZ, exe_path)
-            else:
-                try:
+            if sys.platform == "win32":
+                import winreg
+                key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
+                app_name = "AntigravityTools"
+                if enable:
+                    if getattr(sys, 'frozen', False):
+                        exe_path = f'"{sys.executable}"'
+                    else:
+                        exe_path = f'"{sys.executable}" "{os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "main.py"))}"'
                     with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_SET_VALUE) as key:
-                        winreg.DeleteValue(key, app_name)
-                except FileNotFoundError:
-                    pass  # 值不存在，无需删除
+                        winreg.SetValueEx(key, app_name, 0, winreg.REG_SZ, exe_path)
+                else:
+                    try:
+                        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_SET_VALUE) as key:
+                            winreg.DeleteValue(key, app_name)
+                    except FileNotFoundError:
+                        pass
+            elif sys.platform == "darwin":
+                # macOS: 使用 LaunchAgent plist
+                plist_dir = os.path.expanduser("~/Library/LaunchAgents")
+                os.makedirs(plist_dir, exist_ok=True)
+                plist_path = os.path.join(plist_dir, "com.antigravity.tools.plist")
+                if enable:
+                    if getattr(sys, 'frozen', False):
+                        exe_path = sys.executable
+                    else:
+                        exe_path = f'{sys.executable} {os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "main.py"))}'
+                    plist_content = f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.antigravity.tools</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>{exe_path}</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+</dict>
+</plist>"""
+                    with open(plist_path, "w", encoding="utf-8") as f:
+                        f.write(plist_content)
+                else:
+                    if os.path.exists(plist_path):
+                        os.remove(plist_path)
         except Exception as e:
             import logging
             logging.getLogger(__name__).warning(f"设置开机自启动失败: {e}")

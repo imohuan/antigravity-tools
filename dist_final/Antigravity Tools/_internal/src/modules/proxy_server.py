@@ -162,6 +162,15 @@ def _image_url_from_part(part: dict):
         if isinstance(image_url, str):
             return image_url
     if part_type in ("image", "input_image"):
+        source = part.get("source")
+        if isinstance(source, dict):
+            source_type = source.get("type")
+            if source_type == "url" and isinstance(source.get("url"), str):
+                return source["url"]
+            if source_type == "base64" and isinstance(source.get("data"), str):
+                media_type = source.get("media_type") or source.get("mediaType") or "image/jpeg"
+                data = source["data"]
+                return data if data.startswith("data:") else f"data:{media_type};base64,{data}"
         url = part.get("url")
         if isinstance(url, str):
             return url
@@ -323,11 +332,22 @@ def _summarize_messages_for_log(messages: list) -> dict:
 
 
 def _summarize_request_for_error_log(request_data: dict, headers: dict, build_meta: dict) -> dict:
-    non_message_fields = {
-        key: _summarize_log_value(value)
-        for key, value in request_data.items()
-        if key != "messages"
-    }
+    non_message_fields = {}
+    for key, value in request_data.items():
+        if key == "messages":
+            continue
+        if key == "tools" and isinstance(value, list):
+            names = []
+            for tool in value[:30]:
+                if isinstance(tool, dict):
+                    names.append(tool.get("function", {}).get("name") or tool.get("name") or "<unnamed>")
+            non_message_fields[key] = {
+                "count": len(value),
+                "names": names,
+                "omitted": max(0, len(value) - len(names)),
+            }
+            continue
+        non_message_fields[key] = _summarize_log_value(value)
     header_summary = {}
     for key, value in headers.items():
         if key.lower() == "authorization":
@@ -337,9 +357,9 @@ def _summarize_request_for_error_log(request_data: dict, headers: dict, build_me
     return {
         "headers": header_summary,
         "body_fields": list(request_data.keys()),
-        "non_message_fields": non_message_fields,
-        "messages": _summarize_messages_for_log(request_data.get("messages", [])),
         "image_stats": _detect_multimodal_images(request_data),
+        "messages": _summarize_messages_for_log(request_data.get("messages", [])),
+        "non_message_fields": non_message_fields,
         "relay_meta": build_meta,
     }
 
@@ -447,18 +467,12 @@ def _normalize_messages_for_upstream(messages: list) -> int:
                 # 已经是标准 OpenAI 格式，保持不变
                 new_content.append(part)
             elif part_type in ("input_image", "image"):
-                image = part.get("image")
-                # image 是 blob_ref 对象（有 blob_id），保持原样透传
-                if isinstance(image, dict) and "blob_id" in image:
-                    new_content.append(part)
+                url = _image_url_from_part(part)
+                if url and (url.startswith("http://") or url.startswith("https://")):
+                    new_content.append({"type": "image_url", "image_url": {"url": url}})
+                    normalized_count += 1
                 else:
-                    # 尝试提取 data URI（复用已有的 _image_url_from_part）
-                    url = _image_url_from_part(part)
-                    if url:
-                        new_content.append({"type": "image_url", "image_url": {"url": url}})
-                        normalized_count += 1
-                    else:
-                        new_content.append(part)
+                    new_content.append(part)
             elif part_type == "image_blob_ref":
                 # 顶层 image_blob_ref，保持原样透传
                 new_content.append(part)
@@ -466,6 +480,56 @@ def _normalize_messages_for_upstream(messages: list) -> int:
                 new_content.append(part)
         msg["content"] = new_content
     return normalized_count
+
+
+def _remove_unsupported_inline_images(messages: list) -> int:
+    """Remove image payload formats that copilot.tencent.com/v2 rejects."""
+    if not isinstance(messages, list):
+        return 0
+
+    removed_count = 0
+    for msg in messages:
+        if not isinstance(msg, dict):
+            continue
+        content = msg.get("content")
+        if not isinstance(content, list):
+            continue
+
+        new_content = []
+        removed_in_message = 0
+        for part in content:
+            if not isinstance(part, dict) or not _part_is_image(part):
+                new_content.append(part)
+                continue
+
+            url = _image_url_from_part(part)
+            if (
+                part.get("type") == "image_url"
+                and isinstance(url, str)
+                and (url.startswith("http://") or url.startswith("https://"))
+            ):
+                new_content.append(part)
+                continue
+
+            removed_count += 1
+            removed_in_message += 1
+
+        if removed_in_message:
+            new_content.append({
+                "type": "text",
+                "text": (
+                    "[Image omitted by proxy: upstream chat API rejects inline/base64 "
+                    "image payloads. Please use a public http/https image URL.]"
+                ),
+            })
+        msg["content"] = new_content
+
+    if removed_count:
+        logger.warning(
+            "[image_sanitize] removed %s unsupported inline/base64 image part(s)",
+            removed_count,
+        )
+    return removed_count
 
 
 def _extract_message_text(content) -> str:
@@ -527,19 +591,34 @@ def _has_following_assistant(messages: list, msg_index: int) -> bool:
     return False
 
 
+def _message_has_image(msg: dict) -> bool:
+    """Return True when a message content contains any image part."""
+    if not isinstance(msg, dict):
+        return False
+    content = msg.get("content")
+    if not isinstance(content, list):
+        return False
+    return any(_part_is_image(part) for part in content)
+
+
 def _strip_history_images_with_description(messages: list) -> list:
     """
     [v1.6.1新增] 历史图片替换成文本描述。
 
     策略：
-    - 只有"后面还没有 assistant 回复"的 user 图片消息，才保留原图
-    - 一旦后面已有 assistant 回复，说明这张图已经被识别过，图片替换成描述
+    - 保留最后一条带图片的 user 消息，作为当前图片请求
+    - 更早的图片替换成描述，避免历史 base64 反复进入上下文
     - 描述来源：该图片所在 user 消息之后最近的一条 assistant 回复文本
 
     [ROLLBACK] 注释掉调用处（搜索 _strip_history_images_with_description）即可恢复。
     """
     if not isinstance(messages, list):
         return messages
+
+    latest_user_image_index = None
+    for idx, item in enumerate(messages):
+        if isinstance(item, dict) and item.get("role") == "user" and _message_has_image(item):
+            latest_user_image_index = idx
 
     new_messages = []
     stripped_total = 0
@@ -551,12 +630,9 @@ def _strip_history_images_with_description(messages: list) -> list:
 
         content = msg.get("content")
 
-        # 只有"后面还没有 assistant 回复"的 user 图片消息，才保留原图
-        # 一旦后面已有 assistant，说明这张图已经被识别过，后续替换成描述
-        allow_images = (
-            msg.get("role") == "user"
-            and not _has_following_assistant(messages, msg_index)
-        )
+        # WorkBuddy 可能在同一轮请求里把 assistant/tool 中间状态放在当前 user 图片之后。
+        # 所以不能用“后面有没有 assistant”判断历史图，只保留最后一条 user 图片消息。
+        allow_images = msg.get("role") == "user" and msg_index == latest_user_image_index
 
         if not isinstance(content, list):
             new_messages.append(msg)
@@ -606,15 +682,23 @@ def _build_workbuddy_relay_body(client_body: dict) -> tuple[dict, dict]:
     """
     Build the upstream body for WorkBuddy key-pool relay.
 
-    This proxy is not an SDK/Agent adapter. WorkBuddy already speaks the body
-    shape its upstream expects, so the relay should preserve the request body as
-    much as possible and only change what the proxy owns: model fallback,
-    messages validation happened earlier, and upstream streaming.
+    This proxy is not an SDK/Agent adapter. WorkBuddy already speaks most of the
+    body shape its upstream expects, so the relay preserves normal generation and
+    tool fields by default. Only image payload formats proven rejected by the
+    upstream are removed from messages.
     """
     body = copy.deepcopy(client_body)
     body["model"] = body.get("model") or "auto"
     body["messages"] = copy.deepcopy(client_body.get("messages", []))
     body["stream"] = True
+
+    dropped_fields = []
+    before_strip_images = _detect_multimodal_images(body)
+    body["messages"] = _strip_history_images_with_description(body.get("messages", []))
+    after_strip_images = _detect_multimodal_images(body)
+    normalized_images = _normalize_messages_for_upstream(body.get("messages", []))
+    unsupported_inline_images_removed = _remove_unsupported_inline_images(body.get("messages", []))
+    after_sanitize_images = _detect_multimodal_images(body)
 
     translated_fields = []
     if "max_completion_tokens" in client_body and "max_tokens" not in client_body:
@@ -629,8 +713,17 @@ def _build_workbuddy_relay_body(client_body: dict) -> tuple[dict, dict]:
 
     meta = {
         "mode": "workbuddy_relay",
+        "dropped_fields": dropped_fields,
         "removed_null_fields": removed_null_fields,
         "translated_fields": translated_fields,
+        "history_images_replaced": max(
+            0,
+            before_strip_images.get("image_count", 0) - after_strip_images.get("image_count", 0),
+        ),
+        "normalized_images": normalized_images,
+        "unsupported_inline_images_removed": unsupported_inline_images_removed,
+        "image_stats_before": before_strip_images,
+        "image_stats_after": after_sanitize_images,
         "has_stream_options": "stream_options" in body,
     }
     return body, meta
@@ -1998,7 +2091,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             self._send_json(200, {
                 "object": "api.index",
                 "message": "Antigravity Proxy is running",
-                "version": "1.6.6",
+                "version": "1.6.7",
             })
             return
 
@@ -2278,11 +2371,22 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                 client_wants_stream = request_data.get("stream", False)
                 upstream_request_data, build_meta = _build_workbuddy_relay_body(request_data)
 
-                if build_meta["removed_null_fields"] or build_meta["translated_fields"]:
+                if (
+                    build_meta["removed_null_fields"]
+                    or build_meta["translated_fields"]
+                    or build_meta["dropped_fields"]
+                    or build_meta["history_images_replaced"]
+                    or build_meta["normalized_images"]
+                    or build_meta["unsupported_inline_images_removed"]
+                ):
                     logger.info(
                         f"[v1.6.6] WorkBuddy Relay 调整字段: "
+                        f"dropped={build_meta['dropped_fields']}; "
                         f"removed_null={build_meta['removed_null_fields']}; "
-                        f"translated={build_meta['translated_fields']}"
+                        f"translated={build_meta['translated_fields']}; "
+                        f"history_images_replaced={build_meta['history_images_replaced']}; "
+                        f"normalized_images={build_meta['normalized_images']}; "
+                        f"unsupported_inline_images_removed={build_meta['unsupported_inline_images_removed']}"
                     )
 
                 image_stats = _detect_multimodal_images(upstream_request_data)
@@ -2297,6 +2401,11 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                 logger.info(f"[代理] v1.6.6 WorkBuddy Relay 请求 {int((time.time()-t0)*1000)}ms, model={model}, key={label}, "
                            f"messages={msg_count}, body={body_size}B ({body_size//1024}KB), "
                            f"stream={client_wants_stream}, image={has_image}, images={image_stats['image_count']}, "
+                           f"data_uri={image_stats['data_uri_count']}, max_image_chars={image_stats['max_image_chars']}, "
+                           f"dropped={build_meta['dropped_fields']}, "
+                           f"history_images_replaced={build_meta['history_images_replaced']}, "
+                           f"normalized_images={build_meta['normalized_images']}, "
+                           f"unsupported_inline_images_removed={build_meta['unsupported_inline_images_removed']}, "
                            f"mode={build_meta['mode']}, stream_options={build_meta['has_stream_options']}")
 
                 # ─── 发送请求到上游 ───

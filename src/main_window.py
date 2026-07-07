@@ -385,14 +385,11 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
 
-        # 2. 关闭 Playwright 启动的浏览器残留进程
-        self._kill_playwright_browsers()
-
-        # 3. 注意：不关闭 WorkBuddy 进程！
+        # 2. 注意：不关闭 WorkBuddy 进程！
         #    WorkBuddy 是独立应用，只有用户在登录流程中主动确认时才会关闭（oauth.py）
         #    关闭本软件不应影响用户正在使用的 WorkBuddy
 
-        # 4. 关闭所有 QThread（签到、查询等后台任务）
+        # 3. 关闭所有 QThread（签到、查询等后台任务）
         for page in self._pages.values():
             try:
                 if hasattr(page, '_worker') and page._worker:
@@ -433,73 +430,6 @@ class MainWindow(QMainWindow):
         if still_alive:
             logger.warning(f"还有 {len(still_alive)} 个线程未退出，强制终止进程")
             os._exit(0)
-
-    def _kill_playwright_browsers(self):
-        """关闭 Playwright 启动的浏览器残留进程（跨平台）
-
-        Playwright 通过 launch() 启动的 Edge/Chrome 浏览器，
-        如果用户手动关了窗口但进程仍在后台（或根本没关），
-        主进程退出后这些浏览器进程不会自动关闭。
-
-        识别方法：Playwright 启动的浏览器命令行包含 --remote-debugging-pipe
-        """
-        import subprocess
-        try:
-            if sys.platform == "darwin":
-                result = subprocess.run(
-                    ["ps", "axo", "pid=,command="],
-                    capture_output=True, text=True, timeout=5,
-                )
-                pids = []
-                for line in result.stdout.splitlines():
-                    if "--remote-debugging-pipe" not in line:
-                        continue
-                    if not any(name in line for name in ("Google Chrome", "Microsoft Edge", "Chromium")):
-                        continue
-                    parts = line.strip().split(None, 1)
-                    if parts and parts[0].isdigit():
-                        pids.append(parts[0])
-
-                for pid in pids:
-                    try:
-                        subprocess.run(["kill", pid], capture_output=True, timeout=3)
-                        logger.debug(f"已关闭残留浏览器进程 PID={pid}")
-                    except Exception:
-                        pass
-            else:
-                startupinfo = subprocess.STARTUPINFO()
-                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                startupinfo.wShowWindow = 0
-
-                result = subprocess.run(
-                    ["wmic", "process", "where",
-                     "commandline like '%%--remote-debugging-pipe%%' and (name='msedge.exe' or name='chrome.exe')",
-                     "get", "processid"],
-                    capture_output=True, text=True, timeout=5,
-                    startupinfo=startupinfo,
-                    creationflags=subprocess.CREATE_NO_WINDOW,
-                )
-                pids = []
-                for line in result.stdout.strip().split("\n"):
-                    line = line.strip()
-                    if line.isdigit():
-                        pids.append(line)
-
-                if pids:
-                    logger.info(f"发现 {len(pids)} 个 Playwright 浏览器残留进程，正在关闭...")
-                    for pid in pids:
-                        try:
-                            subprocess.run(
-                                ["taskkill", "/PID", pid, "/F"],
-                                capture_output=True, timeout=3,
-                                startupinfo=startupinfo,
-                                creationflags=subprocess.CREATE_NO_WINDOW,
-                            )
-                            logger.debug(f"已关闭残留浏览器进程 PID={pid}")
-                        except Exception:
-                            pass
-        except Exception as e:
-            logger.debug(f"检查 Playwright 浏览器残留进程时出错: {e}")
 
     def _kill_workbuddy_process(self):
         """已弃用 — 不再在软件关闭时杀 WorkBuddy

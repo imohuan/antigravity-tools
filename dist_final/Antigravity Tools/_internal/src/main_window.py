@@ -435,48 +435,69 @@ class MainWindow(QMainWindow):
             os._exit(0)
 
     def _kill_playwright_browsers(self):
-        """关闭 Playwright 启动的浏览器残留进程
-        
+        """关闭 Playwright 启动的浏览器残留进程（跨平台）
+
         Playwright 通过 launch() 启动的 Edge/Chrome 浏览器，
         如果用户手动关了窗口但进程仍在后台（或根本没关），
         主进程退出后这些浏览器进程不会自动关闭。
-        
+
         识别方法：Playwright 启动的浏览器命令行包含 --remote-debugging-pipe
         """
         import subprocess
         try:
-            # [v1.6.1-fix] 隐藏 wmic 和 taskkill 的控制台窗口
-            startupinfo = subprocess.STARTUPINFO()
-            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            startupinfo.wShowWindow = 0
+            if sys.platform == "darwin":
+                result = subprocess.run(
+                    ["ps", "axo", "pid=,command="],
+                    capture_output=True, text=True, timeout=5,
+                )
+                pids = []
+                for line in result.stdout.splitlines():
+                    if "--remote-debugging-pipe" not in line:
+                        continue
+                    if not any(name in line for name in ("Google Chrome", "Microsoft Edge", "Chromium")):
+                        continue
+                    parts = line.strip().split(None, 1)
+                    if parts and parts[0].isdigit():
+                        pids.append(parts[0])
 
-            # 用 wmic 查找带 --remote-debugging-pipe 的 msedge/chrome 进程
-            # 这是 Playwright launch() 启动浏览器的标志性参数
-            result = subprocess.run(
-                ["wmic", "process", "where",
-                 "commandline like '%%--remote-debugging-pipe%%' and (name='msedge.exe' or name='chrome.exe')",
-                 "get", "processid"],
-                capture_output=True, text=True, timeout=5,
-                startupinfo=startupinfo,
-                creationflags=subprocess.CREATE_NO_WINDOW,
-            )
-            pids = []
-            for line in result.stdout.strip().split("\n"):
-                line = line.strip()
-                if line.isdigit():
-                    pids.append(line)
-
-            if pids:
-                logger.info(f"发现 {len(pids)} 个 Playwright 浏览器残留进程，正在关闭...")
                 for pid in pids:
                     try:
-                        subprocess.run(["taskkill", "/PID", pid, "/F"],
-                                       capture_output=True, timeout=3,
-                                       startupinfo=startupinfo,
-                                       creationflags=subprocess.CREATE_NO_WINDOW)
+                        subprocess.run(["kill", pid], capture_output=True, timeout=3)
                         logger.debug(f"已关闭残留浏览器进程 PID={pid}")
                     except Exception:
                         pass
+            else:
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = 0
+
+                result = subprocess.run(
+                    ["wmic", "process", "where",
+                     "commandline like '%%--remote-debugging-pipe%%' and (name='msedge.exe' or name='chrome.exe')",
+                     "get", "processid"],
+                    capture_output=True, text=True, timeout=5,
+                    startupinfo=startupinfo,
+                    creationflags=subprocess.CREATE_NO_WINDOW,
+                )
+                pids = []
+                for line in result.stdout.strip().split("\n"):
+                    line = line.strip()
+                    if line.isdigit():
+                        pids.append(line)
+
+                if pids:
+                    logger.info(f"发现 {len(pids)} 个 Playwright 浏览器残留进程，正在关闭...")
+                    for pid in pids:
+                        try:
+                            subprocess.run(
+                                ["taskkill", "/PID", pid, "/F"],
+                                capture_output=True, timeout=3,
+                                startupinfo=startupinfo,
+                                creationflags=subprocess.CREATE_NO_WINDOW,
+                            )
+                            logger.debug(f"已关闭残留浏览器进程 PID={pid}")
+                        except Exception:
+                            pass
         except Exception as e:
             logger.debug(f"检查 Playwright 浏览器残留进程时出错: {e}")
 

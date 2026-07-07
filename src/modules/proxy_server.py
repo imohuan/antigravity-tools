@@ -591,19 +591,34 @@ def _has_following_assistant(messages: list, msg_index: int) -> bool:
     return False
 
 
+def _message_has_image(msg: dict) -> bool:
+    """Return True when a message content contains any image part."""
+    if not isinstance(msg, dict):
+        return False
+    content = msg.get("content")
+    if not isinstance(content, list):
+        return False
+    return any(_part_is_image(part) for part in content)
+
+
 def _strip_history_images_with_description(messages: list) -> list:
     """
     [v1.6.1新增] 历史图片替换成文本描述。
 
     策略：
-    - 只有"后面还没有 assistant 回复"的 user 图片消息，才保留原图
-    - 一旦后面已有 assistant 回复，说明这张图已经被识别过，图片替换成描述
+    - 保留最后一条带图片的 user 消息，作为当前图片请求
+    - 更早的图片替换成描述，避免历史 base64 反复进入上下文
     - 描述来源：该图片所在 user 消息之后最近的一条 assistant 回复文本
 
     [ROLLBACK] 注释掉调用处（搜索 _strip_history_images_with_description）即可恢复。
     """
     if not isinstance(messages, list):
         return messages
+
+    latest_user_image_index = None
+    for idx, item in enumerate(messages):
+        if isinstance(item, dict) and item.get("role") == "user" and _message_has_image(item):
+            latest_user_image_index = idx
 
     new_messages = []
     stripped_total = 0
@@ -615,12 +630,9 @@ def _strip_history_images_with_description(messages: list) -> list:
 
         content = msg.get("content")
 
-        # 只有"后面还没有 assistant 回复"的 user 图片消息，才保留原图
-        # 一旦后面已有 assistant，说明这张图已经被识别过，后续替换成描述
-        allow_images = (
-            msg.get("role") == "user"
-            and not _has_following_assistant(messages, msg_index)
-        )
+        # WorkBuddy 可能在同一轮请求里把 assistant/tool 中间状态放在当前 user 图片之后。
+        # 所以不能用“后面有没有 assistant”判断历史图，只保留最后一条 user 图片消息。
+        allow_images = msg.get("role") == "user" and msg_index == latest_user_image_index
 
         if not isinstance(content, list):
             new_messages.append(msg)

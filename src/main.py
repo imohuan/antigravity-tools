@@ -53,10 +53,6 @@ def _force_cleanup():
     """强制清理所有资源（atexit 和信号处理时调用）"""
     global _main_window
     if _main_window:
-        try:
-            _main_window._kill_playwright_browsers()
-        except Exception:
-            pass
         # 注意：不杀 WorkBuddy！它是独立应用，关闭本软件不应影响它
         # 停止代理服务器
         try:
