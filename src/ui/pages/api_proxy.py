@@ -11,6 +11,7 @@
 import json
 import os
 import secrets
+import copy
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QPushButton,
@@ -124,15 +125,6 @@ def _apply_context_aliases(entry: dict, context_tokens: int):
 
 def _apply_model_protocol_fields(entry: dict, images: bool):
     """Add WorkBuddy catalog-style fields used by newer model capability checks."""
-    entry["api"] = "openai-completions"
-    entry["provider"] = "zai"
-    entry["baseUrl"] = entry.get("url", "https://copilot.tencent.com/v2")
-    entry["input"] = ["text", "image"] if images else ["text"]
-    entry["compat"] = {
-        "supportsDeveloperRole": False,
-        "thinkingFormat": "zai",
-        "zaiToolStream": True,
-    }
     return entry
 
 
@@ -209,6 +201,88 @@ def _write_models_json(target_path: str, merged: list, wrapper: str) -> None:
             json.dump({"models": merged}, f, ensure_ascii=False, indent=2)
         else:
             json.dump(merged, f, ensure_ascii=False, indent=2)
+
+
+LEGACY_MODEL_FIELDS = {
+    "api", "provider", "baseUrl", "input", "compat",
+    "disabledMultimodal", "disabled_multimodal", "supports_images",
+    "maxInputTokens", "max_input_tokens", "maxOutputTokens", "max_output_tokens",
+    "maxTokens", "contextWindow", "contextLength", "context_length",
+    "maxContextTokens", "maxAllowedSize", "max_allowed_size",
+}
+
+
+def _normal_url(url: str) -> str:
+    return str(url or "").strip().rstrip("/")
+
+
+def _entry_matches_proxy(entry: dict, proxy_base_urls: set[str]) -> bool:
+    if not isinstance(entry, dict):
+        return False
+    url = _normal_url(entry.get("url", ""))
+    return bool(url and url in proxy_base_urls)
+
+
+def _has_legacy_model_fields(entry: dict) -> bool:
+    return isinstance(entry, dict) and any(field in entry for field in LEGACY_MODEL_FIELDS)
+
+
+def _official_model_entry(entry: dict, include_custom_protocol: bool) -> dict:
+    """Convert a legacy generated model entry to WorkBuddy's simple custom-model shape."""
+    supports_images = entry.get("supportsImages")
+    if supports_images is None and "supports_images" in entry:
+        supports_images = entry.get("supports_images")
+    if supports_images is None and "disabledMultimodal" in entry:
+        supports_images = not bool(entry.get("disabledMultimodal"))
+    if supports_images is None and "disabled_multimodal" in entry:
+        supports_images = not bool(entry.get("disabled_multimodal"))
+
+    supports_reasoning = bool(entry.get("supportsReasoning", True))
+    new_entry = {
+        "id": entry.get("id", ""),
+        "name": entry.get("name") or entry.get("id", ""),
+        "vendor": entry.get("vendor") or "Custom",
+        "url": entry.get("url", ""),
+        "apiKey": entry.get("apiKey", ""),
+        "supportsToolCall": bool(entry.get("supportsToolCall", True)),
+        "supportsImages": bool(True if supports_images is None else supports_images),
+        "supportsReasoning": supports_reasoning,
+    }
+
+    if include_custom_protocol or "useCustomProtocol" in entry:
+        new_entry["useCustomProtocol"] = bool(entry.get("useCustomProtocol", False))
+
+    # Preserve the user's existing thinking/reasoning settings exactly when present.
+    if "reasoning" in entry:
+        new_entry["reasoning"] = copy.deepcopy(entry.get("reasoning"))
+    elif supports_reasoning:
+        new_entry["reasoning"] = {"supportedEfforts": ["max"]}
+
+    return new_entry
+
+
+def _cleanup_legacy_proxy_models(target_path: str, wrapper: str, proxy_base_urls: set[str]) -> int:
+    """Clean legacy generated model fields for entries that point at this proxy."""
+    models = _read_existing_models(target_path)
+    if not models:
+        return 0
+
+    changed = 0
+    cleaned = []
+    for entry in models:
+        if (
+            isinstance(entry, dict)
+            and _entry_matches_proxy(entry, proxy_base_urls)
+            and _has_legacy_model_fields(entry)
+        ):
+            cleaned.append(_official_model_entry(entry, include_custom_protocol=(wrapper == "array")))
+            changed += 1
+        else:
+            cleaned.append(entry)
+
+    if changed:
+        _write_models_json(target_path, cleaned, wrapper=wrapper)
+    return changed
 
 
 class ModelSelectDialog(QDialog):
@@ -1018,6 +1092,7 @@ class ApiProxyPage(QWidget):
             port = self._port_spin.value()
             mode = self._listen_mode_combo.currentData()  # "local" or "open"
             host = "127.0.0.1" if mode == "local" else "0.0.0.0"
+            self._cleanup_legacy_models_on_start(port, mode)
 
             self._proxy_server = ProxyServer(host=host, port=port, mode=mode)
 
@@ -1052,6 +1127,29 @@ class ApiProxyPage(QWidget):
                 self._port_spin.setEnabled(False)
             else:
                 QMessageBox.warning(self, "启动失败", f"无法在端口 {port} 启动代理服务，可能端口已被占用")
+
+    def _proxy_base_urls_for_port(self, port: int, mode: str) -> set[str]:
+        hosts = {"127.0.0.1", "localhost", "0.0.0.0"}
+        hosts.update(self._get_local_ips())
+        return {_normal_url(f"http://{host}:{port}/v1") for host in hosts if host}
+
+    def _cleanup_legacy_models_on_start(self, port: int, mode: str) -> int:
+        """Normalize old generated WorkBuddy/CodeBuddy model entries before starting."""
+        proxy_base_urls = self._proxy_base_urls_for_port(port, mode)
+        targets = [
+            (os.path.join(os.path.expanduser("~"), ".workbuddy", "models.json"), "array", "WorkBuddy"),
+            (os.path.join(os.path.expanduser("~"), ".codebuddy", "models.json"), "object", "CodeBuddy"),
+        ]
+        cleaned_total = 0
+        for target_path, wrapper, label in targets:
+            try:
+                cleaned = _cleanup_legacy_proxy_models(target_path, wrapper, proxy_base_urls)
+                cleaned_total += cleaned
+                if cleaned:
+                    print(f"[models.json] {label} cleaned {cleaned} legacy model(s): {target_path}")
+            except Exception as e:
+                print(f"[models.json] {label} cleanup failed: {e}")
+        return cleaned_total
 
     def _copy_url(self):
         """复制服务地址"""
@@ -2240,13 +2338,11 @@ class ApiProxyPage(QWidget):
                 "supportsToolCall": tool_call,
                 "supportsImages": images,
                 "supportsReasoning": reasoning,
-                "disabledMultimodal": not images,
             }
             if include_custom_protocol:
                 entry["useCustomProtocol"] = False
-            _apply_model_protocol_fields(entry, images)
-            ctx = MODEL_CONTEXT_LENGTHS.get(model_id)
-            _apply_context_aliases(entry, ctx)
+            if reasoning:
+                entry["reasoning"] = {"supportedEfforts": ["max"]}
             entries.append(entry)
         return entries
 

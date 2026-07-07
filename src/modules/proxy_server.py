@@ -174,11 +174,17 @@ def _image_url_from_part(part: dict):
         url = part.get("url")
         if isinstance(url, str):
             return url
+        uri = part.get("uri")
+        if isinstance(uri, str):
+            return uri
         image = part.get("image")
         if isinstance(image, dict):
             url = image.get("url")
             if isinstance(url, str):
                 return url
+            uri = image.get("uri")
+            if isinstance(uri, str):
+                return uri
             data = image.get("data")
             media_type = image.get("mediaType") or image.get("media_type") or "image/jpeg"
             if isinstance(data, str):
@@ -693,12 +699,7 @@ def _build_workbuddy_relay_body(client_body: dict) -> tuple[dict, dict]:
     body["stream"] = True
 
     dropped_fields = []
-    before_strip_images = _detect_multimodal_images(body)
-    body["messages"] = _strip_history_images_with_description(body.get("messages", []))
-    after_strip_images = _detect_multimodal_images(body)
-    normalized_images = _normalize_messages_for_upstream(body.get("messages", []))
-    unsupported_inline_images_removed = _remove_unsupported_inline_images(body.get("messages", []))
-    after_sanitize_images = _detect_multimodal_images(body)
+    image_stats = _detect_multimodal_images(body)
 
     translated_fields = []
     if "max_completion_tokens" in client_body and "max_tokens" not in client_body:
@@ -716,14 +717,11 @@ def _build_workbuddy_relay_body(client_body: dict) -> tuple[dict, dict]:
         "dropped_fields": dropped_fields,
         "removed_null_fields": removed_null_fields,
         "translated_fields": translated_fields,
-        "history_images_replaced": max(
-            0,
-            before_strip_images.get("image_count", 0) - after_strip_images.get("image_count", 0),
-        ),
-        "normalized_images": normalized_images,
-        "unsupported_inline_images_removed": unsupported_inline_images_removed,
-        "image_stats_before": before_strip_images,
-        "image_stats_after": after_sanitize_images,
+        "history_images_replaced": 0,
+        "normalized_images": 0,
+        "unsupported_inline_images_removed": 0,
+        "image_stats_before": image_stats,
+        "image_stats_after": image_stats,
         "has_stream_options": "stream_options" in body,
     }
     return body, meta
@@ -2119,20 +2117,10 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                         "object": "model",
                         "created": int(time.time()),
                         "owned_by": "antigravity-proxy",
-                        **_model_context_fields(m),
-                        "api": "openai-completions",
-                        "provider": "zai",
-                        "baseUrl": "https://copilot.tencent.com/v2",
-                        "input": ["text", "image"] if _model_supports_images(m) else ["text"],
-                        "compat": {
-                            "supportsDeveloperRole": False,
-                            "thinkingFormat": "zai",
-                            "zaiToolStream": True,
-                        },
+                        "supportsToolCall": True,
                         "supportsImages": _model_supports_images(m),
-                        "supports_images": _model_supports_images(m),
-                        "disabledMultimodal": not _model_supports_images(m),
-                        "disabled_multimodal": not _model_supports_images(m),
+                        "supportsReasoning": True,
+                        "reasoning": {"supportedEfforts": ["max"]},
                     }
                     for m in model_list
                 ]
