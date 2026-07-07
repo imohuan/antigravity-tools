@@ -426,6 +426,11 @@
                   :class="settings.autoStartProxy?'translate-x-[16px]':'translate-x-[1px]'"
                   class="absolute top-0.5 left-0 w-4 h-4 bg-white rounded-full shadow transition-all duration-200 left-0.5"></span></button>
             </div>
+            <div><label class="font-label-md text-label-md text-primary block mb-xs">签到并发数（1-50）</label><input
+                v-model.number="settings.checkinConcurrency" type="number" min="1" max="50"
+                class="w-full h-6 px-2.5 py-1 bg-surface-container-low border border-outline-variant rounded-lg text-body-sm text-primary font-label-md outline-none focus:ring-1 focus:ring-primary focus:border-primary">
+              <p class="font-body-sm text-[11px] text-on-surface-variant mt-xs">批量签到时同时发起的请求数，默认 5。过大可能触发限流。</p>
+            </div>
             <button @click="saveSettings"
               class="inline-flex items-center gap-xs px-3 py-1.5 bg-primary text-on-primary font-label-md text-label-md rounded-lg hover:opacity-90 transition-opacity w-full justify-center">保存设置</button>
           </div>
@@ -705,7 +710,7 @@ const proxyInfo = reactive({ running: false, port: 8867, total_keys: 0, active_k
 const quotaAccounts = ref([]);
 const showImportKeysModal = ref(false); const importKeysAccounts = ref([]); const importKeysLoading = ref(false); const importAllSelected = ref(false);
 const proxyKeyLoading = reactive({});
-const settings = reactive({ webPort: 8866, proxyPort: 8867, httpProxy: '', autoStartProxy: true });
+const settings = reactive({ webPort: 8866, proxyPort: 8867, httpProxy: '', autoStartProxy: true, checkinConcurrency: 5 });
 const showImportModal = ref(false); const importMode = ref('file'); const importModes = [{ id: 'file', label: '文件' }, { id: 'paste', label: '粘贴' }]; const importFileName = ref(''); const importText = ref(''); const importPreview = ref([]); const importError = ref(''); const importResult = ref(''); const importLoading = ref(false);
 const showExportModal = ref(false);
 const exportLoading = ref(false);
@@ -720,12 +725,51 @@ async function copyExportToClipboard() { if (selectedAccounts.value.length === 0
 async function downloadExport() { if (selectedAccounts.value.length === 0) return; exportLoading.value = true; const r = await fetch('/api/accounts/export', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ uids: selectedAccounts.value }) }); const d = await r.json(); exportLoading.value = false; if (d && d.success && d.accounts) { const blob = new Blob([JSON.stringify(d.accounts, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'antigravity-accounts-' + new Date().toISOString().slice(0,10) + '.json'; a.click(); URL.revokeObjectURL(url); showToast('文件已下载'); } else { showToast('导出失败', 'error'); } }
         async function api(url, opts) { opts = opts || {}; try { const r = await fetch(url, { headers: { 'Content-Type': 'application/json' }, method: opts.method || 'GET', body: opts.body }); return await r.json(); } catch (e) { showToast(e.message, 'error'); return null; } }
         async function loadAccounts() { const d = await api('/api/accounts'); if (d) { accounts.value = d.accounts || []; stats.accountCount = d.total || 0; stats.activeCount = accounts.value.filter(a => a.status === 'active').length; stats.checkedToday = accounts.value.filter(a => a.checked_today).length; let tc = 0; accounts.value.forEach(a => tc += a.quota_remaining || a.quota_total || 0); stats.totalCredits = tc; } }
+        async function runWithConcurrency(items, limit, fn) {
+          const results = new Array(items.length);
+          let i = 0;
+          async function worker() {
+            while (i < items.length) {
+              const index = i++;
+              try { results[index] = { status: 'fulfilled', value: await fn(items[index]) }; }
+              catch (e) { results[index] = { status: 'rejected', reason: e }; }
+            }
+          }
+          await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+          return results;
+        }
+        async function checkinSingle(uid) { checkinLoading[uid] = true; const d = await api('/api/checkin/' + uid, { method: 'POST' }); checkinLoading[uid] = false; if (d && d.success) { showToast(d.already ? '今日已签到' : '签到成功'); checkinLogs.unshift({ time: new Date().toTimeString().slice(0, 8), type: d.already ? 'already' : 'success', icon: d.already ? '--' : 'OK', msg: uid + (d.already ? ' 已签到' : ' 签到成功') }); } else { showToast('签到失败', 'error'); } await loadAccounts(); }
+        async function checkinAll() {
+          const targets = accounts.value.filter(a => a.status === 'active');
+          if (targets.length === 0) { showToast('没有可签到的账户'); return; }
+          checkinAllLoading.value = true;
+          lastCheckin.success = 0; lastCheckin.already = 0; lastCheckin.failed = 0;
+          const concurrency = Math.max(1, Math.min(50, Number(settings.checkinConcurrency) || 5));
+          const results = await runWithConcurrency(targets, concurrency, async (a) => {
+            const d = await api('/api/checkin/' + a.uid, { method: 'POST' });
+            return { account: a, d };
+          });
+          results.forEach(r => {
+            const { account: a, d } = r.value;
+            if (r.status === 'rejected' || !d || !d.success) {
+              lastCheckin.failed++;
+              checkinLogs.unshift({ time: new Date().toTimeString().slice(0, 8), type: 'failed', icon: 'FAIL', msg: (a.nickname || a.uid) + ' 签到失败' });
+            } else if (d.already) {
+              lastCheckin.already++;
+              checkinLogs.unshift({ time: new Date().toTimeString().slice(0, 8), type: 'already', icon: '--', msg: (a.nickname || a.uid) + ' 已签到' });
+            } else {
+              lastCheckin.success++;
+              checkinLogs.unshift({ time: new Date().toTimeString().slice(0, 8), type: 'success', icon: 'OK', msg: (a.nickname || a.uid) + ' 签到成功' });
+            }
+          });
+          checkinAllLoading.value = false;
+          showToast('完成: ' + lastCheckin.success + ' 成功, ' + lastCheckin.already + ' 已签, ' + lastCheckin.failed + ' 失败');
+          await loadAccounts();
+        }
         async function loadProxyStatus() { const d = await api('/api/proxy/status'); if (d) Object.assign(proxyInfo, d); }
         async function addAccount() { addLoading.value = true; addError.value = ''; const body = { method: addMethod.value }; if (addMethod.value === 'apikey') { body.api_key = addForm.api_key; body.nickname = addForm.nickname; } else if (addMethod.value === 'jwt') { body.access_token = addForm.access_token; body.uid = addForm.uid; body.nickname = addForm.nickname; } const r = await fetch('/api/accounts/add', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); const d = await r.json(); addLoading.value = false; if (r.ok) { showToast('已添加: ' + d.nickname); showAddModal.value = false; addForm.api_key = ''; addForm.access_token = ''; addForm.uid = ''; addForm.nickname = ''; await loadAccounts(); } else { addError.value = d.detail || '添加失败'; } }
         async function deleteAccount(uid) { if (!confirm('确认删除此账户？')) return; await api('/api/accounts/' + uid + '/delete', { method: 'POST' }); showToast('已删除'); await loadAccounts(); }
         async function querySingleQuota(account) { quotaLoading[account.uid] = true; const d = await api('/api/quota/' + account.uid, { method: 'POST' }); quotaLoading[account.uid] = false; if (d && d.success && d.packages) { let total = 0, remain = 0; d.packages.forEach(p => { total += p.total || 0; remain += p.remain || 0; }); account.quota_total = total; account.quota_remaining = remain; } showToast('配额已查询'); }
-        async function checkinSingle(uid) { checkinLoading[uid] = true; const d = await api('/api/checkin/' + uid, { method: 'POST' }); checkinLoading[uid] = false; if (d && d.success) { showToast(d.already ? '今日已签到' : '签到成功'); checkinLogs.unshift({ time: new Date().toTimeString().slice(0, 8), type: d.already ? 'already' : 'success', icon: d.already ? '--' : 'OK', msg: uid + (d.already ? ' 已签到' : ' 签到成功') }); } else { showToast('签到失败', 'error'); } await loadAccounts(); }
-        async function checkinAll() { checkinAllLoading.value = true; const d = await api('/api/checkin/all', { method: 'POST' }); checkinAllLoading.value = false; if (d) { lastCheckin.success = d.success || 0; lastCheckin.already = d.already || 0; lastCheckin.failed = d.failed || 0; if (d.details) d.details.forEach(x => { checkinLogs.unshift({ time: new Date().toTimeString().slice(0, 8), type: x.status, icon: x.status === 'success' ? 'OK' : x.status === 'already' ? '--' : 'FAIL', msg: x.account + ' ' + (x.message || x.status) }); }); showToast('完成: ' + lastCheckin.success + ' 成功, ' + lastCheckin.already + ' 已签, ' + lastCheckin.failed + ' 失败'); } await loadAccounts(); }
         const QUOTA_CACHE_KEY = 'ag_quota_cache';
         function loadQuotaCache() {
           try { const raw = localStorage.getItem(QUOTA_CACHE_KEY); if (raw) { const cached = JSON.parse(raw); if (cached.summary) { quotaSummary.totalRemain = cached.summary.totalRemain || 0; quotaSummary.totalCredits = cached.summary.totalCredits || 0; quotaSummary.accountCount = cached.summary.accountCount || 0; } if (cached.accounts) { quotaAccounts.value = cached.accounts.map(a => ({ ...a, expanded: false })); } } } catch (e) { }
@@ -779,8 +823,8 @@ async function downloadExport() { if (selectedAccounts.value.length === 0) retur
         }
         async function deleteProxyKey(kid) { if (!confirm('确认删除此密钥？')) return; await api('/api/proxy/keys/' + kid + '/delete', { method: 'POST' }); showToast('密钥已删除'); await loadProxyStatus(); }
         async function toggleProxyKey(k) { proxyKeyLoading[k.id] = true; const d = await api('/api/proxy/keys/' + k.id + '/toggle', { method: 'POST' }); proxyKeyLoading[k.id] = false; if (d) { k.active = d.active; showToast(d.active ? '已启用' : '已禁用'); } }
-        async function saveSettings() { const r = await api('/api/settings', { method: 'POST', body: JSON.stringify({ webPort: settings.webPort, proxyPort: settings.proxyPort, httpProxy: settings.httpProxy, autoStartProxy: settings.autoStartProxy }) }); if (r && r.success) { showToast('设置已保存（重启生效）'); } else { showToast('保存失败', 'error'); } }
-        async function loadSettings() { const d = await api('/api/settings'); if (d) { settings.webPort = d.webPort || 8866; settings.proxyPort = d.proxyPort || 8867; settings.httpProxy = d.httpProxy || ''; settings.autoStartProxy = d.autoStartProxy !== undefined ? d.autoStartProxy : true; } }
+        async function saveSettings() { const r = await api('/api/settings', { method: 'POST', body: JSON.stringify({ webPort: settings.webPort, proxyPort: settings.proxyPort, httpProxy: settings.httpProxy, autoStartProxy: settings.autoStartProxy, checkinConcurrency: settings.checkinConcurrency }) }); if (r && r.success) { showToast('设置已保存（重启生效）'); } else { showToast('保存失败', 'error'); } }
+        async function loadSettings() { const d = await api('/api/settings'); if (d) { settings.webPort = d.webPort || 8866; settings.proxyPort = d.proxyPort || 8867; settings.httpProxy = d.httpProxy || ''; settings.autoStartProxy = d.autoStartProxy !== undefined ? d.autoStartProxy : true; settings.checkinConcurrency = d.checkinConcurrency || 5; } }
         onMounted(async () => { loadQuotaCache(); await loadSettings(); await loadAccounts(); await loadProxyStatus(); });
         return { currentPage, activePageLabel, navItems, now, port, toast, showToast, fmtNum, stats, accounts, selectedAccounts, isAllSelected, toggleSelectAll, selectAllAccounts, invertSelection, showAddModal, addMethod, addMethods, addForm, addLoading, addError, addAccount, deleteAccount, quotaLoading, checkinLoading, querySingleQuota, checkinSingle, checkinAllLoading, lastCheckin, checkinLogs, checkinAll, quotaAllLoading, quotaSummary, quotaAccounts, queryAllQuota, refreshQuota, proxyInfo, proxyLoading, toggleProxy, showImportKeysModal, importKeysAccounts, importKeysLoading, importAllSelected, openImportKeysModal, toggleSelectAllImport, importSelectedKeys, deleteProxyKey, proxyKeyLoading, toggleProxyKey, settings, saveSettings, showImportModal, importMode, importModes, importFileName, importText, importPreview, importError, importResult, importLoading, openImportModal, closeImportModal, onImportFileChange, parseImportText, submitImport, showExportModal, exportLoading, exportContent, openExportModal, copyExportToClipboard, downloadExport };
       }
