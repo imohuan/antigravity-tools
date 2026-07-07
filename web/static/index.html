@@ -745,13 +745,9 @@ async function downloadExport() { if (selectedAccounts.value.length === 0) retur
           checkinAllLoading.value = true;
           lastCheckin.success = 0; lastCheckin.already = 0; lastCheckin.failed = 0;
           const concurrency = Math.max(1, Math.min(50, Number(settings.checkinConcurrency) || 5));
-          const results = await runWithConcurrency(targets, concurrency, async (a) => {
+          await runWithConcurrency(targets, concurrency, async (a) => {
             const d = await api('/api/checkin/' + a.uid, { method: 'POST' });
-            return { account: a, d };
-          });
-          results.forEach(r => {
-            const { account: a, d } = r.value;
-            if (r.status === 'rejected' || !d || !d.success) {
+            if (!d || !d.success) {
               lastCheckin.failed++;
               checkinLogs.unshift({ time: new Date().toTimeString().slice(0, 8), type: 'failed', icon: 'FAIL', msg: (a.nickname || a.uid) + ' 签到失败' });
             } else if (d.already) {
