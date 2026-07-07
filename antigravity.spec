@@ -169,9 +169,11 @@ hiddenimports = [
     'pyee',
     'pyee._base',
     # [v1.6.7-fix] app.py 用 importlib 动态加载 src，PyInstaller 静态分析跟踪不到 src/ 的 import
-    # 需要手动列出 src/ 依赖的标准库 C 扩展模块
+    # 需要手动列出 src/ 依赖的标准库模块（C 扩展 + 子模块）
     'sqlite3',
     '_sqlite3',
+    'logging.handlers',
+    'socketserver',
 ]
 
 # ─── 二进制文件 ───
