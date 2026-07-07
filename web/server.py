@@ -50,6 +50,10 @@ def main():
     """Entry point for `python -m web.server`"""
     init_db()
 
+    # --- Start background scheduler (daily quota sync, etc.) ---
+    from web.scheduler import start_scheduler
+    start_scheduler()
+
     # Auto-start proxy if the setting is enabled
     if load_setting("autoStartProxy", "True") == "True":
         from web.api.proxy import proxy_start
