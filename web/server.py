@@ -59,11 +59,12 @@ def main():
         from web.api.proxy import proxy_start
         result = proxy_start()
         if result.get("success"):
-            print(f"  代理已自动启动 :8867")
+            proxy_port = load_setting("proxyPort", "8867")
+            print(f"  代理已自动启动 :{proxy_port}")
         else:
             print(f"  代理自动启动失败: {result.get('error', 'unknown')}")
 
-    port = int(os.environ.get("PORT", 8866))
+    port = int(load_setting("webPort", str(os.environ.get("PORT", 8866))))
     host = os.environ.get("HOST", "0.0.0.0")
 
     print(f"  Antigravity Tools Web UI")

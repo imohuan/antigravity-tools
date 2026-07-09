@@ -1038,21 +1038,36 @@ class ProxyDatabase:
                 self._data["request_logs"] = logs[-1000:]
             self._save()
 
-    def get_request_logs(self, since: float = 0, limit: int = 200, reverse: bool = True) -> list[dict]:
-        """获取请求日志
+    def get_request_logs(self, since: float = 0, limit: int = 50, page: int = 1, reverse: bool = True) -> dict:
+        """获取请求日志（分页）
 
         Args:
             since: 只返回此时间戳之后的日志（0=全部）
-            limit: 最大返回条数
+            limit: 每页条数
+            page: 页码（从 1 开始）
             reverse: True=最新的在前，False=最早的在前
+        Returns:
+            {"logs": [...], "total": int, "page": int, "limit": int, "total_pages": int}
         """
         with self._lock:
             logs = self._data.get("request_logs", [])
             if since:
                 logs = [l for l in logs if l.get("timestamp", 0) > since]
+            total = len(logs)
             if reverse:
-                return list(reversed(logs[-limit:]))
-            return logs[-limit:]
+                logs = list(reversed(logs))
+            # 分页切片
+            start = (page - 1) * limit
+            end = start + limit
+            page_logs = logs[start:end]
+            total_pages = max(1, (total + limit - 1) // limit) if total > 0 else 0
+            return {
+                "logs": page_logs,
+                "total": total,
+                "page": page,
+                "limit": limit,
+                "total_pages": total_pages,
+            }
 
 
 class ProxyRouter:

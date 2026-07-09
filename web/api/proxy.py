@@ -303,12 +303,11 @@ def proxy_quota():
 
 # ─── 请求日志接口 ───
 @router.get("/proxy/logs")
-def proxy_logs(since: float = 0, limit: int = 200):
-    """获取代理请求日志（最新的在前）"""
+def proxy_logs(since: float = 0, limit: int = 50, page: int = 1):
+    """获取代理请求日志（分页，最新的在前）"""
     db = _get_db()
-    logs = db.get_request_logs(since=since, limit=limit, reverse=True)
+    result = db.get_request_logs(since=since, limit=limit, page=page, reverse=True)
     return {
         "success": True,
-        "total": len(logs),
-        "logs": logs,
+        **result,
     }

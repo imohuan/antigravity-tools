@@ -427,7 +427,7 @@
           <div class="flex items-center justify-between">
             <span class="font-headline-lg text-headline-lg text-primary">请求日志</span>
             <div class="flex items-center gap-sm">
-              <span class="text-secondary font-body-sm text-[11px]">共 {{requestLogs.length}} 条</span>
+              <span class="text-secondary font-body-sm text-[11px]">共 {{logsTotal}} 条</span>
               <button @click="loadRequestLogs" :disabled="requestLogsLoading"
                 class="inline-flex items-center gap-xs px-3 py-1.5 bg-primary text-on-primary font-label-md text-label-md rounded-lg hover:opacity-90 transition-opacity disabled:opacity-30">
                 <span v-if="requestLogsLoading" class="spinner inline-block w-3.5 h-3.5 border-2 border-on-primary/30 border-t-on-primary rounded-full"></span>
@@ -442,19 +442,19 @@
           <div class="grid grid-cols-4 gap-gutter">
             <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md text-center">
               <p class="font-headline-md text-headline-md text-primary">{{requestLogs.filter(l=>l.status==='success').length}}</p>
-              <p class="font-body-sm text-body-sm text-secondary">成功</p>
+              <p class="font-body-sm text-body-sm text-secondary">成功（本页）</p>
             </div>
             <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md text-center">
               <p class="font-headline-md text-headline-md text-error">{{requestLogs.filter(l=>l.status==='failed').length}}</p>
-              <p class="font-body-sm text-body-sm text-secondary">失败</p>
+              <p class="font-body-sm text-body-sm text-secondary">失败（本页）</p>
             </div>
             <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md text-center">
               <p class="font-headline-md text-headline-md text-primary">{{requestLogs.reduce((s,l)=>s+(l.credit||0),0).toFixed(2)}}</p>
-              <p class="font-body-sm text-body-sm text-secondary">消耗积分</p>
+              <p class="font-body-sm text-body-sm text-secondary">消耗积分（本页）</p>
             </div>
             <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md text-center">
               <p class="font-headline-md text-headline-md text-primary">{{requestLogs.reduce((s,l)=>s+(l.total_tokens||0),0)}}</p>
-              <p class="font-body-sm text-body-sm text-secondary">总 Token</p>
+              <p class="font-body-sm text-body-sm text-secondary">总 Token（本页）</p>
             </div>
           </div>
           <div class="bg-surface-container-lowest border border-outline-variant rounded-xl overflow-hidden">
@@ -502,6 +502,46 @@
                 暂无请求日志
                 <div class="mt-sm text-[10px]">启动代理后，请求日志会在这里实时显示</div>
               </div>
+            </div>
+          </div>
+          <!-- 分页 -->
+          <div class="flex items-center justify-between" v-if="logsTotal>0">
+            <div class="flex items-center gap-xs">
+              <span class="text-secondary font-body-sm text-[11px]">每页</span>
+              <div class="relative" style="width:64px">
+                <button @click="showPageSizeDropdown=!showPageSizeDropdown" @blur="hidePageSizeDropdown"
+                  class="w-full flex items-center justify-between bg-surface-container-low border border-outline-variant hover:bg-surface-container hover:border-outline rounded-lg px-2 py-1 text-left transition-colors">
+                  <span class="text-primary font-medium text-label-md">{{logsPageSize}}</span>
+                  <span class="material-symbols-outlined text-secondary transition-transform duration-200 shrink-0 text-[14px]" :class="showPageSizeDropdown?'rotate-180':''">expand_more</span>
+                </button>
+                <div v-show="showPageSizeDropdown" class="absolute bottom-full left-0 mb-1 w-full bg-surface-container-lowest border border-outline-variant rounded-lg pro-shadow z-50 py-1">
+                  <button v-for="s in pageSizeOptions" :key="s" @mousedown.prevent="setPageSize(s)"
+                    :class="['w-full flex items-center justify-between px-2 py-1 text-left font-label-md text-label-md rounded-lg transition-colors', logsPageSize===s?'bg-primary text-on-primary font-medium':'text-primary hover:bg-surface-container-low']">
+                    <span>{{s}}</span>
+                    <span v-if="logsPageSize===s" class="material-symbols-outlined text-[14px] shrink-0 ml-auto">check</span>
+                  </button>
+                </div>
+              </div>
+              <span class="text-secondary font-body-sm text-[11px]">条</span>
+            </div>
+            <div class="flex items-center gap-xs">
+              <button @click="goToPage(1)" :disabled="logsPage<=1"
+                class="w-7 h-7 flex items-center justify-center rounded-lg border border-outline-variant text-secondary hover:bg-surface-container-low disabled:opacity-20 transition-colors">
+                <span class="material-symbols-outlined text-[14px]">first_page</span>
+              </button>
+              <button @click="goToPage(logsPage-1)" :disabled="logsPage<=1"
+                class="w-7 h-7 flex items-center justify-center rounded-lg border border-outline-variant text-secondary hover:bg-surface-container-low disabled:opacity-20 transition-colors">
+                <span class="material-symbols-outlined text-[14px]">chevron_left</span>
+              </button>
+              <span class="text-secondary font-body-sm text-[11px] px-2">{{logsPage}} / {{logsTotalPages}}</span>
+              <button @click="goToPage(logsPage+1)" :disabled="logsPage>=logsTotalPages"
+                class="w-7 h-7 flex items-center justify-center rounded-lg border border-outline-variant text-secondary hover:bg-surface-container-low disabled:opacity-20 transition-colors">
+                <span class="material-symbols-outlined text-[14px]">chevron_right</span>
+              </button>
+              <button @click="goToPage(logsTotalPages)" :disabled="logsPage>=logsTotalPages"
+                class="w-7 h-7 flex items-center justify-center rounded-lg border border-outline-variant text-secondary hover:bg-surface-container-low disabled:opacity-20 transition-colors">
+                <span class="material-symbols-outlined text-[14px]">last_page</span>
+              </button>
             </div>
           </div>
         </div>
@@ -811,11 +851,15 @@ const quotaLoading = reactive({}); const checkinLoading = reactive({});
 const checkinAllLoading = ref(false); const lastCheckin = reactive({ success: 0, already: 0, failed: 0 }); const checkinLogs = reactive([]);
 const quotaAllLoading = ref(false); const quotaSummary = reactive({ totalRemain: 0, totalCredits: 0, accountCount: 0 }); const quotaDetails = reactive([]);
 const proxyInfo = reactive({ running: false, port: 8867, total_keys: 0, active_keys: 0, exhausted_keys: 0, keys: [] });
-        const requestLogs = ref([]); const requestLogsLoading = ref(false); const logsSince = ref(0);
+        const requestLogs = ref([]); const requestLogsLoading = ref(false); const logsSince = ref(0); const logsPage = ref(1); const logsTotal = ref(0); const logsTotalPages = ref(0); const logsPageSize = ref(10); const showPageSizeDropdown = ref(false); const pageSizeOptions = [10, 20, 50, 100];
         const strategyLabelMap = { 1: '专一', 2: '临期优先', 3: '轮询', 4: '会话亲和' };
+        function goToPage(p) { if (p >= 1 && p <= logsTotalPages.value) { loadRequestLogs(p); } }
+        function setPageSize(s) { logsPageSize.value = s; showPageSizeDropdown.value = false; logsPage.value = 1; loadRequestLogs(1); }
+        function hidePageSizeDropdown() { setTimeout(()=>{showPageSizeDropdown.value=false}, 150); }
+        function onPageSizeChange() { logsPage.value = 1; loadRequestLogs(1); }
         function clearLogs() { logsSince.value = Date.now() / 1000; requestLogs.value = []; }
         function formatLogTime(ts) { if (!ts) return '-'; const d = new Date(ts*1000); return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')+':'+String(d.getSeconds()).padStart(2,'0'); }
-        async function loadRequestLogs() { requestLogsLoading.value = true; const sinceParam = logsSince.value > 0 ? '&since=' + logsSince.value : ''; const d = await api('/api/proxy/logs?limit=200' + sinceParam); requestLogsLoading.value = false; if (d && d.logs) { requestLogs.value = d.logs; } } const proxyLoading = ref(false);
+        async function loadRequestLogs(page) { requestLogsLoading.value = true; if (page) logsPage.value = page; const p = logsPage.value; const ps = logsPageSize.value; const sinceParam = logsSince.value > 0 ? '&since=' + logsSince.value : ''; const d = await api('/api/proxy/logs?limit=' + ps + '&page=' + p + sinceParam); requestLogsLoading.value = false; if (d && d.logs) { requestLogs.value = d.logs; logsTotal.value = d.total || 0; logsTotalPages.value = d.total_pages || 0; } } const proxyLoading = ref(false);
         const proxyStrategy = ref(parseInt(localStorage.getItem('ag_proxy_strategy')||'1'));
         const showStrategyDropdown = ref(false);
         const strategyOptions = [{value:1,label:'专一模式'},{value:2,label:'临期优先'},{value:3,label:'轮询模式'},{value:4,label:'会话亲和'}];
@@ -979,7 +1023,7 @@ async function downloadExport() { if (selectedAccounts.value.length === 0) retur
         async function saveSettings() { const r = await api('/api/settings', { method: 'POST', body: JSON.stringify({ webPort: settings.webPort, proxyPort: settings.proxyPort, httpProxy: settings.httpProxy, autoStartProxy: settings.autoStartProxy, checkinConcurrency: settings.checkinConcurrency }) }); if (r && r.success) { showToast('设置已保存（重启生效）'); } else { showToast('保存失败', 'error'); } }
         async function loadSettings() { const d = await api('/api/settings'); if (d) { settings.webPort = d.webPort || 8866; settings.proxyPort = d.proxyPort || 8867; settings.httpProxy = d.httpProxy || ''; settings.autoStartProxy = d.autoStartProxy !== undefined ? d.autoStartProxy : true; settings.checkinConcurrency = d.checkinConcurrency || 5; } }
         onMounted(async () => { loadQuotaCache(); await loadSettings(); await loadAccounts(); await loadProxyStatus(); });
-        return { currentPage, activePageLabel, navItems, now, port, toast, showToast, fmtNum, stats, accounts, selectedAccounts, isAllSelected, toggleSelectAll, selectAllAccounts, invertSelection, showAddModal, addMethod, addMethods, addForm, addLoading, addError, addAccount, deleteAccount, quotaLoading, checkinLoading, querySingleQuota, checkinSingle, checkinAllLoading, lastCheckin, checkinLogs, checkinAll, quotaAllLoading, quotaSummary, quotaAccounts, queryAllQuota, refreshQuota, proxyInfo, proxyLoading, proxyStrategy, strategyOptions, strategyLabel, showStrategyDropdown, selectStrategy, hideStrategyDropdown, toggleProxy, showImportKeysModal, importKeysAccounts, importKeysLoading, importAllSelected, openImportKeysModal, toggleSelectAllImport, importSelectedKeys, deleteProxyKey, proxyKeyLoading, toggleProxyKey, settings, saveSettings, showImportModal, importMode, importModes, importFileName, importText, importPreview, importError, importResult, importLoading, openImportModal, closeImportModal, onImportFileChange, parseImportText, submitImport, showExportModal, exportLoading, exportContent, openExportModal, copyExportToClipboard, downloadExport, requestLogs, requestLogsLoading, logsSince, strategyLabelMap, formatLogTime, loadRequestLogs, clearLogs };
+        return { currentPage, activePageLabel, navItems, now, port, toast, showToast, fmtNum, stats, accounts, selectedAccounts, isAllSelected, toggleSelectAll, selectAllAccounts, invertSelection, showAddModal, addMethod, addMethods, addForm, addLoading, addError, addAccount, deleteAccount, quotaLoading, checkinLoading, querySingleQuota, checkinSingle, checkinAllLoading, lastCheckin, checkinLogs, checkinAll, quotaAllLoading, quotaSummary, quotaAccounts, queryAllQuota, refreshQuota, proxyInfo, proxyLoading, proxyStrategy, strategyOptions, strategyLabel, showStrategyDropdown, selectStrategy, hideStrategyDropdown, toggleProxy, showImportKeysModal, importKeysAccounts, importKeysLoading, importAllSelected, openImportKeysModal, toggleSelectAllImport, importSelectedKeys, deleteProxyKey, proxyKeyLoading, toggleProxyKey, settings, saveSettings, showImportModal, importMode, importModes, importFileName, importText, importPreview, importError, importResult, importLoading, openImportModal, closeImportModal, onImportFileChange, parseImportText, submitImport, showExportModal, exportLoading, exportContent, openExportModal, copyExportToClipboard, downloadExport, requestLogs, requestLogsLoading, logsSince, logsPage, logsTotal, logsTotalPages, logsPageSize, strategyLabelMap, formatLogTime, loadRequestLogs, clearLogs, goToPage, onPageSizeChange, showPageSizeDropdown, pageSizeOptions, setPageSize, hidePageSizeDropdown };
       }
     }).mount('#app');
   </script>
