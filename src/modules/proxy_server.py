@@ -1805,7 +1805,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             "max_usage": 0,
             "used_count": 0,
             "rate_limit_rpm": 1000,
-            "key_mode": 1,
+            # key_mode 不写死，走全局默认策略（由用户在前端选择）
         }
 
     def do_GET(self):
