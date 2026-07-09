@@ -1123,6 +1123,7 @@ class ProxyDatabase:
         with self._lock:
             self._data.setdefault("upstream_keys", []).append(key_data)
             self._key_status_version += 1
+            self._dirty = True
             self._flush_to_disk()
 
     def update_upstream_key(self, key_id: str, updates: dict):
@@ -1143,6 +1144,7 @@ class ProxyDatabase:
                 if k.get("key_id") != key_id
             ]
             self._key_status_version += 1
+            self._dirty = True
             self._flush_to_disk()
 
     def sync_quota_to_key(self, api_key_or_token: str, remaining_credits: float, total_credits: float,
@@ -1291,6 +1293,7 @@ class ProxyDatabase:
         with self._lock:
             self._data.setdefault("sub_api_keys", []).append(key_data)
             self._sub_key_version += 1
+            self._dirty = True
             self._flush_to_disk()
 
     def update_sub_api_key(self, key_id: str, updates: dict):
@@ -1505,6 +1508,7 @@ class ProxyDatabase:
             ]
             if len(self._data["sub_api_keys"]) != before:
                 self._sub_key_version += 1
+            self._dirty = True
             self._flush_to_disk()
 
     # === 设置 ===
