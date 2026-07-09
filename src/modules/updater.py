@@ -2,14 +2,14 @@
 
 更新流程:
 1. 启动时 & 每小时检测更新
-   - 优先查 GitHub Release API (https://api.github.com/repos/qinchangxv/antigravity-tools/releases/latest)
-   - GitHub 失败时 fallback 到旧服务器 (http://103.36.63.44:9680/version.json)
+   - 优先查国内服务器 (http://103.36.63.44:9680/version.json)
+   - 服务器失败时 fallback 到 GitHub Release API (https://api.github.com/repos/qinchangxv/antigravity-tools/releases/latest)
 2. 对比本地版本号 (src/VERSION)
 3. 有新版本 → 弹窗提示(含changelog) → 用户确认 → 下载更新包
 4. 源码模式: 解压覆盖 src/ → 提示重启
    打包模式: 下载 zip → 批处理替换 → 自动重启
 
-双源策略保证旧版（只查服务器）和新版（优先GitHub）都能收到更新通知。
+双源策略：服务器优先（国内下载快），GitHub 兜底（服务器不可用时仍能更新）。
 """
 
 import json
@@ -26,7 +26,7 @@ from PySide6.QtCore import QObject, Signal, QTimer, Slot
 
 logger = logging.getLogger(__name__)
 
-# ─── 更新源（双源策略：GitHub 优先，服务器兜底）───
+# ─── 更新源（双源策略：服务器优先，GitHub 兜底）───
 GITHUB_REPO = "qinchangxv/antigravity-tools"
 GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 # GitHub token 认证（避免 rate limit，从环境变量读取，不在代码中硬编码）
@@ -85,7 +85,7 @@ def _fetch_github_release(timeout: int = 15) -> dict | None:
 
     返回格式与旧服务器 version.json 兼容：
     {
-        "version": "1.7.8",
+        "version": "1.7.9",
         "changelog": "...",
         "download_url": "https://github.com/.../Antigravity-Tools-Windows-x64.zip",
         "sha256": "",
@@ -164,24 +164,43 @@ def _fetch_server_version(timeout: int = 10) -> dict | None:
 
 
 def _fetch_version_info(timeout: int = 15) -> dict | None:
-    """获取版本信息 — GitHub 优先，服务器兜底
+    """获取版本信息 — 服务器优先，GitHub 兜底
 
-    GitHub 拿到版本信息后，额外查服务器补充 src_download_url 作为下载备选。
-    这样下载增量包时可以先用 GitHub 链接，失败再切服务器链接。
+    服务器拿到版本信息后，额外查 GitHub 补充 src_download_url 作为下载备选。
+    这样下载增量包时优先用国内服务器链接（快），失败再切 GitHub 链接。
     """
-    # 1. 先查 GitHub Release
+    # 1. 先查国内服务器（下载快）
+    info = _fetch_server_version(timeout=timeout)
+    if info:
+        platform_key = _get_platform_key()
+        server_platform = info.get("platforms", {}).get(platform_key, {})
+        server_src_url = server_platform.get("src_download_url", "")
+
+        # 额外查 GitHub 拿 src_download_url 作为备选
+        github_src_url = ""
+        github_info = _fetch_github_release(timeout=8)
+        if github_info:
+            github_src_url = github_info.get("src_download_url", "")
+
+        return {
+            "version": info.get("version", ""),
+            "platforms": {
+                platform_key: {
+                    "version": server_platform.get("version", info.get("version", "")),
+                    "changelog": server_platform.get("changelog", info.get("changelog", "")),
+                    "download_url": server_platform.get("download_url", info.get("download_url", "")),
+                    "src_download_url": server_src_url,
+                    "src_download_url_fallback": github_src_url,
+                    "sha256": server_platform.get("sha256", info.get("sha256", "")),
+                }
+            },
+            "source": "server",
+        }
+
+    # 2. 服务器失败，查 GitHub Release
     info = _fetch_github_release(timeout=timeout)
     if info:
         platform_key = _get_platform_key()
-        github_src_url = info.get("src_download_url", "")
-
-        # 额外查服务器拿 src_download_url 作为备选
-        server_src_url = ""
-        server_info = _fetch_server_version(timeout=8)
-        if server_info:
-            server_platform = server_info.get("platforms", {}).get(platform_key, {})
-            server_src_url = server_platform.get("src_download_url", "")
-
         return {
             "version": info["version"],
             "platforms": {
@@ -189,18 +208,13 @@ def _fetch_version_info(timeout: int = 15) -> dict | None:
                     "version": info["version"],
                     "changelog": info["changelog"],
                     "download_url": info["download_url"],
-                    "src_download_url": github_src_url,
-                    "src_download_url_fallback": server_src_url,
+                    "src_download_url": info.get("src_download_url", ""),
+                    "src_download_url_fallback": "",
                     "sha256": info.get("sha256", ""),
                 }
             },
             "source": "github",
         }
-
-    # 2. GitHub 失败，查旧服务器
-    info = _fetch_server_version(timeout=timeout)
-    if info:
-        return info
 
     logger.warning("所有更新源均不可用")
     return None
@@ -879,9 +893,9 @@ class UpdateChecker(QObject):
                             else:
                                 logger.warning("增量更新失败，回退到完整包")
                         else:
-                            # GitHub 下载失败，尝试服务器备选链接
+                            # 服务器下载失败，尝试 GitHub 备选链接
                             if self._src_download_url_fallback and self._src_download_url_fallback != self._src_download_url:
-                                logger.info(f"GitHub 下载失败，尝试服务器: {self._src_download_url_fallback}")
+                                logger.info(f"服务器下载失败，尝试 GitHub: {self._src_download_url_fallback}")
                                 if _download_update(self._src_download_url_fallback, src_zip, _progress, timeout=120):
                                     if _apply_src_only_update(src_zip):
                                         self.update_finished.emit(True, "UPDATE_NEED_RESTART")

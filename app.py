@@ -3,7 +3,7 @@
 此文件是打包的入口点，将 src 包路径添加到 sys.path 后启动应用。
 直接运行此文件等同于 python -m src.main
 
-[v1.7.8] 使用 importlib 动态加载 src.main，避免 PyInstaller 将 src/ 编译进 PYZ。
+[v1.7.9] 使用 importlib 动态加载 src.main，避免 PyInstaller 将 src/ 编译进 PYZ。
 这样增量更新替换 src/ 目录的 .py 文件才能生效。
 antigravity.spec 的 hiddenimports 里手动列出了 src/ 依赖的模块（sqlite3 等）。
 """

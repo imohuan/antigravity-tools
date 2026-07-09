@@ -22,7 +22,7 @@ import socket
 import threading
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 from typing import Optional
@@ -842,6 +842,195 @@ def _build_workbuddy_relay_body(client_body: dict) -> tuple[dict, dict]:
     return body, meta
 
 
+RESPONSES_PASSTHROUGH_FIELDS = [
+    "temperature", "top_p", "max_tokens", "stop", "tools", "tool_choice",
+    "parallel_tool_calls", "stream_options", "reasoning_effort", "reasoning",
+    "metadata", "user", "seed", "presence_penalty", "frequency_penalty",
+]
+
+
+def _responses_part_to_chat_part(part):
+    if isinstance(part, str):
+        return {"type": "text", "text": part}
+    if not isinstance(part, dict):
+        return {"type": "text", "text": str(part)}
+    part_type = part.get("type")
+    if part_type in ("input_text", "output_text", "text"):
+        return {"type": "text", "text": part.get("text", "")}
+    if part_type in ("input_image", "image", "image_url"):
+        image_url = part.get("image_url") or part.get("url")
+        if isinstance(image_url, dict):
+            image_url = image_url.get("url")
+        if image_url:
+            return {"type": "image_url", "image_url": {"url": image_url}}
+        return {"type": "text", "text": "[Image omitted: missing image_url]"}
+    if "text" in part:
+        return {"type": "text", "text": str(part.get("text", ""))}
+    return {"type": "text", "text": json.dumps(part, ensure_ascii=False)}
+
+
+def _responses_content_to_chat_content(content):
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        converted = [_responses_part_to_chat_part(part) for part in content]
+        if all(p.get("type") == "text" for p in converted):
+            return "\n".join(p.get("text", "") for p in converted if p.get("text"))
+        return converted
+    return str(content)
+
+
+def _responses_input_item_to_chat_messages(item):
+    if isinstance(item, str):
+        return [{"role": "user", "content": item}]
+    if not isinstance(item, dict):
+        return [{"role": "user", "content": str(item)}]
+    item_type = item.get("type")
+    if item_type == "message" or "role" in item:
+        role = item.get("role", "user")
+        if role == "developer":
+            role = "system"
+        return [{"role": role, "content": _responses_content_to_chat_content(item.get("content", ""))}]
+    if item_type == "function_call_output":
+        msg = {"role": "tool", "content": item.get("output", "")}
+        call_id = item.get("call_id") or item.get("id")
+        if call_id:
+            msg["tool_call_id"] = call_id
+        return [msg]
+    if item_type == "function_call":
+        call_id = item.get("call_id") or item.get("id") or f"call_{secrets.token_hex(8)}"
+        return [{
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{
+                "id": call_id,
+                "type": "function",
+                "function": {"name": item.get("name", ""), "arguments": item.get("arguments", "{}")},
+            }],
+        }]
+    return [{"role": "user", "content": _responses_content_to_chat_content(item.get("content", item))}]
+
+
+def _responses_to_chat_request(client_body: dict) -> tuple[dict, dict]:
+    chat_body = {
+        "model": client_body.get("model") or "auto",
+        "stream": bool(client_body.get("stream", False)),
+    }
+    messages = []
+    if client_body.get("instructions"):
+        messages.append({"role": "system", "content": str(client_body.get("instructions"))})
+    response_input = client_body.get("input", "")
+    if isinstance(response_input, list):
+        for item in response_input:
+            messages.extend(_responses_input_item_to_chat_messages(item))
+    else:
+        messages.append({"role": "user", "content": str(response_input)})
+    chat_body["messages"] = messages
+    if "max_output_tokens" in client_body and "max_tokens" not in client_body:
+        chat_body["max_tokens"] = client_body.get("max_output_tokens")
+    for field_name in RESPONSES_PASSTHROUGH_FIELDS:
+        if field_name in client_body and field_name not in chat_body:
+            chat_body[field_name] = client_body[field_name]
+    return chat_body, {"input_type": type(response_input).__name__, "message_count": len(messages)}
+
+
+def _responses_usage_from_chat_usage(usage: dict) -> dict:
+    if not isinstance(usage, dict):
+        usage = {}
+    input_tokens = usage.get("input_tokens", usage.get("prompt_tokens", 0))
+    output_tokens = usage.get("output_tokens", usage.get("completion_tokens", 0))
+    total_tokens = usage.get("total_tokens", input_tokens + output_tokens)
+    result = dict(usage)
+    result.setdefault("input_tokens", input_tokens)
+    result.setdefault("output_tokens", output_tokens)
+    result.setdefault("total_tokens", total_tokens)
+    return result
+
+
+def _build_responses_object(content: str, model: str, response_id: str = "",
+                            usage: dict = None, reasoning: str = "") -> dict:
+    response_id = response_id or f"resp_{secrets.token_hex(16)}"
+    message_content = [{"type": "output_text", "text": content or "", "annotations": []}]
+    if reasoning:
+        message_content.insert(0, {"type": "reasoning_text", "text": reasoning})
+    return {
+        "id": response_id,
+        "object": "response",
+        "created_at": int(time.time()),
+        "status": "completed",
+        "background": False,
+        "error": None,
+        "incomplete_details": None,
+        "model": model,
+        "output": [{
+            "id": f"msg_{secrets.token_hex(12)}",
+            "type": "message",
+            "status": "completed",
+            "role": "assistant",
+            "content": message_content,
+        }],
+        "output_text": content or "",
+        "usage": _responses_usage_from_chat_usage(usage or {}),
+    }
+
+
+def _sse_event(event_name: str, data: dict) -> bytes:
+    return (
+        f"event: {event_name}\n"
+        f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+    ).encode("utf-8")
+
+
+def _responses_stream_events_from_chat_chunk(chunk_str: str, response_id: str,
+                                             text_parts: list = None) -> list[bytes]:
+    events = []
+    for raw_line in chunk_str.splitlines():
+        line = raw_line.strip()
+        if not line.startswith("data: "):
+            continue
+        data_str = line[6:].strip()
+        if data_str == "[DONE]":
+            continue
+        try:
+            chunk_data = json.loads(data_str)
+        except json.JSONDecodeError:
+            continue
+        usage = chunk_data.get("usage")
+        for choice in chunk_data.get("choices", []):
+            delta = choice.get("delta", {})
+            text_delta = delta.get("content")
+            if text_delta:
+                if text_parts is not None:
+                    text_parts.append(text_delta)
+                events.append(_sse_event("response.output_text.delta", {
+                    "type": "response.output_text.delta",
+                    "response_id": response_id,
+                    "item_id": "msg_0",
+                    "output_index": 0,
+                    "content_index": 0,
+                    "delta": text_delta,
+                }))
+            reasoning_delta = delta.get("reasoning_content")
+            if reasoning_delta:
+                events.append(_sse_event("response.reasoning_text.delta", {
+                    "type": "response.reasoning_text.delta",
+                    "response_id": response_id,
+                    "item_id": "msg_0",
+                    "output_index": 0,
+                    "content_index": 0,
+                    "delta": reasoning_delta,
+                }))
+        if usage:
+            events.append(_sse_event("response.usage.delta", {
+                "type": "response.usage.delta",
+                "response_id": response_id,
+                "usage": _responses_usage_from_chat_usage(usage),
+            }))
+    return events
+
+
 # 上游 API 路径（copilot.tencent.com/v2 使用 /chat/completions，不是 /v1/chat/completions）
 UPSTREAM_CHAT_PATH = "/chat/completions"
 UPSTREAM_MODELS_PATH = "/v1/models"
@@ -1044,7 +1233,9 @@ class ProxyDatabase:
     def add_upstream_key(self, key_data: dict):
         with self._lock:
             self._data.setdefault("upstream_keys", []).append(key_data)
-            self._save()
+            self._key_status_version += 1
+            self._dirty = True
+            self._flush_to_disk()
 
     def update_upstream_key(self, key_id: str, updates: dict):
         with self._lock:
@@ -1052,6 +1243,8 @@ class ProxyDatabase:
             for k in keys:
                 if k.get("key_id") == key_id:
                     k.update(updates)
+                    if "status" in updates:
+                        self._key_status_version += 1
                     break
             self._save()
 
@@ -1061,7 +1254,9 @@ class ProxyDatabase:
                 k for k in self._data.get("upstream_keys", [])
                 if k.get("key_id") != key_id
             ]
-            self._save()
+            self._key_status_version += 1
+            self._dirty = True
+            self._flush_to_disk()
 
     def sync_quota_to_key(self, api_key_or_token: str, remaining_credits: float, total_credits: float,
                            packages: list = None):
@@ -1209,7 +1404,8 @@ class ProxyDatabase:
         with self._lock:
             self._data.setdefault("sub_api_keys", []).append(key_data)
             self._sub_key_version += 1
-            self._save()
+            self._dirty = True
+            self._flush_to_disk()
 
     def update_sub_api_key(self, key_id: str, updates: dict):
         with self._lock:
@@ -1318,78 +1514,6 @@ class ProxyDatabase:
         today = datetime.now().strftime("%Y-%m-%d")
         with self._lock:
             return dict(self._data.get("daily_stats", {}).get(category, {}).get(key_id, {}).get(today, {}))
-
-    def get_usage_summary(self, days: int = None) -> dict:
-        """获取使用情况汇总统计
-
-        Args:
-            days: None=总计（从 upstream_keys 的累计字段汇总）
-                  1=今日
-                  N=近N天
-
-        Returns:
-            {
-                "prompt_tokens": int,       # 上行Token
-                "completion_tokens": int,   # 下行Token
-                "total_tokens": int,        # 总Token
-                "cached_tokens": int,       # 缓存命中Token
-                "credits": float,           # 消耗积分
-                "count": int,               # 请求数量
-                "cache_hit_rate": float,    # 缓存命中率(0~1)，= cached_tokens / prompt_tokens
-            }
-        """
-        result = {
-            "prompt_tokens": 0,
-            "completion_tokens": 0,
-            "total_tokens": 0,
-            "cached_tokens": 0,
-            "credits": 0.0,
-            "count": 0,
-            "cache_hit_rate": 0.0,
-        }
-
-        with self._lock:
-            if days is None:
-                # 总计：从 upstream_keys 累计字段汇总
-                for k in self._data.get("upstream_keys", []):
-                    result["prompt_tokens"] += k.get("total_prompt_tokens", 0)
-                    result["completion_tokens"] += k.get("total_completion_tokens", 0)
-                    result["total_tokens"] += k.get("total_tokens", 0)
-                    result["cached_tokens"] += k.get("total_cached_tokens", 0)
-                    result["credits"] += k.get("total_credits", 0.0)
-                    result["count"] += k.get("used_count", 0)
-            else:
-                # 今日或近N天：从 daily_stats 汇总
-                today = datetime.now()
-                if days == 1:
-                    date_list = [today.strftime("%Y-%m-%d")]
-                else:
-                    date_list = [
-                        (today - timedelta(days=i)).strftime("%Y-%m-%d")
-                        for i in range(days)
-                    ]
-
-                upstream_stats = self._data.get("daily_stats", {}).get("upstream", {})
-                for key_id, dates in upstream_stats.items():
-                    for date_str in date_list:
-                        day_data = dates.get(date_str)
-                        if day_data:
-                            result["prompt_tokens"] += day_data.get("prompt_tokens", 0)
-                            result["completion_tokens"] += day_data.get("completion_tokens", 0)
-                            result["total_tokens"] += day_data.get("total_tokens", 0)
-                            result["cached_tokens"] += day_data.get("cached_tokens", 0)
-                            result["credits"] += day_data.get("credits", 0.0)
-                            result["count"] += day_data.get("count", 0)
-
-        # 计算缓存命中率 = cached_tokens / prompt_tokens
-        if result["prompt_tokens"] > 0:
-            result["cache_hit_rate"] = result["cached_tokens"] / result["prompt_tokens"]
-
-        # 积分保留4位小数
-        result["credits"] = round(result["credits"], 4)
-
-        return result
-
     _points_query_timestamps: dict = {}  # {key_id: last_query_epoch}
 
     def refresh_key_points_if_needed(self, key_id: str):
@@ -1495,7 +1619,8 @@ class ProxyDatabase:
             ]
             if len(self._data["sub_api_keys"]) != before:
                 self._sub_key_version += 1
-            self._save()
+            self._dirty = True
+            self._flush_to_disk()
 
     # === 设置 ===
 
@@ -1545,6 +1670,7 @@ class ProxyRouter:
         self._cache_lock = threading.Lock()  # 专门保护 select_key 缓存读写
         # 专一模式：记住每个子Key池当前专用的 Key（按 allowed_key_ids 的 hash 分组）
         self._dedicated_keys: dict[str, str] = {}  # {pool_hash: key_id}
+        self._expiring_dedicated_keys: dict[str, str] = {}  # {pool_hash: key_id} for key_mode=2 same-expiry group
         # 轮询模式：记住每个子Key池的轮询索引
         self._round_robin_index: dict[str, int] = {}  # {pool_hash: index}
         # 连接池：每个上游域名一个 Session，复用 TCP+TLS 连接
@@ -1728,9 +1854,23 @@ class ProxyRouter:
                 # 有过期信息的返回最早时间，没有的排到最后
                 return earliest if earliest is not None else float('inf')
 
-            # 临期时间为主排序键，并发计数为次级排序键（负载感知 #6）
-            available.sort(key=lambda k: (_earliest_expiring_time(k), _concurrent_count(k)))
-            return available[0]
+            earliest_time = min(_earliest_expiring_time(k) for k in available)
+            earliest_group = [k for k in available if _earliest_expiring_time(k) == earliest_time]
+            binding_key = f"{pool_hash}:{earliest_time}"
+            dedicated_id = self._expiring_dedicated_keys.get(binding_key)
+            if dedicated_id:
+                for k in earliest_group:
+                    if k.get("key_id") == dedicated_id:
+                        return k
+
+            earliest_group.sort(key=_concurrent_count)
+            chosen = earliest_group[0]
+            self._expiring_dedicated_keys[binding_key] = chosen.get("key_id", "")
+            logger.info(
+                f"[临期优先] 池 {pool_hash[:8]} 最早过期组 {earliest_time} 绑定 Key -> "
+                f"{chosen.get('label', chosen.get('key_id', '')[:8])}"
+            )
+            return chosen
 
         elif key_mode == 3:
             # 轮询模式：round-robin，每次请求轮换到下一个 Key
@@ -2052,6 +2192,17 @@ class ProxyRouter:
         t.start()
         logger.warning(f"Key {key_id} 被限流(429)，进入 10 秒冷却")
 
+    def mark_key_rate_limited(self, key_id: str):
+        """标记 Key 为系统限流（401/429 系统级限流，不自动恢复）
+
+        与 cooldown（429 临时限流，10秒自动恢复）不同，
+        rate_limited 需手动恢复或下次查分不限流才恢复。
+        """
+        self._db.update_upstream_key(key_id, {"status": "rate_limited"})
+        self._upstream_keys_cache_time = 0
+        self._sub_keys_cache_time = 0
+        logger.warning(f"Key {key_id} 标记为 rate_limited（系统限流，需手动或查分恢复）")
+
     def get_upstream_url(self, model: str = "") -> str:
         """获取上游 API base URL（带缓存）
         
@@ -2082,6 +2233,7 @@ class ProxyRouter:
         self._cached_sub_keys = {}
         self._sub_keys_cache_time = 0
         self._last_sub_key_version = -1
+        self._expiring_dedicated_keys.clear()
 
     def authenticate_sub_key(self, token: str) -> Optional[dict]:
         """验证子 API Key（带缓存，避免每次请求遍历+加锁）
@@ -2298,7 +2450,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             self._send_json(200, {
                 "object": "api.index",
                 "message": "Antigravity Proxy is running",
-                "version": "1.7.8",
+                "version": "1.7.9",
             })
             return
 
@@ -2362,6 +2514,10 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             self._handle_chat_completions()
             return
 
+        if path == "/v1/responses":
+            self._handle_responses()
+            return
+
         # 未识别的 POST 端点：返回 404 但不是 401
         logger.warning(f"[未识别] POST {path}")
         self._send_json(404, {"error": {"message": f"Endpoint not found: {path}", "type": "not_found"}})
@@ -2383,7 +2539,35 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", "0")
         self.end_headers()
 
-    def _handle_chat_completions(self):
+    def _handle_responses(self):
+        """Handle /v1/responses by translating it to the chat pipeline."""
+        try:
+            content_length = int(self.headers.get("Content-Length", 0))
+            if content_length > 50 * 1024 * 1024:
+                self._send_json(413, {"error": {"message": "Request body too large (max 50MB)", "type": "invalid_request"}})
+                return
+            body = self.rfile.read(content_length)
+            request_data = json.loads(body)
+            chat_request, meta = _responses_to_chat_request(request_data)
+            logger.info(
+                "[responses] translated request input_type=%s messages=%s stream=%s",
+                meta.get("input_type"),
+                meta.get("message_count"),
+                chat_request.get("stream"),
+            )
+        except Exception as e:
+            self._send_json(400, {"error": {"message": f"Invalid request body: {e}", "type": "invalid_request"}})
+            return
+
+        self._handle_chat_completions(
+            request_data_override=chat_request,
+            response_mode="responses",
+            request_path="/v1/responses",
+        )
+
+    def _handle_chat_completions(self, request_data_override: dict = None,
+                                 response_mode: str = "chat",
+                                 request_path: str = "/v1/chat/completions"):
         """处理 /v1/chat/completions 请求
         
         自动重试：上游 Key 报错时自动换下一个 Key 重试，
@@ -2436,19 +2620,26 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                 return
 
         # 3. 解析请求体（优化项 #14：请求体大小限制 50MB）
-        try:
-            content_length = int(self.headers.get("Content-Length", 0))
-            if content_length > 50 * 1024 * 1024:
-                logger.warning(f"[安全] 请求体过大: {content_length} bytes，拒绝")
-                self._add_log(event="error", sub_key=sub_key, error=f"请求体过大: {content_length} bytes",
-                              request_path="/v1/chat/completions")
-                self._send_json(413, {"error": {"message": "Request body too large (max 50MB)", "type": "invalid_request"}})
+        if request_data_override is not None:
+            request_data = request_data_override
+        else:
+            try:
+                content_length = int(self.headers.get("Content-Length", 0))
+                if content_length > 50 * 1024 * 1024:
+                    logger.warning(f"[安全] 请求体过大: {content_length} bytes，拒绝")
+                    self._add_log(
+                        event="error",
+                        sub_key=sub_key,
+                        error=f"请求体过大: {content_length} bytes",
+                        request_path=request_path,
+                    )
+                    self._send_json(413, {"error": {"message": "Request body too large (max 50MB)", "type": "invalid_request"}})
+                    return
+                body = self.rfile.read(content_length)
+                request_data = json.loads(body)
+            except Exception as e:
+                self._send_json(400, {"error": {"message": f"Invalid request body: {e}", "type": "invalid_request"}})
                 return
-            body = self.rfile.read(content_length)
-            request_data = json.loads(body)
-        except Exception as e:
-            self._send_json(400, {"error": {"message": f"Invalid request body: {e}", "type": "invalid_request"}})
-            return
 
         model = request_data.get("model", "")
         if not model:
@@ -2705,8 +2896,8 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                             return
                         # 401：纯 API 头不应该出现 invalid_format，如果有说明 Key 有问题
                         logger.info(f"[401] Key {label} 上游返回: status=401, body={resp_body[:500]}")
-                        # 401 不冷却 Key（可能是偶发网络问题），直接换 Key 重试
-                        # mark_key_cooldown 会导致正常 Key 被误冷却 10 秒
+                        # 401 认证失败 → 标记为 rate_limited（不自动恢复，需手动或下次查分恢复）
+                        self.router.mark_key_rate_limited(key_id)
                         error_detail = f"Key {label} 认证失败(401): {resp_body[:200]}"
                         logger.warning(f"[重试] {error_detail}")
                         self._add_log(event="upstream_error", sub_key=sub_key, upstream_key=upstream_key,
@@ -2824,7 +3015,8 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                 start_time = time.time()
                 should_retry, error_msg = self._forward_stream_response(
                     resp, upstream_key, sub_key, model, start_time,
-                    client_wants_stream, key_id, upstream_request_data
+                    client_wants_stream, key_id, upstream_request_data,
+                    response_mode=response_mode
                 )
                 self.router.decrement_concurrent(key_id)
 
@@ -3089,7 +3281,8 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             pass
 
     def _forward_stream_response(self, resp, upstream_key, sub_key, model, start_time,
-                                  client_wants_stream, key_id, request_data=None):
+                                  client_wants_stream, key_id, request_data=None,
+                                  response_mode: str = "chat"):
         """处理上游 200 响应的流式/非流式转发
 
         优化项：
@@ -3109,6 +3302,8 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
         last_usage = {}
         first_token_ms = None
         client_disconnected = False
+        response_id = f"resp_{secrets.token_hex(16)}"
+        response_stream_text_parts = []
         _chunk_count = 0       # 接收的 chunk 总数
         _has_usage_chunk = False  # 是否收到包含 usage 的 chunk
         _last_chunk_preview = ""  # 最后一个 chunk 的预览（排查 usage 丢失）
@@ -3191,7 +3386,21 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
 
             # 发送首 chunk
             try:
-                self.request.sendall(first_chunk_data)
+                if response_mode == "responses":
+                    self.request.sendall(_sse_event("response.created", {
+                        "type": "response.created",
+                        "response": _build_responses_object("", model, response_id, {}),
+                    }))
+                    self.request.sendall(_sse_event("response.in_progress", {
+                        "type": "response.in_progress",
+                        "response_id": response_id,
+                    }))
+                    for event_data in _responses_stream_events_from_chat_chunk(
+                        first_chunk_str, response_id, response_stream_text_parts
+                    ):
+                        self.request.sendall(event_data)
+                else:
+                    self.request.sendall(first_chunk_data)
             except (BrokenPipeError, ConnectionResetError, OSError):
                 client_disconnected = True
                 logger.info("[代理] 客户端断开连接（首 chunk），继续 drain 上游")
@@ -3216,11 +3425,41 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                         _last_chunk_preview = chunk_str[-300:] if len(chunk_str) > 300 else chunk_str
                     if not client_disconnected:
                         try:
-                            self.request.sendall(chunk)
+                            if response_mode == "responses":
+                                for event_data in _responses_stream_events_from_chat_chunk(
+                                    chunk_str, response_id, response_stream_text_parts
+                                ):
+                                    self.request.sendall(event_data)
+                            else:
+                                self.request.sendall(chunk)
                         except (BrokenPipeError, ConnectionResetError, OSError):
                             client_disconnected = True
                             logger.info("[代理] 客户端断开连接，继续 drain 上游（优化项 #12）")
                     last_data_time = time.time()
+
+            if response_mode == "responses" and not client_disconnected:
+                try:
+                    completed = _build_responses_object(
+                        "".join(response_stream_text_parts),
+                        model,
+                        response_id,
+                        last_usage,
+                    )
+                    self.request.sendall(_sse_event("response.output_text.done", {
+                        "type": "response.output_text.done",
+                        "response_id": response_id,
+                        "item_id": "msg_0",
+                        "output_index": 0,
+                        "content_index": 0,
+                        "text": completed.get("output_text", ""),
+                    }))
+                    self.request.sendall(_sse_event("response.completed", {
+                        "type": "response.completed",
+                        "response": completed,
+                    }))
+                    self.request.sendall(b"data: [DONE]\n\n")
+                except (BrokenPipeError, ConnectionResetError, OSError):
+                    client_disconnected = True
 
             self.close_connection = True
 
@@ -3319,6 +3558,18 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                     "total_tokens": 0,
                 },
             }
+            if response_mode == "responses":
+                result = _build_responses_object(
+                    full_content,
+                    model_name,
+                    response_id,
+                    last_usage if last_usage else {
+                        "prompt_tokens": 0,
+                        "completion_tokens": 0,
+                        "total_tokens": 0,
+                    },
+                    reasoning=full_reasoning,
+                )
 
             body = json.dumps(result, ensure_ascii=False).encode("utf-8")
             self.send_response(200)

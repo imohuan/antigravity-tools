@@ -12,7 +12,7 @@ from PySide6.QtCore import Qt, QThread, Signal, QTimer, QTime
 
 from ...i18n import t
 from ...models import Account, Platform, AccountStatus
-from ...utils.store import load_accounts, save_account
+from ...utils.store import load_accounts, save_account, save_setting, load_setting
 from ...modules import CheckinManager
 from ...modules.api_client import ApiClient
 
@@ -256,8 +256,11 @@ class CheckinPage(QWidget):
         toolbar.addWidget(QLabel("并发数:"))
         self._concurrency_spin = QSpinBox()
         self._concurrency_spin.setRange(1, 50)
-        self._concurrency_spin.setValue(5)
-        self._concurrency_spin.setToolTip("同时签到的线程数，建议5-10")
+        self._concurrency_spin.setValue(int(load_setting("checkin_concurrency", "5")))
+        self._concurrency_spin.setToolTip("同时请求线程数，范围 1-50")
+        self._concurrency_spin.valueChanged.connect(
+            lambda value: save_setting("checkin_concurrency", str(value))
+        )
         self._concurrency_spin.setFixedWidth(60)
         toolbar.addWidget(self._concurrency_spin)
 

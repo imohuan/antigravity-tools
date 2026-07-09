@@ -15,9 +15,9 @@ from PySide6.QtGui import QAction, QCursor
 
 from ...i18n import t
 from ...models import Account, Platform, AccountStatus, ResourcePackage
-from ...utils.store import load_accounts, save_account, delete_account
+from ...utils.store import load_accounts, save_account, delete_account, save_setting, load_setting
 from ...modules.oauth import WorkBuddyAuth
-from ...modules.api_client import ApiClient
+from ...modules.api_client import ApiClient, check_api_key_chat_status
 
 logger = logging.getLogger(__name__)
 
@@ -925,8 +925,11 @@ class AccountsPage(QWidget):
         toolbar.addWidget(QLabel("并发数:"))
         self._concurrency_spin = QSpinBox()
         self._concurrency_spin.setRange(1, 50)
-        self._concurrency_spin.setValue(5)
-        self._concurrency_spin.setToolTip("同时查询的线程数，建议5-10")
+        self._concurrency_spin.setValue(int(load_setting("account_concurrency", "5")))
+        self._concurrency_spin.setToolTip("同时请求线程数，范围 1-50")
+        self._concurrency_spin.valueChanged.connect(
+            lambda value: save_setting("account_concurrency", str(value))
+        )
         self._concurrency_spin.setFixedWidth(80)
         toolbar.addWidget(self._concurrency_spin)
 
@@ -1527,7 +1530,7 @@ class AccountsPage(QWidget):
         class StatusCheckWorker(QThread):
             """后台并发检测 API Key 风控状态线程"""
             progress = QSignal(str, bool, str)  # nickname, success, status_text
-            done = QSignal(int, int, int, list)  # (正常, 异常, 失败, 异常key列表)
+            done = QSignal(int, int, int, list, list)  # (正常, 异常, 失败, 异常key列表, 限流key列表)
 
             def __init__(self, accounts, max_workers=5):
                 super().__init__()
@@ -1539,39 +1542,17 @@ class AccountsPage(QWidget):
                 self._stop_flag = True
 
             def _check_one(self, acc):
-                import requests as _requests
                 api_key = acc.api_key
                 nickname = acc.nickname or acc.uid
                 try:
-                    resp = _requests.post(
-                        "https://copilot.tencent.com/v2/chat/completions",
-                        json={
-                            "model": "auto",
-                            "stream": True,
-                            "stream_options": {"include_usage": True},
-                            "messages": [
-                                {"role": "system", "content": "You are a helpful assistant."},
-                                {"role": "user", "content": "hi"},
-                            ],
-                        },
-                        headers={
-                            "Content-Type": "application/json",
-                            "Accept": "application/json, text/event-stream",
-                            "Authorization": f"Bearer {api_key}",
-                        },
-                        timeout=30,
-                        stream=True,
+                    result = check_api_key_chat_status(api_key, attempts=3)
+                    return (
+                        nickname,
+                        result.get("success", False),
+                        result.get("status_text", "check_failed"),
+                        api_key,
+                        result.get("flag"),
                     )
-                    if resp.status_code == 200:
-                        return (nickname, True, "正常", api_key, None)
-                    elif resp.status_code == 403 and '"code":11140' in resp.text:
-                        return (nickname, False, "风控异常", api_key, "abnormal")
-                    elif resp.status_code == 401 and "invalid_secret" in resp.text:
-                        return (nickname, False, "Key失效", api_key, None)
-                    elif resp.status_code == 429:
-                        return (nickname, True, "限流(正常)", api_key, None)
-                    else:
-                        return (nickname, False, f"HTTP {resp.status_code}", api_key, None)
                 except Exception as e:
                     return (nickname, False, f"异常: {e}", api_key, None)
 
@@ -1580,6 +1561,7 @@ class AccountsPage(QWidget):
                 abnormal = 0
                 failed = 0
                 abnormal_keys = []
+                rate_limited_keys = []
                 with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
                     futures = {executor.submit(self._check_one, acc): acc
                                for acc in self._accounts}
@@ -1593,23 +1575,26 @@ class AccountsPage(QWidget):
                             if flag == "abnormal":
                                 abnormal += 1
                                 abnormal_keys.append(api_key)
+                            elif flag == "rate_limited":
+                                abnormal += 1
+                                rate_limited_keys.append(api_key)
                             elif success:
                                 normal += 1
                             else:
                                 failed += 1
                         except Exception:
                             failed += 1
-                self.done.emit(normal, abnormal, failed, abnormal_keys)
+                self.done.emit(normal, abnormal, failed, abnormal_keys, rate_limited_keys)
 
         worker = StatusCheckWorker(accounts_with_key, max_workers=max_workers)
 
         def _on_progress(nickname, success, status_text):
             current = self._progress_bar.value() + 1
             self._progress_bar.setValue(current)
-            icon = "✅" if success else ("⚠️" if status_text == "风控异常" else "❌")
+            icon = "✅" if success else ("⚠️" if status_text in ("风控异常", "限流(401)") else "❌")
             self._append_log(f"{icon} {nickname} → {status_text}")
 
-        def _on_done(normal, abnormal, failed, abnormal_keys):
+        def _on_done(normal, abnormal, failed, abnormal_keys, rate_limited_keys):
             self._btn_check_status.setEnabled(True)
             self._btn_query_all.setEnabled(True)
             self._btn_stop_query.setVisible(False)
@@ -1626,7 +1611,12 @@ class AccountsPage(QWidget):
                     k_id = k.get("key_id", "")
                     if k_api in abnormal_keys and k.get("status") != "abnormal":
                         proxy_db.update_upstream_key(k_id, {"status": "abnormal"})
-                    elif k_api not in abnormal_keys and k.get("status") == "abnormal":
+                    elif k_api in rate_limited_keys and k.get("status") != "rate_limited":
+                        proxy_db.update_upstream_key(k_id, {"status": "rate_limited"})
+                    elif (k_api not in abnormal_keys
+                          and k_api not in rate_limited_keys
+                          and k.get("status") in ("abnormal", "rate_limited")):
+                        # 之前异常/限流，本次检测通过 → 恢复 active
                         proxy_db.update_upstream_key(k_id, {"status": "active"})
                 proxy_db._dirty = True
                 proxy_db._flush_to_disk()
@@ -1634,9 +1624,12 @@ class AccountsPage(QWidget):
             except Exception as e:
                 self._append_log(f"⚠️ 同步上游池失败: {e}")
 
+            rate_limited_count = len(rate_limited_keys)
             msg = f"检测完成：✅ 正常 {normal} 个"
             if abnormal > 0:
                 msg += f"，⚠️ 异常 {abnormal} 个（已标记到上游池）"
+            if rate_limited_count > 0:
+                msg += f"，⚠️ 限流 {rate_limited_count} 个（已标记限流）"
             if failed > 0:
                 msg += f"，❓ 失败 {failed} 个"
             self._append_log(msg)

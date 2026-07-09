@@ -67,6 +67,13 @@ def _set_item(table, row, col, text, tooltip=None):
     return item
 
 
+def _get_account_concurrency_setting() -> int:
+    try:
+        return max(1, min(50, int(load_setting("account_concurrency", "5"))))
+    except Exception:
+        return 5
+
+
 def _current_theme_colors() -> dict:
     theme = load_setting("theme", "system")
     if theme == "system":
@@ -515,6 +522,18 @@ class CreateSubKeyDialog(QDialog):
                     else:
                         item.setData(Qt.UserRole, item_text)
 
+            if item.data(Qt.UserRole) is None and (not all_option or item_text != all_option):
+                if selected_indices is not None:
+                    actual_key_idx = (i - 1) if all_option else i
+                    if 0 <= actual_key_idx < len(self._upstream_keys):
+                        item.setData(Qt.UserRole, self._upstream_keys[actual_key_idx].get("key_id", ""))
+                    else:
+                        item.setData(Qt.UserRole, item_text)
+                    item.setCheckState(Qt.Unchecked)
+                else:
+                    item.setData(Qt.UserRole, item_text)
+                    item.setCheckState(Qt.Unchecked)
+
             list_widget.addItem(item)
 
         # 全选/取消全选联动
@@ -542,7 +561,7 @@ class CreateSubKeyDialog(QDialog):
                     has_all = True
                 else:
                     models.append(item.text())
-        return [] if has_all else models
+        return [] if has_all and not models else models
 
     def _get_selected_key_ids(self) -> list:
         """获取选中的上游 Key ID 列表"""
@@ -555,7 +574,7 @@ class CreateSubKeyDialog(QDialog):
                     has_all = True
                 elif item.data(Qt.UserRole):
                     key_ids.append(item.data(Qt.UserRole))
-        return [] if has_all else key_ids
+        return [] if has_all and not key_ids else key_ids
 
     def get_data(self) -> dict:
         return {
@@ -1240,6 +1259,7 @@ class ApiProxyPage(QWidget):
                                 dk["points"] = f"{remaining:.0f}/{total:.0f}"
                                 dk["points_updated_at"] = "synced_from_account"
                     self._db._dirty = True
+                    self._db._save()
             except Exception:
                 pass
 
@@ -1400,6 +1420,8 @@ class ApiProxyPage(QWidget):
         if reload_from_disk:
             # 服务运行中时，使用服务的 db 实例（共享内存），需要从文件重载
             # 服务停止时，_db 是独立实例，也需要从文件重载
+            # 关键修复：reload 前先 flush，确保延迟写盘的数据落盘，避免被旧数据覆盖
+            self._db._flush_to_disk()
             self._db._data = self._db._load()
             self._db._dirty = False
             # 关键：刷新 router 缓存，让 select_key 立即用新数据
@@ -1652,6 +1674,7 @@ class ApiProxyPage(QWidget):
         """主动查询所有上游 Key 对应账号的积分并同步（优先用 API Key 直接查分）"""
         from ...modules.api_client import ApiClient
         from PySide6.QtCore import QThread, Signal as QSignal
+        from concurrent.futures import ThreadPoolExecutor, as_completed
 
         keys = self._db.get_upstream_keys()
         if not keys:
@@ -1670,78 +1693,81 @@ class ApiProxyPage(QWidget):
             return
 
         class PointsRefreshWorker(QThread):
-            """后台批量查询积分线程 — 优先用 API Key (ck_xxx) 直接查分"""
+            """Background worker for refreshing upstream key quota."""
             progress = QSignal(str)
-            done = QSignal(int, int)  # (成功数, 失败数)
+            done = QSignal(int, int)  # success, failed
 
-            def __init__(self, keys, db):
+            def __init__(self, keys, db, max_workers=5):
                 super().__init__()
                 self._keys = keys
                 self._db = db
+                self.max_workers = max_workers
+
+            def _query_one(self, k):
+                api_key = k.get("api_key", "")
+                label = k.get("label", api_key[:12])
+                self.progress.emit(f"正在查询 {label}...")
+                if api_key.startswith("ck_"):
+                    client = ApiClient.from_api_key(api_key)
+                else:
+                    from ...utils.store import load_accounts
+                    accounts = load_accounts()
+                    acc = None
+                    for a in accounts:
+                        if a.auth_token == api_key or a.api_key == api_key:
+                            acc = a
+                            break
+                    if acc and acc.api_key and acc.api_key.startswith("ck_"):
+                        client = ApiClient.from_api_key(acc.api_key)
+                    elif acc:
+                        client = ApiClient(
+                            access_token=acc.auth_token,
+                            uid=acc.uid,
+                            domain=acc.domain or "www.codebuddy.cn",
+                        )
+                    else:
+                        client = ApiClient.from_api_key(api_key)
+                return k, client.get_user_resource()
 
             def run(self):
                 success = 0
                 failed = 0
-                for k in self._keys:
-                    api_key = k.get("api_key", "")
-                    label = k.get("label", api_key[:12])
-                    try:
-                        self.progress.emit(f"正在查询 {label}...")
-                        # 优先用 API Key 模式（ck_xxx 直接查分，无需 JWT）
-                        if api_key.startswith("ck_"):
-                            client = ApiClient.from_api_key(api_key)
-                        else:
-                            # 非 ck_ 开头的 token，尝试从账号找关联信息
-                            from ...utils.store import load_accounts
-                            accounts = load_accounts()
-                            acc = None
-                            for a in accounts:
-                                if a.auth_token == api_key or a.api_key == api_key:
-                                    acc = a
-                                    break
-                            if acc and acc.api_key and acc.api_key.startswith("ck_"):
-                                client = ApiClient.from_api_key(acc.api_key)
-                            elif acc:
-                                client = ApiClient(
-                                    access_token=acc.auth_token,
-                                    uid=acc.uid,
-                                    domain=acc.domain or "www.codebuddy.cn",
+                with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+                    futures = {executor.submit(self._query_one, k): k for k in self._keys}
+                    for future in as_completed(futures):
+                        try:
+                            k, result = future.result()
+                            api_key = k.get("api_key", "")
+                            if result.get("success"):
+                                remaining = result.get("remaining_credits", 0)
+                                total = result.get("total_credits", 0)
+                                packages = result.get("packages", [])
+                                self._db.sync_quota_to_key(
+                                    api_key_or_token=api_key,
+                                    remaining_credits=remaining,
+                                    total_credits=total,
+                                    packages=packages,
                                 )
+                                try:
+                                    from ...utils.store import load_accounts, save_account
+                                    accounts = load_accounts()
+                                    for acc in accounts:
+                                        if acc.auth_token == api_key or acc.api_key == api_key:
+                                            acc.quota.credits_remaining = remaining
+                                            acc.quota.credits_total = total
+                                            save_account(acc)
+                                            break
+                                except Exception:
+                                    pass
+                                success += 1
                             else:
-                                # 没有账号关联，直接用 api_key 试试
-                                client = ApiClient.from_api_key(api_key)
-
-                        result = client.get_user_resource()
-                        if result.get("success"):
-                            remaining = result.get("remaining_credits", 0)
-                            total = result.get("total_credits", 0)
-                            packages = result.get("packages", [])
-                            self._db.sync_quota_to_key(
-                                api_key_or_token=api_key,
-                                remaining_credits=remaining,
-                                total_credits=total,
-                                packages=packages,
-                            )
-                            # 同步保存到关联账号
-                            try:
-                                from ...utils.store import load_accounts, save_account
-                                accounts = load_accounts()
-                                for acc in accounts:
-                                    if acc.auth_token == api_key or acc.api_key == api_key:
-                                        acc.quota.credits_remaining = remaining
-                                        acc.quota.credits_total = total
-                                        save_account(acc)
-                                        break
-                            except Exception:
-                                pass
-                            success += 1
-                        else:
+                                failed += 1
+                        except Exception:
                             failed += 1
-                    except Exception:
-                        failed += 1
                 self.done.emit(success, failed)
 
-        self._points_worker = PointsRefreshWorker(keys_to_query, self._db)
+        max_workers = _get_account_concurrency_setting()
+        self._points_worker = PointsRefreshWorker(keys_to_query, self._db, max_workers=max_workers)
         self._points_worker.progress.connect(
             lambda msg: self._stat_total.setText(f"⏳ {msg}")
         )
@@ -1761,7 +1787,8 @@ class ApiProxyPage(QWidget):
     def _check_all_key_status(self):
         """一键检测所有上游 Key 是否被风控（403 code:11140）"""
         from PySide6.QtCore import QThread, Signal as QSignal
-        import requests as _requests
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        from ...modules.api_client import check_api_key_chat_status
 
         keys = self._db.get_upstream_keys()
         if not keys:
@@ -1781,65 +1808,63 @@ class ApiProxyPage(QWidget):
             return
 
         class KeyStatusCheckWorker(QThread):
-            """后台批量检测 Key 风控状态线程"""
+            """Background worker for checking upstream Key status."""
             progress = QSignal(str)
-            done = QSignal(int, int, int)  # (正常数, 异常数, 失败数)
+            done = QSignal(int, int, int)  # normal, abnormal, failed
 
-            def __init__(self, keys, db):
+            def __init__(self, keys, db, max_workers=5):
                 super().__init__()
                 self._keys = keys
                 self._db = db
+                self._stop_flag = False
+                self.max_workers = max_workers
+
+            def stop(self):
+                self._stop_flag = True
+
+            def _check_one(self, k):
+                api_key = k.get("api_key", "")
+                label = k.get("label", api_key[:12])
+                self.progress.emit(f"检测 {label}...")
+                result = check_api_key_chat_status(api_key, attempts=3)
+                return k, label, result
 
             def run(self):
                 normal = 0
                 abnormal = 0
                 failed = 0
-                for k in self._keys:
-                    api_key = k.get("api_key", "")
-                    label = k.get("label", api_key[:12])
-                    key_id = k.get("key_id", "")
-                    try:
-                        self.progress.emit(f"检测 {label}...")
-                        # 发一个最简单的流式请求测试是否被风控
-                        resp = _requests.post(
-                            "https://copilot.tencent.com/v2/chat/completions",
-                            json={
-                                "model": "auto",
-                                "stream": True,
-                                "stream_options": {"include_usage": True},
-                                "messages": [
-                                    {"role": "system", "content": "You are a helpful assistant."},
-                                    {"role": "user", "content": "hi"},
-                                ],
-                            },
-                            headers={
-                                "Content-Type": "application/json",
-                                "Accept": "application/json, text/event-stream",
-                                "Authorization": f"Bearer {api_key}",
-                            },
-                            timeout=30,
-                            stream=True,
-                        )
-                        if resp.status_code == 200:
-                            # 正常，确保不是 abnormal 状态（可能之前误标）
-                            normal += 1
-                        elif resp.status_code == 403 and '"code":11140' in resp.text:
-                            # 被风控，标记为 abnormal
-                            self._db.update_upstream_key(key_id, {"status": "abnormal"})
-                            abnormal += 1
-                        elif resp.status_code == 401 and "invalid_secret" in resp.text:
-                            # Key 失效（非风控），不标记 abnormal，归为失败
+                with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+                    futures = {executor.submit(self._check_one, k): k for k in self._keys}
+                    for future in as_completed(futures):
+                        if self._stop_flag:
+                            executor.shutdown(wait=False, cancel_futures=True)
+                            break
+                        try:
+                            k, label, result = future.result()
+                            key_id = k.get("key_id", "")
+                            status_text = result.get("status_text", "check_failed")
+                            self.progress.emit(f"{label}: {status_text}")
+                            if result.get("flag") == "abnormal":
+                                self._db.update_upstream_key(key_id, {"status": "abnormal"})
+                                abnormal += 1
+                            elif result.get("flag") == "rate_limited":
+                                self._db.update_upstream_key(key_id, {"status": "rate_limited"})
+                                abnormal += 1
+                            elif result.get("success"):
+                                # 检测通过：如果之前是 abnormal/rate_limited，恢复为 active
+                                old_status = k.get("status", "active")
+                                if old_status in ("abnormal", "rate_limited"):
+                                    self._db.update_upstream_key(key_id, {"status": "active"})
+                                normal += 1
+                            else:
+                                failed += 1
+                        except Exception as e:
+                            self.progress.emit(f"检测失败: {e}")
                             failed += 1
-                        elif resp.status_code == 429:
-                            # 限流，不算异常
-                            normal += 1
-                        else:
-                            failed += 1
-                    except Exception:
-                        failed += 1
                 self.done.emit(normal, abnormal, failed)
 
-        self._status_check_worker = KeyStatusCheckWorker(keys_to_check, self._db)
+        max_workers = _get_account_concurrency_setting()
+        self._status_check_worker = KeyStatusCheckWorker(keys_to_check, self._db, max_workers=max_workers)
         self._status_check_worker.progress.connect(
             lambda msg: self._stat_total.setText(f"🔍 {msg}")
         )
