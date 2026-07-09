@@ -366,7 +366,7 @@
           <div class="grid grid-cols-4 gap-gutter">
             <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md">
               <p class="font-body-sm text-body-sm text-secondary">代理地址</p>
-              <p class="font-label-md text-label-md text-primary mt-sm">http://localhost:8867</p>
+              <p class="font-label-md text-label-md text-primary mt-sm">http://localhost:{{proxyInfo.port}}</p>
               <p class="font-body-sm text-[10px] text-on-surface-variant mt-xs">OpenAI-compatible</p>
             </div>
             <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md">
@@ -423,6 +423,89 @@
             <div v-else class="text-center py-xl text-secondary font-body-sm text-body-sm">密钥池为空</div>
           </div>
         </div>
+        <div v-else-if="currentPage==='logs'" class="space-y-lg">
+          <div class="flex items-center justify-between">
+            <span class="font-headline-lg text-headline-lg text-primary">请求日志</span>
+            <div class="flex items-center gap-sm">
+              <span class="text-secondary font-body-sm text-[11px]">共 {{requestLogs.length}} 条</span>
+              <button @click="loadRequestLogs" :disabled="requestLogsLoading"
+                class="inline-flex items-center gap-xs px-3 py-1.5 bg-primary text-on-primary font-label-md text-label-md rounded-lg hover:opacity-90 transition-opacity disabled:opacity-30">
+                <span v-if="requestLogsLoading" class="spinner inline-block w-3.5 h-3.5 border-2 border-on-primary/30 border-t-on-primary rounded-full"></span>
+                <span v-else class="material-symbols-outlined text-[16px]">refresh</span>{{requestLogsLoading?'加载中...':'刷新'}}
+              </button>
+              <button @click="clearLogs"
+                class="inline-flex items-center gap-xs px-3 py-1.5 bg-error-container text-on-error-container font-label-md text-label-md rounded-lg hover:opacity-90 transition-opacity">
+                <span class="material-symbols-outlined text-[16px]">delete</span>清空
+              </button>
+            </div>
+          </div>
+          <div class="grid grid-cols-4 gap-gutter">
+            <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md text-center">
+              <p class="font-headline-md text-headline-md text-primary">{{requestLogs.filter(l=>l.status==='success').length}}</p>
+              <p class="font-body-sm text-body-sm text-secondary">成功</p>
+            </div>
+            <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md text-center">
+              <p class="font-headline-md text-headline-md text-error">{{requestLogs.filter(l=>l.status==='failed').length}}</p>
+              <p class="font-body-sm text-body-sm text-secondary">失败</p>
+            </div>
+            <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md text-center">
+              <p class="font-headline-md text-headline-md text-primary">{{requestLogs.reduce((s,l)=>s+(l.credit||0),0).toFixed(2)}}</p>
+              <p class="font-body-sm text-body-sm text-secondary">消耗积分</p>
+            </div>
+            <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md text-center">
+              <p class="font-headline-md text-headline-md text-primary">{{requestLogs.reduce((s,l)=>s+(l.total_tokens||0),0)}}</p>
+              <p class="font-body-sm text-body-sm text-secondary">总 Token</p>
+            </div>
+          </div>
+          <div class="bg-surface-container-lowest border border-outline-variant rounded-xl overflow-hidden">
+            <div class="overflow-x-auto max-h-[500px] overflow-y-auto scrollbar-hide">
+              <table class="w-full text-body-sm" v-if="requestLogs.length>0">
+                <thead class="bg-surface-container-low text-secondary font-label-md uppercase tracking-wider text-[10px] sticky top-0 z-10">
+                  <tr>
+                    <th class="text-left px-md py-sm whitespace-nowrap">时间</th>
+                    <th class="text-left px-md py-sm whitespace-nowrap">模型</th>
+                    <th class="text-left px-md py-sm whitespace-nowrap">账号</th>
+                    <th class="text-left px-md py-sm whitespace-nowrap">策略</th>
+                    <th class="text-left px-md py-sm whitespace-nowrap">状态</th>
+                    <th class="text-right px-md py-sm whitespace-nowrap">积分</th>
+                    <th class="text-right px-md py-sm whitespace-nowrap">Prompt</th>
+                    <th class="text-right px-md py-sm whitespace-nowrap">Completion</th>
+                    <th class="text-right px-md py-sm whitespace-nowrap">首字</th>
+                    <th class="text-right px-md py-sm whitespace-nowrap">总耗时</th>
+                    <th class="text-center px-md py-sm whitespace-nowrap">尝试</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-outline-variant">
+                  <tr v-for="(log,i) in requestLogs" :key="i"
+                    :class="['hover:bg-surface-container-low/50 transition-colors', log.status==='failed'?'bg-error/5':'']">
+                    <td class="px-md py-sm text-secondary font-label-md text-[10px] whitespace-nowrap">{{formatLogTime(log.timestamp)}}</td>
+                    <td class="px-md py-sm text-primary font-label-md text-[10px] whitespace-nowrap">{{log.model}}</td>
+                    <td class="px-md py-sm text-secondary text-[10px] max-w-[100px] truncate" :title="log.main_key_label">{{log.main_key_label}}</td>
+                    <td class="px-md py-sm text-secondary text-[10px] whitespace-nowrap">{{strategyLabelMap[log.key_mode]||'专一'}}</td>
+                    <td class="px-md py-sm whitespace-nowrap">
+                      <span v-if="log.status==='success'" class="font-label-md text-[10px] px-2 py-0.5 rounded bg-secondary-container text-on-secondary-container">成功</span>
+                      <span v-else class="font-label-md text-[10px] px-2 py-0.5 rounded bg-error-container text-on-error-container" :title="log.error||''">失败</span>
+                    </td>
+                    <td class="px-md py-sm text-right font-label-md text-[10px]" :class="log.credit>0?'text-primary':'text-secondary'">{{log.credit>0?log.credit.toFixed(2):'-'}}</td>
+                    <td class="px-md py-sm text-right font-label-md text-[10px] text-secondary">{{log.prompt_tokens>0?fmtNum(log.prompt_tokens):'-'}}</td>
+                    <td class="px-md py-sm text-right font-label-md text-[10px] text-secondary">{{log.completion_tokens>0?fmtNum(log.completion_tokens):'-'}}</td>
+                    <td class="px-md py-sm text-right font-label-md text-[10px] text-secondary">{{log.first_token_ms>0?(log.first_token_ms/1000).toFixed(1)+'s':'-'}}</td>
+                    <td class="px-md py-sm text-right font-label-md text-[10px] text-secondary">{{log.duration_ms>0?(log.duration_ms/1000).toFixed(1)+'s':'-'}}</td>
+                    <td class="px-md py-sm text-center font-label-md text-[10px]" :class="log.status==='failed'?'text-error':'text-secondary'">
+                      {{log.attempt||1}} 次
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+              <div v-else class="text-center py-xl text-secondary font-body-sm text-body-sm">
+                <span class="material-symbols-outlined text-[48px] block mb-md text-outline-variant">receipt_long</span>
+                暂无请求日志
+                <div class="mt-sm text-[10px]">启动代理后，请求日志会在这里实时显示</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <div v-else-if="currentPage==='settings'" class="max-w-xl space-y-lg">
           <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md space-y-md">
             <div><label class="font-label-md text-label-md text-primary block mb-xs">网页端口</label><input
@@ -711,6 +794,7 @@
           { id: 'checkin', label: '签到', icon: 'check_circle' },
           { id: 'quota', label: '配额', icon: 'account_balance_wallet' },
           { id: 'proxy', label: '代理', icon: 'router' },
+          { id: 'logs', label: '日志', icon: 'receipt_long' },
           { id: 'settings', label: '设置', icon: 'settings' },
         ];
         const stats = reactive({ accountCount: 0, activeCount: 0, checkedToday: 0, totalCredits: 0 });
@@ -726,7 +810,12 @@ const addForm = reactive({ api_key: '', access_token: '', uid: '', nickname: '' 
 const quotaLoading = reactive({}); const checkinLoading = reactive({});
 const checkinAllLoading = ref(false); const lastCheckin = reactive({ success: 0, already: 0, failed: 0 }); const checkinLogs = reactive([]);
 const quotaAllLoading = ref(false); const quotaSummary = reactive({ totalRemain: 0, totalCredits: 0, accountCount: 0 }); const quotaDetails = reactive([]);
-const proxyInfo = reactive({ running: false, port: 8867, total_keys: 0, active_keys: 0, exhausted_keys: 0, keys: [] }); const proxyLoading = ref(false);
+const proxyInfo = reactive({ running: false, port: 8867, total_keys: 0, active_keys: 0, exhausted_keys: 0, keys: [] });
+        const requestLogs = ref([]); const requestLogsLoading = ref(false); const logsSince = ref(0);
+        const strategyLabelMap = { 1: '专一', 2: '临期优先', 3: '轮询', 4: '会话亲和' };
+        function clearLogs() { logsSince.value = Date.now() / 1000; requestLogs.value = []; }
+        function formatLogTime(ts) { if (!ts) return '-'; const d = new Date(ts*1000); return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')+':'+String(d.getSeconds()).padStart(2,'0'); }
+        async function loadRequestLogs() { requestLogsLoading.value = true; const sinceParam = logsSince.value > 0 ? '&since=' + logsSince.value : ''; const d = await api('/api/proxy/logs?limit=200' + sinceParam); requestLogsLoading.value = false; if (d && d.logs) { requestLogs.value = d.logs; } } const proxyLoading = ref(false);
         const proxyStrategy = ref(parseInt(localStorage.getItem('ag_proxy_strategy')||'1'));
         const showStrategyDropdown = ref(false);
         const strategyOptions = [{value:1,label:'专一模式'},{value:2,label:'临期优先'},{value:3,label:'轮询模式'},{value:4,label:'会话亲和'}];
@@ -788,18 +877,60 @@ async function downloadExport() { if (selectedAccounts.value.length === 0) retur
           showToast('完成: ' + lastCheckin.success + ' 成功, ' + lastCheckin.already + ' 已签, ' + lastCheckin.failed + ' 失败');
           await loadAccounts();
         }
-        async function loadProxyStatus() { const d = await api('/api/proxy/status'); if (d) Object.assign(proxyInfo, d); }
+        async function loadProxyStatus() { const d = await api('/api/proxy/status'); if (d) Object.assign(proxyInfo, d); loadRequestLogs(); }
         async function addAccount() { addLoading.value = true; addError.value = ''; const body = { method: addMethod.value }; if (addMethod.value === 'apikey') { body.api_key = addForm.api_key; body.nickname = addForm.nickname; } else if (addMethod.value === 'jwt') { body.access_token = addForm.access_token; body.uid = addForm.uid; body.nickname = addForm.nickname; } const r = await fetch('/api/accounts/add', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); const d = await r.json(); addLoading.value = false; if (r.ok) { showToast('已添加: ' + d.nickname); showAddModal.value = false; addForm.api_key = ''; addForm.access_token = ''; addForm.uid = ''; addForm.nickname = ''; await loadAccounts(); } else { addError.value = d.detail || '添加失败'; } }
         async function deleteAccount(uid) { if (!confirm('确认删除此账户？')) return; await api('/api/accounts/' + uid + '/delete', { method: 'POST' }); showToast('已删除'); await loadAccounts(); }
         async function querySingleQuota(account) { quotaLoading[account.uid] = true; const d = await api('/api/quota/' + account.uid, { method: 'POST' }); quotaLoading[account.uid] = false; if (d && d.success && d.packages) { let total = 0, remain = 0; d.packages.forEach(p => { total += p.total || 0; remain += p.remain || 0; }); account.quota_total = total; account.quota_remaining = remain; } showToast('配额已查询'); }
         const QUOTA_CACHE_KEY = 'ag_quota_cache';
-        function loadQuotaCache() {
+        async function loadQuotaCache() {
+          // 第一步：尝试从服务器获取配额
+          try {
+            const d = await api('/api/proxy/quota');
+            if (d && d.success && d.summary && d.accounts && d.accounts.length > 0) {
+              quotaSummary.totalRemain = d.summary.totalRemain || 0;
+              quotaSummary.totalCredits = d.summary.totalCredits || 0;
+              quotaSummary.accountCount = d.summary.accountCount || 0;
+              quotaAccounts.value = d.accounts.map(a => ({ ...a, expanded: false }));
+              saveQuotaCache();
+              return;
+            }
+          } catch (e) { }
+          // 第二步：服务器不可用，使用本地缓存
           try { const raw = localStorage.getItem(QUOTA_CACHE_KEY); if (raw) { const cached = JSON.parse(raw); if (cached.summary) { quotaSummary.totalRemain = cached.summary.totalRemain || 0; quotaSummary.totalCredits = cached.summary.totalCredits || 0; quotaSummary.accountCount = cached.summary.accountCount || 0; } if (cached.accounts) { quotaAccounts.value = cached.accounts.map(a => ({ ...a, expanded: false })); } } } catch (e) { }
         }
         function saveQuotaCache() {
           try { localStorage.setItem(QUOTA_CACHE_KEY, JSON.stringify({ summary: { totalRemain: quotaSummary.totalRemain, totalCredits: quotaSummary.totalCredits, accountCount: quotaSummary.accountCount }, accounts: quotaAccounts.value, ts: Date.now() })); } catch (e) { }
         }
-        async function queryAllQuota() { quotaAllLoading.value = true; const cached = quotaAccounts.value; const expandedMap = new Map(); const cachedOrder = cached.map(a => a.name); cached.forEach(a => expandedMap.set(a.name, a.expanded)); const d = await api('/api/quota/all', { method: 'POST' }); quotaAllLoading.value = false; if (d) { quotaSummary.totalRemain = d.total_remaining || 0; quotaSummary.totalCredits = d.total_credits || 0; quotaSummary.accountCount = d.account_count || 0; const map = new Map(); (d.details || []).forEach(a => { if (!a.success || !a.packages) return; const list = a.packages.map(p => { const t = p.total || 0, r = p.remain || 0, pct = t > 0 ? (r / t * 100) : 0; const tm = { '免费': 'bg-secondary-container text-on-secondary-container', '付费': 'bg-surface-container text-primary', '体验': 'bg-surface-container-low border border-outline-variant' }; let dl = -1; if (p.cycle_end) { try { const ed = new Date(p.cycle_end.replace(' ','T')+'Z'); dl = Math.ceil((ed - Date.now())/86400000); } catch(e){} } return { account: a.nickname, package: p.name, typeLabel: p.type || '?', typeClass: tm[p.type] || 'bg-surface-container text-secondary', remain: r, total: t, remainPercent: pct, cycle: p.cycle_start ? p.cycle_start.substring(0, 7) : '--', daysLeft: dl }; }); const totalQuota = list.reduce((s, p) => s + p.total, 0); const totalRemain = list.reduce((s, p) => s + p.remain, 0); const wasExpanded = expandedMap.get(a.nickname) || false; map.set(a.nickname, { name: a.nickname, expanded: wasExpanded, totalQuota, totalRemain, remainPercent: totalQuota > 0 ? (totalRemain / totalQuota * 100) : 0, packages: list }); }); const ordered = []; cachedOrder.forEach(name => { const item = map.get(name); if (item) ordered.push(item); }); map.forEach((v, k) => { if (!cachedOrder.includes(k)) ordered.push(v); }); quotaAccounts.value = ordered; saveQuotaCache(); showToast('完成: ' + quotaSummary.accountCount + ' 个账户'); } } function refreshQuota() { queryAllQuota(); }
+        async function queryAllQuota() { quotaAllLoading.value = true; const cached = quotaAccounts.value; const expandedMap = new Map(); const cachedOrder = cached.map(a => a.name); cached.forEach(a => expandedMap.set(a.name, a.expanded));
+          // 第一步：尝试从代理服务器获取配额（后端维护的数据）
+          let d = await api('/api/proxy/quota');
+          let source = 'server';
+          // 第二步：如果服务器数据不可用，回退到传统 /api/quota/all
+          if (!d || !d.success || !d.accounts || d.accounts.length === 0) {
+            d = await api('/api/quota/all', { method: 'POST' });
+            source = 'legacy';
+          }
+          quotaAllLoading.value = false;
+          if (d) {
+            if (source === 'server' && d.summary) {
+              // 使用服务器配额数据
+              quotaSummary.totalRemain = d.summary.totalRemain || 0;
+              quotaSummary.totalCredits = d.summary.totalCredits || 0;
+              quotaSummary.accountCount = d.summary.accountCount || 0;
+              const map = new Map();
+              (d.accounts || []).forEach(a => {
+                const wasExpanded = expandedMap.get(a.name) || false;
+                map.set(a.name, { name: a.name, expanded: wasExpanded, totalQuota: a.totalQuota || 0, totalRemain: a.totalRemain || 0, remainPercent: a.remainPercent || 0, packages: (a.packages || []).map(p => ({ ...p, typeClass: ({ '免费': 'bg-secondary-container text-on-secondary-container', '付费': 'bg-surface-container text-primary', '体验': 'bg-surface-container-low border border-outline-variant' })[p.type] || 'bg-surface-container text-secondary' })) });
+              });
+              const ordered = []; cachedOrder.forEach(name => { const item = map.get(name); if (item) ordered.push(item); }); map.forEach((v, k) => { if (!cachedOrder.includes(k)) ordered.push(v); }); quotaAccounts.value = ordered;
+            } else if (source === 'legacy') {
+              // 回退：使用传统配额接口
+              quotaSummary.totalRemain = d.total_remaining || 0; quotaSummary.totalCredits = d.total_credits || 0; quotaSummary.accountCount = d.account_count || 0; const map = new Map(); (d.details || []).forEach(a => { if (!a.success || !a.packages) return; const list = a.packages.map(p => { const t = p.total || 0, r = p.remain || 0, pct = t > 0 ? (r / t * 100) : 0; const tm = { '免费': 'bg-secondary-container text-on-secondary-container', '付费': 'bg-surface-container text-primary', '体验': 'bg-surface-container-low border border-outline-variant' }; let dl = -1; if (p.cycle_end) { try { const ed = new Date(p.cycle_end.replace(' ','T')+'Z'); dl = Math.ceil((ed - Date.now())/86400000); } catch(e){} } return { account: a.nickname, package: p.name, typeLabel: p.type || '?', typeClass: tm[p.type] || 'bg-surface-container text-secondary', remain: r, total: t, remainPercent: pct, cycle: p.cycle_start ? p.cycle_start.substring(0, 7) : '--', daysLeft: dl }; }); const totalQuota = list.reduce((s, p) => s + p.total, 0); const totalRemain = list.reduce((s, p) => s + p.remain, 0); const wasExpanded = expandedMap.get(a.nickname) || false; map.set(a.nickname, { name: a.nickname, expanded: wasExpanded, totalQuota, totalRemain, remainPercent: totalQuota > 0 ? (totalRemain / totalQuota * 100) : 0, packages: list }); }); const ordered = []; cachedOrder.forEach(name => { const item = map.get(name); if (item) ordered.push(item); }); map.forEach((v, k) => { if (!cachedOrder.includes(k)) ordered.push(v); }); quotaAccounts.value = ordered;
+            }
+            saveQuotaCache();
+            showToast('完成: ' + quotaSummary.accountCount + ' 个账户 (' + source + ')');
+          }
+        } function refreshQuota() { queryAllQuota(); }
         async function toggleProxy() { proxyLoading.value = true; const body = proxyInfo.running ? null : JSON.stringify({ strategy: proxyStrategy.value }); const opts = { method: 'POST' }; if (body) opts.body = body; await api(proxyInfo.running ? '/api/proxy/stop' : '/api/proxy/start', opts); proxyLoading.value = false; await loadProxyStatus(); showToast(proxyInfo.running ? '代理已启动' : '代理已停止'); }
         async function openImportKeysModal() {
           importKeysLoading.value = true;
@@ -848,7 +979,7 @@ async function downloadExport() { if (selectedAccounts.value.length === 0) retur
         async function saveSettings() { const r = await api('/api/settings', { method: 'POST', body: JSON.stringify({ webPort: settings.webPort, proxyPort: settings.proxyPort, httpProxy: settings.httpProxy, autoStartProxy: settings.autoStartProxy, checkinConcurrency: settings.checkinConcurrency }) }); if (r && r.success) { showToast('设置已保存（重启生效）'); } else { showToast('保存失败', 'error'); } }
         async function loadSettings() { const d = await api('/api/settings'); if (d) { settings.webPort = d.webPort || 8866; settings.proxyPort = d.proxyPort || 8867; settings.httpProxy = d.httpProxy || ''; settings.autoStartProxy = d.autoStartProxy !== undefined ? d.autoStartProxy : true; settings.checkinConcurrency = d.checkinConcurrency || 5; } }
         onMounted(async () => { loadQuotaCache(); await loadSettings(); await loadAccounts(); await loadProxyStatus(); });
-        return { currentPage, activePageLabel, navItems, now, port, toast, showToast, fmtNum, stats, accounts, selectedAccounts, isAllSelected, toggleSelectAll, selectAllAccounts, invertSelection, showAddModal, addMethod, addMethods, addForm, addLoading, addError, addAccount, deleteAccount, quotaLoading, checkinLoading, querySingleQuota, checkinSingle, checkinAllLoading, lastCheckin, checkinLogs, checkinAll, quotaAllLoading, quotaSummary, quotaAccounts, queryAllQuota, refreshQuota, proxyInfo, proxyLoading, proxyStrategy, strategyOptions, strategyLabel, showStrategyDropdown, selectStrategy, hideStrategyDropdown, toggleProxy, showImportKeysModal, importKeysAccounts, importKeysLoading, importAllSelected, openImportKeysModal, toggleSelectAllImport, importSelectedKeys, deleteProxyKey, proxyKeyLoading, toggleProxyKey, settings, saveSettings, showImportModal, importMode, importModes, importFileName, importText, importPreview, importError, importResult, importLoading, openImportModal, closeImportModal, onImportFileChange, parseImportText, submitImport, showExportModal, exportLoading, exportContent, openExportModal, copyExportToClipboard, downloadExport };
+        return { currentPage, activePageLabel, navItems, now, port, toast, showToast, fmtNum, stats, accounts, selectedAccounts, isAllSelected, toggleSelectAll, selectAllAccounts, invertSelection, showAddModal, addMethod, addMethods, addForm, addLoading, addError, addAccount, deleteAccount, quotaLoading, checkinLoading, querySingleQuota, checkinSingle, checkinAllLoading, lastCheckin, checkinLogs, checkinAll, quotaAllLoading, quotaSummary, quotaAccounts, queryAllQuota, refreshQuota, proxyInfo, proxyLoading, proxyStrategy, strategyOptions, strategyLabel, showStrategyDropdown, selectStrategy, hideStrategyDropdown, toggleProxy, showImportKeysModal, importKeysAccounts, importKeysLoading, importAllSelected, openImportKeysModal, toggleSelectAllImport, importSelectedKeys, deleteProxyKey, proxyKeyLoading, toggleProxyKey, settings, saveSettings, showImportModal, importMode, importModes, importFileName, importText, importPreview, importError, importResult, importLoading, openImportModal, closeImportModal, onImportFileChange, parseImportText, submitImport, showExportModal, exportLoading, exportContent, openExportModal, copyExportToClipboard, downloadExport, requestLogs, requestLogsLoading, logsSince, strategyLabelMap, formatLogTime, loadRequestLogs, clearLogs };
       }
     }).mount('#app');
   </script>

@@ -7,7 +7,7 @@ import threading
 import logging
 
 from src.modules.proxy_server import ProxyServer, ProxyDatabase
-from src.utils.store import load_accounts
+from src.utils.store import load_accounts, load_setting
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["proxy"])
@@ -44,7 +44,7 @@ def proxy_status():
     active_keys = [k for k in keys if k.get("status") == "active"]
     return {
         "running": _proxy_server is not None and _proxy_server.is_running,
-        "port": 8867,
+        "port": int(load_setting("proxyPort", "8867")),
         "total_keys": len(keys),
         "active_keys": len(active_keys),
         "exhausted_keys": len(keys) - len(active_keys),
@@ -70,10 +70,11 @@ def proxy_start(req: StartProxyRequest = StartProxyRequest()):
     if _proxy_server and _proxy_server.is_running:
         return {"success": True, "message": "Proxy already running"}
     try:
-        _proxy_server = ProxyServer(port=8867, default_key_mode=req.strategy)
+        port = int(load_setting("proxyPort", "8867"))
+        _proxy_server = ProxyServer(port=port, default_key_mode=req.strategy)
         _proxy_thread = threading.Thread(target=_proxy_server.start, daemon=True)
         _proxy_thread.start()
-        return {"success": True, "message": "Proxy started on port 8867"}
+        return {"success": True, "message": f"Proxy started on port {port}"}
     except Exception as e:
         return {"success": False, "error": str(e)}
 
@@ -211,3 +212,103 @@ def proxy_import_from_accounts(req: ImportFromAccountsRequest):
         imported += 1
 
     return {"success": True, "imported": imported, "skipped": skipped}
+
+# ─── 配额接口：返回代理 Key 池的配额数据 ───
+@router.get("/proxy/quota")
+def proxy_quota():
+    """获取代理 Key 池的配额数据（优先使用后端数据）"""
+    db = _get_db()
+    keys = db.get_upstream_keys()
+
+    accounts = []
+    total_remaining = 0.0
+    total_credits = 0.0
+
+    for k in keys:
+        packages = k.get("packages", []) or []
+        key_total = 0.0
+        key_remain = 0.0
+
+        pkg_list = []
+        for pkg in packages:
+            if not isinstance(pkg, dict):
+                continue
+            remain = float(pkg.get("cycle_remain", 0))
+            total = float(pkg.get("cycle_size", 0))
+            if total <= 0:
+                continue
+            key_total += total
+            key_remain += remain
+
+            # 计算过期天数
+            days_left = -1
+            cycle_end = str(pkg.get("cycle_end", ""))
+            if cycle_end:
+                try:
+                    from datetime import datetime
+                    ed = datetime.strptime(cycle_end.replace("T", " ").replace("Z", ""), "%Y-%m-%d %H:%M:%S")
+                    days_left = max(0, (ed - datetime.now()).days)
+                except Exception:
+                    try:
+                        ed = datetime.fromisoformat(cycle_end.replace("Z", "+00:00"))
+                        days_left = max(0, (ed - datetime.now()).days)
+                    except Exception:
+                        pass
+
+            pkg_list.append({
+                "name": pkg.get("package_name", pkg.get("name", "未知套餐")),
+                "type": pkg.get("type", pkg.get("type_label", "?")),
+                "remain": remain,
+                "total": total,
+                "remainPercent": round(remain / total * 100, 1) if total > 0 else 0,
+                "cycle": pkg.get("cycle_start", "")[:7] if pkg.get("cycle_start") else "--",
+                "daysLeft": days_left,
+            })
+
+        # 从 points 字符串补充
+        pts = k.get("points", "")
+        if pts and "/" in pts and key_total == 0:
+            try:
+                parts = pts.split("/")
+                key_remain = float(parts[0])
+                key_total = float(parts[1])
+            except (ValueError, IndexError):
+                pass
+
+        if key_total > 0:
+            total_remaining += key_remain
+            total_credits += key_total
+
+        label = k.get("label", k.get("key_id", "")[:8])
+        accounts.append({
+            "name": label,
+            "totalRemain": key_remain,
+            "totalQuota": key_total,
+            "remainPercent": round(key_remain / key_total * 100, 1) if key_total > 0 else 0,
+            "packages": pkg_list,
+            "status": k.get("status", "active"),
+        })
+
+    return {
+        "success": True,
+        "source": "server",
+        "summary": {
+            "totalRemain": total_remaining,
+            "totalCredits": total_credits,
+            "accountCount": len(accounts),
+        },
+        "accounts": accounts,
+    }
+
+
+# ─── 请求日志接口 ───
+@router.get("/proxy/logs")
+def proxy_logs(since: float = 0, limit: int = 200):
+    """获取代理请求日志（最新的在前）"""
+    db = _get_db()
+    logs = db.get_request_logs(since=since, limit=limit, reverse=True)
+    return {
+        "success": True,
+        "total": len(logs),
+        "logs": logs,
+    }

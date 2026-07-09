@@ -485,11 +485,19 @@ class RequestLog:
     main_key_id: str = ""
     main_key_label: str = ""
     model: str = ""
-    event: str = ""        # start / end
+    event: str = ""        # request / start / attempt / end / auth_fail / error
+    attempt: int = 1       # 第几次尝试（1=第一次，2=第二次换Key...）
+    key_mode: int = 1      # 使用的策略 1=专一 2=临期优先 3=轮询 4=会话亲和
+    status: str = ""       # success / failed / retrying
     prompt_tokens: int = 0
     completion_tokens: int = 0
+    total_tokens: int = 0
+    credit: float = 0.0    # 消耗的积分
     duration_ms: int = 0
+    first_token_ms: int = 0  # 首字时间
     error: str = ""
+    upstream_status: int = 0  # 上游HTTP状态码
+    request_path: str = ""    # 请求路径""
 
 
 class ProxyDatabase:
@@ -1030,11 +1038,20 @@ class ProxyDatabase:
                 self._data["request_logs"] = logs[-1000:]
             self._save()
 
-    def get_request_logs(self, since: float = 0, limit: int = 200) -> list[dict]:
+    def get_request_logs(self, since: float = 0, limit: int = 200, reverse: bool = True) -> list[dict]:
+        """获取请求日志
+
+        Args:
+            since: 只返回此时间戳之后的日志（0=全部）
+            limit: 最大返回条数
+            reverse: True=最新的在前，False=最早的在前
+        """
         with self._lock:
             logs = self._data.get("request_logs", [])
             if since:
                 logs = [l for l in logs if l.get("timestamp", 0) > since]
+            if reverse:
+                return list(reversed(logs[-limit:]))
             return logs[-limit:]
 
 
@@ -1661,11 +1678,14 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
     def _add_log(self, event: str, sub_key: dict = None, upstream_key: dict = None,
                  model: str = "", duration_ms: int = 0, error: str = "",
                  prompt_tokens: int = 0, completion_tokens: int = 0,
-                 upstream_status: int = 0, request_path: str = ""):
+                 upstream_status: int = 0, request_path: str = "",
+                 attempt: int = 1, key_mode: int = 1, status: str = "",
+                 total_tokens: int = 0, credit: float = 0.0,
+                 first_token_ms: int = 0):
         """写入请求日志到 DB（统一入口）
 
         Args:
-            event: 事件类型（auth_fail / upstream_error / upstream_429 / start / end / error / request）
+            event: 事件类型（auth_fail / upstream_error / upstream_429 / start / end / error / request / attempt）
             sub_key: 子Key dict（可选）
             upstream_key: 上游Key dict（可选）
             model: 模型名
@@ -1675,6 +1695,12 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             completion_tokens: completion token数
             upstream_status: 上游返回的HTTP状态码
             request_path: 请求路径
+            attempt: 第几次尝试
+            key_mode: 调用策略
+            status: success / failed / retrying
+            total_tokens: 总 token 数
+            credit: 消耗积分
+            first_token_ms: 首字时间
         """
         self.db.add_request_log({
             "timestamp": time.time(),
@@ -1684,9 +1710,15 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             "main_key_label": upstream_key.get("label", "") if upstream_key else "",
             "model": model,
             "event": event,
+            "attempt": attempt,
+            "key_mode": key_mode,
+            "status": status,
             "duration_ms": duration_ms,
             "prompt_tokens": prompt_tokens,
             "completion_tokens": completion_tokens,
+            "total_tokens": total_tokens,
+            "credit": credit,
+            "first_token_ms": first_token_ms,
             "error": error,
             "upstream_status": upstream_status,
             "request_path": request_path,
@@ -1702,12 +1734,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             logger.info(f"📨 收到请求  {method} {path} auth={auth_hint} client={client_ip}")
         else:
             logger.info(f"📨 收到请求  {method} {path} auth={auth_hint}")
-        # 同时写入 DB 日志，这样在 UI 的使用日志里也能看到每个请求
-        self._add_log(
-            event="request",
-            error=f"{method} {path} auth={auth_hint}",
-            request_path=path,
-        )
+        # 不在 DB 里写 request 日志了，最终只保留一条完整日志
 
     def _send_json(self, status: int, data: dict, extra_headers: dict = None):
         """发送 JSON 响应
@@ -1905,28 +1932,27 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                 client_ip = self._get_client_ip()
                 error_detail = "无效的 API Key"
                 logger.warning(f"[认证] {error_detail}, client={client_ip}")
-                self._add_log(event="auth_fail", error=error_detail, request_path="/v1/chat/completions")
+                self._add_log(event="auth_fail", error=error_detail, request_path="/v1/chat/completions", status="failed")
                 self._send_json(401, {"error": {"message": "Invalid API key", "type": "authentication_error"}})
                 return
             # 本地模式：不返回 401/403！WorkBuddy 客户端收到 401 会触发重新登录。
             # 用 503 (Service Unavailable) 代替，表示"服务暂时不可用"，不触发认证流程。
             error_detail = "请求缺少 Bearer token"
             logger.warning(f"[认证] {error_detail}，返回503")
-            self._add_log(event="auth_fail", error=error_detail, request_path="/v1/chat/completions")
+            self._add_log(event="auth_fail", error=error_detail, request_path="/v1/chat/completions", status="failed")
             self._send_json(503, {"error": {"message": "Service temporarily unavailable", "type": "server_error"}})
             return
 
         is_passthrough = sub_key.get("key_id") == "_passthrough_"
         if is_passthrough:
             logger.info(f"[透传] chat请求使用透传模式，自动选上游Key")
-            self._add_log(event="request", sub_key=sub_key, error="透传模式:自动选上游Key", request_path="/v1/chat/completions")
 
         # 2. 检查子 Key 状态（透传模式跳过）
         if not is_passthrough:
             if not sub_key.get("is_active", True):
                 error_detail = f"子Key已禁用, sub={sub_key.get('label', sub_key.get('key_id', ''))}"
                 logger.warning(f"[禁用] {error_detail}")
-                self._add_log(event="auth_fail", sub_key=sub_key, error=error_detail, request_path="/v1/chat/completions")
+                self._add_log(event="auth_fail", sub_key=sub_key, error=error_detail, request_path="/v1/chat/completions", status="failed")
                 self._send_json(503, {"error": {"message": "Service temporarily unavailable", "type": "server_error"}})
                 return
 
@@ -1935,7 +1961,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             if max_usage > 0 and used_count >= max_usage:
                 error_detail = f"子Key使用次数超限, sub={sub_key.get('label', '')} used={used_count}/{max_usage}"
                 logger.warning(f"[限流] {error_detail}")
-                self._add_log(event="auth_fail", sub_key=sub_key, error=error_detail, request_path="/v1/chat/completions")
+                self._add_log(event="auth_fail", sub_key=sub_key, error=error_detail, request_path="/v1/chat/completions", status="failed")
                 self._send_json(429, {"error": {"message": "Usage limit exceeded", "type": "rate_limit"}})
                 return
 
@@ -1945,7 +1971,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             if content_length > 50 * 1024 * 1024:
                 logger.warning(f"[安全] 请求体过大: {content_length} bytes，拒绝")
                 self._add_log(event="error", sub_key=sub_key, error=f"请求体过大: {content_length} bytes",
-                              request_path="/v1/chat/completions")
+                              request_path="/v1/chat/completions", status="failed")
                 self._send_json(413, {"error": {"message": "Request body too large (max 50MB)", "type": "invalid_request"}})
                 return
             body = self.rfile.read(content_length)
@@ -2011,7 +2037,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                 # 用 503 代替 403，避免触发 WorkBuddy 认证流程
                 error_detail = f"模型 {model} 不允许, 允许: {allowed_models}"
                 logger.warning(f"[模型] {error_detail}")
-                self._add_log(event="error", sub_key=sub_key, model=model, error=error_detail, request_path="/v1/chat/completions")
+                self._add_log(event="error", sub_key=sub_key, model=model, error=error_detail, request_path="/v1/chat/completions", status="failed")
                 self._send_json(503, {"error": {"message": f"Model {model} not available", "type": "server_error"}})
                 return
 
@@ -2188,8 +2214,6 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                             last_cooldown_secs = cooldown_secs
                             error_detail = f"Key {label} 模型 {model} 被限流(429)，冷却 {cooldown_secs}s: {resp_body[:200]}"
                         logger.warning(f"[重试] {error_detail}")
-                        self._add_log(event="upstream_429", sub_key=sub_key, upstream_key=upstream_key,
-                                      model=model, error=error_detail, upstream_status=429)
                     elif resp.status_code == 401:
                         # 区分：401 返回 JSON（真正的认证失败） vs 返回 HTML（网关层拦截）
                         is_html_response = "<html>" in resp_body.lower() or "<!doctype" in resp_body.lower()
@@ -2199,7 +2223,8 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                             error_detail = f"Key {label} 401 返回 HTML（网关拦截）: {resp_body[:200]}"
                             logger.warning(f"[拒绝] {error_detail}")
                             self._add_log(event="upstream_error", sub_key=sub_key, upstream_key=upstream_key,
-                                          model=model, error=error_detail, upstream_status=401)
+                                          model=model, error=error_detail, upstream_status=401,
+                                          attempt=attempt, key_mode=key_mode, status="failed")
                             self._send_json(502, {
                                 "error": {
                                     "message": "请求被上游网关拦截，可能是上下文过长或请求格式异常。请尝试新开对话。",
@@ -2213,13 +2238,9 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                         # mark_key_cooldown 会导致正常 Key 被误冷却 10 秒
                         error_detail = f"Key {label} 认证失败(401): {resp_body[:200]}"
                         logger.warning(f"[重试] {error_detail}")
-                        self._add_log(event="upstream_error", sub_key=sub_key, upstream_key=upstream_key,
-                                      model=model, error=error_detail, upstream_status=401)
                     elif resp.status_code == 400 and not resp_body.strip():
                         # 400 空 body：上游临时问题，不判定为上下文过长，直接换 Key 重试
                         logger.warning(f"[重试] Key {label} 上游返回 400 空 body，换 Key 重试")
-                        self._add_log(event="upstream_error", sub_key=sub_key, upstream_key=upstream_key,
-                                      model=model, error="上游返回400空body", upstream_status=400)
                         last_error = json.dumps({"error": {"message": "上游返回为空，请重试", "type": "upstream_empty_response"}})
                         last_error_status = 502
                     elif resp.status_code == 400 and ("input length too long" in resp_body or '"code":11115' in resp_body):
@@ -2235,7 +2256,8 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                         error_detail = f"Key {label} 上游返回 400 input length too long"
                         logger.warning(f"[拒绝] {error_detail}")
                         self._add_log(event="end", sub_key=sub_key, upstream_key=upstream_key,
-                                      model=model, error="context_too_long")
+                                      model=model, error="context_too_long",
+                                      attempt=attempt, key_mode=key_mode, status="failed")
                         self._send_json(400, {
                             "error": {
                                 "message": "当前对话上下文过长，超出模型限制。请新开一个对话继续。",
@@ -2248,8 +2270,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                         if resp.status_code == 403 and '"code":11140' in resp_body:
                             error_detail = f"Key {label} 被风控(403/11140): {resp_body[:200]}"
                             logger.warning(f"[风控] {error_detail}")
-                            self._add_log(event="upstream_error", sub_key=sub_key, upstream_key=upstream_key,
-                                          model=model, error=error_detail, upstream_status=403)
+                            # 风控日志已移除，最终日志会包含
                             # 标记为 abnormal，不再参与轮询
                             self.router.mark_key_abnormal(key_id)
                         elif resp.status_code == 400:
@@ -2282,16 +2303,13 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                                           f"messages={msg_count}, has_image={has_image}, "
                                           f"stream_options_removed={_skip_stream_options}")
                             error_detail = f"Key {label} 上游返回 400: {resp_body[:200]}"
-                            # 记录到 DB 日志面板，方便用户排查原始 400 错误
-                            self._add_log(event="upstream_error", sub_key=sub_key, upstream_key=upstream_key,
-                                          model=model, error=error_detail, upstream_status=400)
+                            # 400 错误信息保留在最终日志中
                             # 11133 可能是上游节点偶发故障（不是参数问题），换 Key 重试通常能解决
                             # 不冷却该 Key（避免误伤），只标记 tried 换下一个 Key
                         else:
                             error_detail = f"Key {label} 上游返回 {resp.status_code}: {resp_body[:200]}"
                             logger.warning(f"[重试] {error_detail}")
-                            self._add_log(event="upstream_error", sub_key=sub_key, upstream_key=upstream_key,
-                                          model=model, error=error_detail, upstream_status=resp.status_code)
+                            # 上游错误信息保留在最终日志中
 
                     # ─── 故障转移决策（优化项 #7）───
                     # FATAL 已在上面 return，此处只处理 RETRY_SAME 和 SWITCH_KEY
@@ -2328,7 +2346,8 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                 start_time = time.time()
                 should_retry, error_msg = self._forward_stream_response(
                     resp, upstream_key, sub_key, model, start_time,
-                    client_wants_stream, key_id, request_data
+                    client_wants_stream, key_id, request_data,
+                    attempt=attempt, key_mode=key_mode
                 )
                 self.router.decrement_concurrent(key_id)
 
@@ -2348,8 +2367,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                 self.router.decrement_concurrent(key_id)
                 error_detail = f"Key {label} 转发异常: {type(e).__name__}: {e}"
                 logger.error(f"[重试] {error_detail}")
-                self._add_log(event="error", sub_key=sub_key, upstream_key=upstream_key,
-                              model=model, error=error_detail)
+                # 异常信息保留在最终日志中
 
                 # 故障转移分类：超时/连接错误 → RETRY_SAME（优化项 #7）
                 if isinstance(e, (requests.Timeout, requests.ConnectionError, ConnectionError, socket.timeout, OSError)):
@@ -2371,9 +2389,18 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
 
         # ─── 所有重试都失败 ───
         if last_error:
-            error_detail = f"所有重试失败(尝试了{len(tried_key_ids)}个Key): {last_error[:300] if isinstance(last_error, str) else last_error[:300]}"
-            logger.error(f"[失败] {error_detail}")
-            self._add_log(event="error", sub_key=sub_key, model=model, error=error_detail)
+            # 收集尝试过的 Key 标签，方便排查
+            tried_labels = []
+            for kid in tried_key_ids:
+                for k in (self.router._cached_upstream_keys or []):
+                    if k.get("key_id") == kid:
+                        tried_labels.append(k.get("label", kid[:8]))
+                        break
+            tried_info = ", ".join(tried_labels) if tried_labels else "未知"
+            error_detail = f"尝试了{len(tried_key_ids)}个Key({tried_info})均失败"
+            logger.error(f"[失败] {error_detail}: {last_error[:300] if isinstance(last_error, str) else str(last_error)[:300]}")
+            self._add_log(event="error", sub_key=sub_key, model=model, error=error_detail,
+                          status="failed", attempt=len(tried_key_ids) or 1)
             # 优化项 #9：429 附带 Retry-After 头
             if last_error_status == 429 and last_cooldown_secs > 0:
                 self.send_response(last_error_status)
@@ -2391,7 +2418,8 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
         else:
             error_detail = "无可用的上游 Key（Key池为空或全部耗尽/冷却中）"
             logger.error(f"[失败] {error_detail}")
-            self._add_log(event="error", sub_key=sub_key, model=model, error=error_detail)
+            self._add_log(event="error", sub_key=sub_key, model=model, error=error_detail,
+                          status="failed", attempt=len(tried_key_ids) or 1)
             self._send_json(503, {"error": {"message": "No available upstream keys", "type": "server_error"}})
 
     def _compress_context_with_ai(self, request_data: dict, upstream_key: dict,
@@ -2588,7 +2616,8 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             pass
 
     def _forward_stream_response(self, resp, upstream_key, sub_key, model, start_time,
-                                  client_wants_stream, key_id, request_data=None):
+                                  client_wants_stream, key_id, request_data=None,
+                                  attempt=1, key_mode=1):
         """处理上游 200 响应的流式/非流式转发
 
         优化项：
@@ -2658,7 +2687,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                 })
                 self._add_log(event="end", sub_key=sub_key, upstream_key=upstream_key,
                               model=model, duration_ms=int((time.time() - start_time) * 1000),
-                              error="context_too_long")
+                              error="context_too_long", status="failed")
                 return (False, "")
             if error_type == "stream_error":
                 # 首 chunk 包含错误事件，换 Key 重试
@@ -2830,6 +2859,8 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
         duration_ms = int((time.time() - start_time) * 1000)
         logger.debug(f"[代理] 请求完成, 总耗时 {duration_ms}ms, 首字 {first_token_ms}ms")
 
+        attempt_val = attempt
+        key_mode_val = key_mode
         def _update_stats():
             try:
                 prompt_t = last_usage.get("prompt_tokens", 0)
@@ -2863,7 +2894,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                         credits=credit,
                     )
 
-                # 写请求日志（含首字时间，优化项 #13）
+                # 写最终请求日志（一条请求一条记录）
                 self.db.add_request_log({
                     "timestamp": time.time(),
                     "sub_key_id": sub_key_id,
@@ -2872,9 +2903,14 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                     "main_key_label": upstream_key.get("label", ""),
                     "model": model,
                     "event": "end",
+                    "status": "success",
+                    "attempt": attempt_val,
+                    "key_mode": key_mode_val,
                     "duration_ms": duration_ms,
                     "prompt_tokens": last_usage.get("prompt_tokens", 0),
                     "completion_tokens": last_usage.get("completion_tokens", 0),
+                    "total_tokens": last_usage.get("total_tokens", 0),
+                    "credit": last_usage.get("credit", 0.0),
                     "first_token_ms": first_token_ms or 0,
                 })
 
