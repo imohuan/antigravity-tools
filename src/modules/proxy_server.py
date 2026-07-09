@@ -1196,50 +1196,49 @@ class ProxyRouter:
             return chosen
 
         elif key_mode == 2:
-            # 临期优先：找到所有 Key 中最快过期且有剩余积分的那组，优先用那个 Key
-            # 排序依据：每个 Key 的 packages 中最快到期的 cycle_end 时间
-            # 例如：KeyA 有 150分(明天过期) + 5000分(下月过期)，KeyB 有 3000分(后天过期)
-            #   → KeyA 排前面（150分明天过期最紧急）
-            # 负载感知：并发计数作为次级排序键（优化项 #6）
-            def _earliest_expiring_time(k: dict) -> float:
-                """返回该 Key 最快过期且有剩余积分的积分组的过期时间戳
-                越小越优先（越快过期），没有过期信息的排最后
-                """
-                packages = k.get("packages", [])
-                earliest = None
-                for pkg in packages:
-                    cycle_remain = 0
-                    cycle_end = ""
-                    if isinstance(pkg, dict):
-                        cycle_remain = float(pkg.get("cycle_remain", 0))
-                        cycle_end = str(pkg.get("cycle_end", ""))
-                    if cycle_remain <= 0:
-                        continue  # 跳过已耗尽的组
-                    if not cycle_end:
-                        continue  # 没有过期时间，跳过
-                    # 解析过期时间
-                    try:
-                        from datetime import datetime as _dt
-                        if "T" in cycle_end:
-                            # ISO 8601 格式: 2026-06-30T23:59:59Z
-                            dt = _dt.fromisoformat(cycle_end.replace("Z", "+00:00"))
-                            ts = dt.timestamp()
-                        else:
-                            try:
-                                ts = float(cycle_end)
-                            except ValueError:
-                                # 空格分隔格式: 2026-06-30 23:59:59
-                                dt = _dt.strptime(cycle_end, "%Y-%m-%d %H:%M:%S")
-                                ts = dt.timestamp()
-                        if earliest is None or ts < earliest:
-                            earliest = ts
-                    except (ValueError, TypeError):
-                        continue
-                # 有过期信息的返回最早时间，没有的排到最后
-                return earliest if earliest is not None else float('inf')
+            # Urgency priority: rank by "urgency score"
+            # urgency = sum(remaining_credits / days_left) for each package
+            # Keys with more credits expiring sooner get higher urgency
+            # Example: KeyA 150cr tomorrow + 5000cr next month -> urgency = 150/1 + 5000/31 = 311
+            #          KeyB 3000cr day after tomorrow -> urgency = 3000/2 = 1500 -> KeyB first
+            # Keys with no valid packages go last
+            # Load-aware: concurrent count as secondary sort key
+            from datetime import datetime as _dt
+            now_ts = _dt.now().timestamp()
 
-            # 临期时间为主排序键，并发计数为次级排序键（负载感知 #6）
-            available.sort(key=lambda k: (_earliest_expiring_time(k), _concurrent_count(k)))
+            def _parse_end_ts(cycle_end):
+                try:
+                    if "T" in cycle_end:
+                        return _dt.fromisoformat(cycle_end.replace("Z", "+00:00")).timestamp()
+                    return _dt.strptime(cycle_end, "%Y-%m-%d %H:%M:%S").timestamp()
+                except (ValueError, TypeError):
+                    try:
+                        return float(cycle_end)
+                    except (ValueError, TypeError):
+                        return float("inf")
+
+            def _urgency_score(k):
+                packages = k.get("packages", [])
+                total_urgency = 0.0
+                has_valid = False
+                for pkg in packages:
+                    if not isinstance(pkg, dict):
+                        continue
+                    cycle_remain = float(pkg.get("cycle_remain", 0))
+                    cycle_end = str(pkg.get("cycle_end", ""))
+                    if cycle_remain <= 0 or not cycle_end:
+                        continue
+                    end_ts = _parse_end_ts(cycle_end)
+                    if end_ts == float("inf") or end_ts <= now_ts:
+                        continue
+                    has_valid = True
+                    days_left = max(1, (end_ts - now_ts) / 86400.0)
+                    total_urgency += cycle_remain / days_left
+                if has_valid:
+                    return -total_urgency  # higher urgency = lower sort value
+                return float("inf")
+
+            available.sort(key=lambda k: (_urgency_score(k), _concurrent_count(k)))
             return available[0]
 
         elif key_mode == 3:
@@ -2030,7 +2029,10 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
         _skip_stream_options = False  # 某些模型不支持 stream_options，检测到 400 后去掉重试
         _ctx_compressed = [False]    # 上下文是否已压缩过（用 list 包装以便在嵌套函数中修改）
         allowed_key_ids = sub_key.get("allowed_key_ids", [])
-        key_mode = sub_key.get("key_mode", 1)
+        # 子 Key 未单独设置策略时，使用全局默认策略
+        global_default = getattr(ProxyRequestHandler, "default_key_mode", 1)
+        km = sub_key.get("key_mode")
+        key_mode = km if km is not None else global_default
 
         for attempt in range(1, MAX_RETRIES + 1):
             # 选择上游 Key（排除已尝试的），带等待队列（优化项 #3）
@@ -2895,10 +2897,11 @@ class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
 class ProxyServer:
     """本地 API 代理服务器"""
 
-    def __init__(self, host: str = "127.0.0.1", port: int = 8002, mode: str = "local"):
+    def __init__(self, host: str = "127.0.0.1", port: int = 8002, mode: str = "local", default_key_mode: int = 1):
         self.host = host
         self.port = port
         self.mode = mode  # "local" or "open"
+        self.default_key_mode = default_key_mode  # 全局默认调用策略
         self.db = ProxyDatabase.get_instance()
         self.router = ProxyRouter(self.db)
         self._server = None
@@ -2915,6 +2918,7 @@ class ProxyServer:
             ProxyRequestHandler.router = self.router
             ProxyRequestHandler.db = self.db
             ProxyRequestHandler.server_mode = self.mode  # "local" or "open"
+            ProxyRequestHandler.default_key_mode = self.default_key_mode  # 全局默认策略
 
             self._server = ThreadingHTTPServer((self.host, self.port), ProxyRequestHandler)
             self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)

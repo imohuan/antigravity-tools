@@ -533,6 +533,26 @@ class ApiProxyPage(QWidget):
         config_row.addWidget(self._listen_mode_combo)
 
         config_row.addWidget(QLabel("  "))
+        config_row.addWidget(QLabel("默认策略:"))
+        self._default_mode_combo = QComboBox()
+        self._default_mode_combo.addItem("1 - 专一模式", 1)
+        self._default_mode_combo.addItem("2 - 临期优先", 2)
+        self._default_mode_combo.addItem("3 - 轮询模式", 3)
+        self._default_mode_combo.addItem("4 - 会话亲和", 4)
+        default_mode = int(load_setting("default_key_mode", "1"))
+        idx = {1: 0, 2: 1, 3: 2, 4: 3}.get(default_mode, 0)
+        self._default_mode_combo.setCurrentIndex(idx)
+        self._default_mode_combo.setToolTip(
+            "当子 Key 未单独设置策略时，使用此全局默认值\n"
+            "专一模式：粘住一个 Key 用到不可用才换\n"
+            "临期优先：优先调用积分最快过期的 Key\n"
+            "轮询模式：每次请求轮换到下一个 Key\n"
+            "会话亲和：同一会话绑定同一 Key"
+        )
+        self._default_mode_combo.currentIndexChanged.connect(self._on_default_mode_changed)
+        config_row.addWidget(self._default_mode_combo)
+
+        config_row.addWidget(QLabel("  "))
         config_row.addWidget(QLabel("最低积分:"))
         self._min_credits_spin = QSpinBox()
         self._min_credits_spin.setRange(0, 100000)
@@ -794,6 +814,11 @@ class ApiProxyPage(QWidget):
 
     # === 服务控制 ===
 
+    def _on_default_mode_changed(self, index: int):
+        """全局默认策略切换时保存设置"""
+        mode = self._default_mode_combo.currentData()
+        save_setting("default_key_mode", str(mode))
+
     def _on_listen_mode_changed(self, index: int):
         """监听模式切换时更新提示和 URL"""
         mode = self._listen_mode_combo.currentData()  # "local" or "open"
@@ -857,7 +882,8 @@ class ApiProxyPage(QWidget):
             mode = self._listen_mode_combo.currentData()  # "local" or "open"
             host = "127.0.0.1" if mode == "local" else "0.0.0.0"
 
-            self._proxy_server = ProxyServer(host=host, port=port, mode=mode)
+            default_key_mode = int(load_setting("default_key_mode", "1"))
+            self._proxy_server = ProxyServer(host=host, port=port, mode=mode, default_key_mode=default_key_mode)
 
             if self._proxy_server.start():
                 # 关键：使用 ProxyServer 的 db 实例，确保日志读写共享同一内存

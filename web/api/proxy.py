@@ -60,20 +60,33 @@ def proxy_status():
     }
 
 
+class StartProxyRequest(BaseModel):
+    strategy: int = 1  # 1=专一, 2=临期优先, 3=轮询, 4=会话亲和
+
 @router.post("/proxy/start")
-def proxy_start():
+def proxy_start(req: StartProxyRequest = StartProxyRequest()):
     """Start the proxy server"""
     global _proxy_server, _proxy_thread
     if _proxy_server and _proxy_server.is_running:
         return {"success": True, "message": "Proxy already running"}
     try:
-        _proxy_server = ProxyServer(port=8867)
+        _proxy_server = ProxyServer(port=8867, default_key_mode=req.strategy)
         _proxy_thread = threading.Thread(target=_proxy_server.start, daemon=True)
         _proxy_thread.start()
         return {"success": True, "message": "Proxy started on port 8867"}
     except Exception as e:
         return {"success": False, "error": str(e)}
 
+
+class SetStrategyRequest(BaseModel):
+    strategy: int = 1
+
+@router.post("/proxy/strategy")
+def proxy_set_strategy(req: SetStrategyRequest):
+    """实时更新全局默认策略，无需重启代理"""
+    from src.modules.proxy_server import ProxyRequestHandler
+    ProxyRequestHandler.default_key_mode = req.strategy
+    return {"success": True, "strategy": req.strategy}
 
 @router.post("/proxy/stop")
 def proxy_stop():

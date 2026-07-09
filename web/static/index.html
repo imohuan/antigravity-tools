@@ -301,9 +301,14 @@
                       </tr>
                     </thead>
                     <tbody class="divide-y divide-outline-variant/50">
-                      <tr v-for="(pkg,i) in acc.packages" :key="i"
-                        class="hover:bg-surface-container-low/50 transition-colors">
-                        <td class="px-md py-2 pl-12 text-on-surface-variant">{{pkg.package}}</td>
+                      <tr v-for="(pkg,i) in acc.packages.filter(p=>p.remain>0)" :key="i"
+                        :class="['hover:bg-surface-container-low/50 transition-colors', pkg.daysLeft>=0&&pkg.daysLeft<=3?'bg-error/5':'']">
+                        <td class="px-md py-2 pl-12 text-on-surface-variant">
+                          {{pkg.package}}
+                          <span v-if="pkg.daysLeft>=0&&pkg.daysLeft<=7"
+                            :class="pkg.daysLeft<=3?'text-error':'text-secondary'"
+                            class="ml-2 font-label-md text-[10px]">⏳ {{pkg.daysLeft}}天后过期</span>
+                        </td>
                         <td class="px-md py-2"><span :class="pkg.typeClass"
                             class="font-label-md text-[10px] px-2 py-0.5 rounded">{{pkg.typeLabel}}</span></td>
                         <td class="px-md py-2">
@@ -331,6 +336,21 @@
                 :class="proxyInfo.running?'bg-primary animate-pulse':'bg-outline'"></span><span
                 class="font-body-sm text-body-sm text-secondary">{{proxyInfo.running?'运行中':'已停止'}}</span></div>
             <div class="flex items-center gap-sm">
+              <!-- 自定义策略下拉 -->
+              <div class="relative" style="width:120px">
+                <button @click="showStrategyDropdown=!showStrategyDropdown" @blur="hideStrategyDropdown"
+                  class="w-full flex items-center justify-between bg-surface-container-low border border-outline-variant hover:bg-surface-container hover:border-outline rounded-lg px-2.5 py-1.5 text-left transition-colors">
+                  <span class="text-primary font-medium text-label-md truncate">{{strategyLabel}}</span>
+                  <span class="material-symbols-outlined text-secondary transition-transform duration-200 shrink-0 text-[16px]" :class="showStrategyDropdown?'rotate-180':''">expand_more</span>
+                </button>
+                <div v-show="showStrategyDropdown" class="absolute top-full left-0 mt-1 w-full bg-surface-container-lowest border border-outline-variant rounded-lg pro-shadow z-50 py-1">
+                  <button v-for="s in strategyOptions" :key="s.value" @mousedown.prevent="selectStrategy(s.value)"
+                    :class="['w-full flex items-center justify-between px-3 py-1.5 text-left font-label-md text-label-md rounded-lg transition-colors', proxyStrategy===s.value?'bg-primary text-on-primary font-medium':'text-primary hover:bg-surface-container-low']">
+                    <span class="truncate">{{s.label}}</span>
+                    <span v-if="proxyStrategy===s.value" class="material-symbols-outlined text-[16px] shrink-0 ml-auto">check</span>
+                  </button>
+                </div>
+              </div>
               <button @click="openImportKeysModal"
                 class="inline-flex items-center gap-xs px-3 py-1.5 bg-surface-container-low border border-outline-variant text-primary font-label-md text-label-md rounded-lg hover:bg-surface-container-high transition-colors"><span
                   class="material-symbols-outlined text-[16px]">add</span>从账号导入</button>
@@ -707,6 +727,12 @@ const quotaLoading = reactive({}); const checkinLoading = reactive({});
 const checkinAllLoading = ref(false); const lastCheckin = reactive({ success: 0, already: 0, failed: 0 }); const checkinLogs = reactive([]);
 const quotaAllLoading = ref(false); const quotaSummary = reactive({ totalRemain: 0, totalCredits: 0, accountCount: 0 }); const quotaDetails = reactive([]);
 const proxyInfo = reactive({ running: false, port: 8867, total_keys: 0, active_keys: 0, exhausted_keys: 0, keys: [] }); const proxyLoading = ref(false);
+        const proxyStrategy = ref(parseInt(localStorage.getItem('ag_proxy_strategy')||'1'));
+        const showStrategyDropdown = ref(false);
+        const strategyOptions = [{value:1,label:'专一模式'},{value:2,label:'临期优先'},{value:3,label:'轮询模式'},{value:4,label:'会话亲和'}];
+        const strategyLabel = computed(()=>(strategyOptions.find(s=>s.value===proxyStrategy.value)||strategyOptions[0]).label);
+        async function selectStrategy(v) { const prev=proxyStrategy.value; proxyStrategy.value=v; showStrategyDropdown.value=false; localStorage.setItem('ag_proxy_strategy',v); try { const r=await api('/api/proxy/strategy',{method:'POST',body:JSON.stringify({strategy:v})}); if(!r||!r.success){ proxyStrategy.value=prev; showToast('策略切换失败','error'); } } catch(e){ proxyStrategy.value=prev; showToast('策略切换失败','error'); } }
+        function hideStrategyDropdown() { setTimeout(()=>{showStrategyDropdown.value=false},150); }
 const quotaAccounts = ref([]);
 const showImportKeysModal = ref(false); const importKeysAccounts = ref([]); const importKeysLoading = ref(false); const importAllSelected = ref(false);
 const proxyKeyLoading = reactive({});
@@ -773,8 +799,8 @@ async function downloadExport() { if (selectedAccounts.value.length === 0) retur
         function saveQuotaCache() {
           try { localStorage.setItem(QUOTA_CACHE_KEY, JSON.stringify({ summary: { totalRemain: quotaSummary.totalRemain, totalCredits: quotaSummary.totalCredits, accountCount: quotaSummary.accountCount }, accounts: quotaAccounts.value, ts: Date.now() })); } catch (e) { }
         }
-        async function queryAllQuota() { quotaAllLoading.value = true; const cached = quotaAccounts.value; const expandedMap = new Map(); const cachedOrder = cached.map(a => a.name); cached.forEach(a => expandedMap.set(a.name, a.expanded)); const d = await api('/api/quota/all', { method: 'POST' }); quotaAllLoading.value = false; if (d) { quotaSummary.totalRemain = d.total_remaining || 0; quotaSummary.totalCredits = d.total_credits || 0; quotaSummary.accountCount = d.account_count || 0; const map = new Map(); (d.details || []).forEach(a => { if (!a.success || !a.packages) return; const list = a.packages.map(p => { const t = p.total || 0, r = p.remain || 0, pct = t > 0 ? (r / t * 100) : 0; const tm = { '免费': 'bg-secondary-container text-on-secondary-container', '付费': 'bg-surface-container text-primary', '体验': 'bg-surface-container-low border border-outline-variant' }; return { account: a.nickname, package: p.name, typeLabel: p.type || '?', typeClass: tm[p.type] || 'bg-surface-container text-secondary', remain: r, total: t, remainPercent: pct, cycle: p.cycle_start ? p.cycle_start.substring(0, 7) : '--' }; }); const totalQuota = list.reduce((s, p) => s + p.total, 0); const totalRemain = list.reduce((s, p) => s + p.remain, 0); const wasExpanded = expandedMap.get(a.nickname) || false; map.set(a.nickname, { name: a.nickname, expanded: wasExpanded, totalQuota, totalRemain, remainPercent: totalQuota > 0 ? (totalRemain / totalQuota * 100) : 0, packages: list }); }); const ordered = []; cachedOrder.forEach(name => { const item = map.get(name); if (item) ordered.push(item); }); map.forEach((v, k) => { if (!cachedOrder.includes(k)) ordered.push(v); }); quotaAccounts.value = ordered; saveQuotaCache(); showToast('完成: ' + quotaSummary.accountCount + ' 个账户'); } } function refreshQuota() { queryAllQuota(); }
-        async function toggleProxy() { proxyLoading.value = true; await api(proxyInfo.running ? '/api/proxy/stop' : '/api/proxy/start', { method: 'POST' }); proxyLoading.value = false; await loadProxyStatus(); showToast(proxyInfo.running ? '代理已启动' : '代理已停止'); }
+        async function queryAllQuota() { quotaAllLoading.value = true; const cached = quotaAccounts.value; const expandedMap = new Map(); const cachedOrder = cached.map(a => a.name); cached.forEach(a => expandedMap.set(a.name, a.expanded)); const d = await api('/api/quota/all', { method: 'POST' }); quotaAllLoading.value = false; if (d) { quotaSummary.totalRemain = d.total_remaining || 0; quotaSummary.totalCredits = d.total_credits || 0; quotaSummary.accountCount = d.account_count || 0; const map = new Map(); (d.details || []).forEach(a => { if (!a.success || !a.packages) return; const list = a.packages.map(p => { const t = p.total || 0, r = p.remain || 0, pct = t > 0 ? (r / t * 100) : 0; const tm = { '免费': 'bg-secondary-container text-on-secondary-container', '付费': 'bg-surface-container text-primary', '体验': 'bg-surface-container-low border border-outline-variant' }; let dl = -1; if (p.cycle_end) { try { const ed = new Date(p.cycle_end.replace(' ','T')+'Z'); dl = Math.ceil((ed - Date.now())/86400000); } catch(e){} } return { account: a.nickname, package: p.name, typeLabel: p.type || '?', typeClass: tm[p.type] || 'bg-surface-container text-secondary', remain: r, total: t, remainPercent: pct, cycle: p.cycle_start ? p.cycle_start.substring(0, 7) : '--', daysLeft: dl }; }); const totalQuota = list.reduce((s, p) => s + p.total, 0); const totalRemain = list.reduce((s, p) => s + p.remain, 0); const wasExpanded = expandedMap.get(a.nickname) || false; map.set(a.nickname, { name: a.nickname, expanded: wasExpanded, totalQuota, totalRemain, remainPercent: totalQuota > 0 ? (totalRemain / totalQuota * 100) : 0, packages: list }); }); const ordered = []; cachedOrder.forEach(name => { const item = map.get(name); if (item) ordered.push(item); }); map.forEach((v, k) => { if (!cachedOrder.includes(k)) ordered.push(v); }); quotaAccounts.value = ordered; saveQuotaCache(); showToast('完成: ' + quotaSummary.accountCount + ' 个账户'); } } function refreshQuota() { queryAllQuota(); }
+        async function toggleProxy() { proxyLoading.value = true; const body = proxyInfo.running ? null : JSON.stringify({ strategy: proxyStrategy.value }); const opts = { method: 'POST' }; if (body) opts.body = body; await api(proxyInfo.running ? '/api/proxy/stop' : '/api/proxy/start', opts); proxyLoading.value = false; await loadProxyStatus(); showToast(proxyInfo.running ? '代理已启动' : '代理已停止'); }
         async function openImportKeysModal() {
           importKeysLoading.value = true;
           showImportKeysModal.value = true;
@@ -822,7 +848,7 @@ async function downloadExport() { if (selectedAccounts.value.length === 0) retur
         async function saveSettings() { const r = await api('/api/settings', { method: 'POST', body: JSON.stringify({ webPort: settings.webPort, proxyPort: settings.proxyPort, httpProxy: settings.httpProxy, autoStartProxy: settings.autoStartProxy, checkinConcurrency: settings.checkinConcurrency }) }); if (r && r.success) { showToast('设置已保存（重启生效）'); } else { showToast('保存失败', 'error'); } }
         async function loadSettings() { const d = await api('/api/settings'); if (d) { settings.webPort = d.webPort || 8866; settings.proxyPort = d.proxyPort || 8867; settings.httpProxy = d.httpProxy || ''; settings.autoStartProxy = d.autoStartProxy !== undefined ? d.autoStartProxy : true; settings.checkinConcurrency = d.checkinConcurrency || 5; } }
         onMounted(async () => { loadQuotaCache(); await loadSettings(); await loadAccounts(); await loadProxyStatus(); });
-        return { currentPage, activePageLabel, navItems, now, port, toast, showToast, fmtNum, stats, accounts, selectedAccounts, isAllSelected, toggleSelectAll, selectAllAccounts, invertSelection, showAddModal, addMethod, addMethods, addForm, addLoading, addError, addAccount, deleteAccount, quotaLoading, checkinLoading, querySingleQuota, checkinSingle, checkinAllLoading, lastCheckin, checkinLogs, checkinAll, quotaAllLoading, quotaSummary, quotaAccounts, queryAllQuota, refreshQuota, proxyInfo, proxyLoading, toggleProxy, showImportKeysModal, importKeysAccounts, importKeysLoading, importAllSelected, openImportKeysModal, toggleSelectAllImport, importSelectedKeys, deleteProxyKey, proxyKeyLoading, toggleProxyKey, settings, saveSettings, showImportModal, importMode, importModes, importFileName, importText, importPreview, importError, importResult, importLoading, openImportModal, closeImportModal, onImportFileChange, parseImportText, submitImport, showExportModal, exportLoading, exportContent, openExportModal, copyExportToClipboard, downloadExport };
+        return { currentPage, activePageLabel, navItems, now, port, toast, showToast, fmtNum, stats, accounts, selectedAccounts, isAllSelected, toggleSelectAll, selectAllAccounts, invertSelection, showAddModal, addMethod, addMethods, addForm, addLoading, addError, addAccount, deleteAccount, quotaLoading, checkinLoading, querySingleQuota, checkinSingle, checkinAllLoading, lastCheckin, checkinLogs, checkinAll, quotaAllLoading, quotaSummary, quotaAccounts, queryAllQuota, refreshQuota, proxyInfo, proxyLoading, proxyStrategy, strategyOptions, strategyLabel, showStrategyDropdown, selectStrategy, hideStrategyDropdown, toggleProxy, showImportKeysModal, importKeysAccounts, importKeysLoading, importAllSelected, openImportKeysModal, toggleSelectAllImport, importSelectedKeys, deleteProxyKey, proxyKeyLoading, toggleProxyKey, settings, saveSettings, showImportModal, importMode, importModes, importFileName, importText, importPreview, importError, importResult, importLoading, openImportModal, closeImportModal, onImportFileChange, parseImportText, submitImport, showExportModal, exportLoading, exportContent, openExportModal, copyExportToClipboard, downloadExport };
       }
     }).mount('#app');
   </script>

@@ -125,10 +125,29 @@ class ResourcePackageCard(QFrame):
             progress.setStyleSheet("QProgressBar::chunk { background-color: #38A169; border-radius: 4px; }")
         layout.addWidget(progress)
 
-        # 周期信息
+        # 周期信息 + 剩余天数标签
         if self._pkg.cycle_start and self._pkg.cycle_end:
-            cycle_label = QLabel(f"周期: {self._pkg.cycle_start[:10]} ~ {self._pkg.cycle_end[:10]}")
-            cycle_label.setStyleSheet("font-size: 10px; color: #9BA4B0;")
+            from datetime import datetime as _dt
+            cycle_text = f"周期: {self._pkg.cycle_start[:10]} ~ {self._pkg.cycle_end[:10]}"
+            days_left = -1
+            label_color = "#9BA4B0"
+            try:
+                end_str = self._pkg.cycle_end.replace("Z", "+00:00")
+                if "T" in end_str:
+                    end_dt = _dt.fromisoformat(end_str)
+                else:
+                    end_dt = _dt.strptime(end_str[:19], "%Y-%m-%d %H:%M:%S")
+                days_left = (end_dt.replace(tzinfo=None) - _dt.now()).days
+                if days_left >= 0:
+                    if days_left <= 3:
+                        label_color = "#E53E3E"
+                    elif days_left <= 7:
+                        label_color = "#D69E2E"
+                    cycle_text += "  |  ⏳ 剩余 " + str(days_left) + " 天"
+            except (ValueError, TypeError):
+                pass
+            cycle_label = QLabel(cycle_text)
+            cycle_label.setStyleSheet(f"font-size: 10px; color: {label_color};")
             layout.addWidget(cycle_label)
 
 
@@ -252,12 +271,18 @@ class AccountQuotaCard(QFrame):
                 if item.widget():
                     item.widget().deleteLater()
 
-            # 添加新的资源包卡片
-            for pkg in packages:
+            # 添加新的资源包卡片（过滤已耗尽的包）
+            active_packages = [p for p in packages if getattr(p, "cycle_remain", 1) > 0]
+            exhausted_count = len(packages) - len(active_packages)
+            for pkg in active_packages:
                 card = ResourcePackageCard(pkg)
                 self._packages_layout.addWidget(card)
 
-            self._status_label.setText(f"✅ 已更新（{len(packages)} 个资源包）")
+            status_text = f"✅ 已更新（{len(active_packages)} 个资源包"
+            if exhausted_count > 0:
+                status_text += f"，{exhausted_count} 个已耗尽已隐藏"
+            status_text += "）"
+            self._status_label.setText(status_text)
             self._status_label.setStyleSheet("color: #38A169; font-size: 11px;")
 
             # 更新 Account 的 QuotaInfo
