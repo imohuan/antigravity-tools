@@ -428,7 +428,7 @@
             <span class="font-headline-lg text-headline-lg text-primary">请求日志</span>
             <div class="flex items-center gap-sm">
               <span class="text-secondary font-body-sm text-[11px]">共 {{logsTotal}} 条</span>
-              <button @click="loadRequestLogs" :disabled="requestLogsLoading"
+              <button @click="loadRequestLogs()" :disabled="requestLogsLoading"
                 class="inline-flex items-center gap-xs px-3 py-1.5 bg-primary text-on-primary font-label-md text-label-md rounded-lg hover:opacity-90 transition-opacity disabled:opacity-30">
                 <span v-if="requestLogsLoading" class="spinner inline-block w-3.5 h-3.5 border-2 border-on-primary/30 border-t-on-primary rounded-full"></span>
                 <span v-else class="material-symbols-outlined text-[16px]">refresh</span>{{requestLogsLoading?'加载中...':'刷新'}}
