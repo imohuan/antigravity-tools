@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh-CN">
 
 <head>
@@ -921,7 +921,7 @@ async function downloadExport() { if (selectedAccounts.value.length === 0) retur
           showToast('完成: ' + lastCheckin.success + ' 成功, ' + lastCheckin.already + ' 已签, ' + lastCheckin.failed + ' 失败');
           await loadAccounts();
         }
-        async function loadProxyStatus() { const d = await api('/api/proxy/status'); if (d) Object.assign(proxyInfo, d); loadRequestLogs(); }
+        async function loadProxyStatus() { const d = await api('/api/proxy/status'); if (d) { Object.assign(proxyInfo, d); if (d.strategy) { proxyStrategy.value = d.strategy; localStorage.setItem('ag_proxy_strategy', d.strategy); } } loadRequestLogs(); }
         async function addAccount() { addLoading.value = true; addError.value = ''; const body = { method: addMethod.value }; if (addMethod.value === 'apikey') { body.api_key = addForm.api_key; body.nickname = addForm.nickname; } else if (addMethod.value === 'jwt') { body.access_token = addForm.access_token; body.uid = addForm.uid; body.nickname = addForm.nickname; } const r = await fetch('/api/accounts/add', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); const d = await r.json(); addLoading.value = false; if (r.ok) { showToast('已添加: ' + d.nickname); showAddModal.value = false; addForm.api_key = ''; addForm.access_token = ''; addForm.uid = ''; addForm.nickname = ''; await loadAccounts(); } else { addError.value = d.detail || '添加失败'; } }
         async function deleteAccount(uid) { if (!confirm('确认删除此账户？')) return; await api('/api/accounts/' + uid + '/delete', { method: 'POST' }); showToast('已删除'); await loadAccounts(); }
         async function querySingleQuota(account) { quotaLoading[account.uid] = true; const d = await api('/api/quota/' + account.uid, { method: 'POST' }); quotaLoading[account.uid] = false; if (d && d.success && d.packages) { let total = 0, remain = 0; d.packages.forEach(p => { total += p.total || 0; remain += p.remain || 0; }); account.quota_total = total; account.quota_remaining = remain; } showToast('配额已查询'); }

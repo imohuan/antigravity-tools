@@ -1,4 +1,4 @@
-﻿"""Proxy server control API routes"""
+"""Proxy server control API routes"""
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -44,6 +44,7 @@ def proxy_status():
     active_keys = [k for k in keys if k.get("status") == "active"]
     return {
         "running": _proxy_server is not None and _proxy_server.is_running,
+        "strategy": int(load_setting("proxyStrategy", "1")),
         "port": int(load_setting("proxyPort", "8867")),
         "total_keys": len(keys),
         "active_keys": len(active_keys),
@@ -72,6 +73,7 @@ def proxy_start(req: StartProxyRequest = StartProxyRequest()):
     try:
         port = int(load_setting("proxyPort", "8867"))
         _proxy_server = ProxyServer(port=port, default_key_mode=req.strategy)
+        save_setting("proxyStrategy", str(req.strategy))
         _proxy_thread = threading.Thread(target=_proxy_server.start, daemon=True)
         _proxy_thread.start()
         return {"success": True, "message": f"Proxy started on port {port}"}
@@ -374,4 +376,36 @@ def proxy_logs(since: float = 0, limit: int = 50, page: int = 1):
     return {
         "success": True,
         **result,
+    }
+
+
+# --- 仪表盘统计 API ---
+
+@router.get("/proxy/stats/overview")
+def proxy_stats_overview():
+    """获取全局仪表盘总览数据"""
+    db = _get_db()
+    return {
+        "success": True,
+        **db.get_stats_overview(),
+    }
+
+
+@router.get("/proxy/stats/calendar")
+def proxy_stats_calendar(months: int = 4):
+    """获取日历热力图数据（最近 N 个月）"""
+    db = _get_db()
+    return {
+        "success": True,
+        "data": db.get_calendar_data(months),
+    }
+
+
+@router.get("/proxy/stats/daily")
+def proxy_stats_daily():
+    """获取所有每日聚合数据"""
+    db = _get_db()
+    return {
+        "success": True,
+        "data": db.get_all_daily_stats(),
     }
