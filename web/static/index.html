@@ -934,7 +934,7 @@ async function downloadExport() { if (selectedAccounts.value.length === 0) retur
               quotaSummary.totalRemain = d.summary.totalRemain || 0;
               quotaSummary.totalCredits = d.summary.totalCredits || 0;
               quotaSummary.accountCount = d.summary.accountCount || 0;
-              quotaAccounts.value = d.accounts.map(a => ({ ...a, expanded: false }));
+ quotaAccounts.value = d.accounts.map(a => ({ ...a, expanded: false, packages: (a.packages || []).map(p => ({ ...p, package: p.name, typeLabel: p.type || '?', typeClass: ({ '免费': 'bg-secondary-container text-on-secondary-container', '付费': 'bg-surface-container text-primary', '体验': 'bg-surface-container-low border border-outline-variant' })[p.type] || 'bg-surface-container text-secondary' })) }));
               saveQuotaCache();
               return;
             }
