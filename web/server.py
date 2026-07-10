@@ -56,11 +56,12 @@ def main():
 
     # Auto-start proxy if the setting is enabled
     if load_setting("autoStartProxy", "True") == "True":
-        from web.api.proxy import proxy_start
-        result = proxy_start()
+        from web.api.proxy import proxy_start, StartProxyRequest
+        saved_strategy = int(load_setting("proxyStrategy", "1"))
+        result = proxy_start(StartProxyRequest(strategy=saved_strategy))
         if result.get("success"):
             proxy_port = load_setting("proxyPort", "8867")
-            print(f"  代理已自动启动 :{proxy_port}")
+            print(f"  代理已自动启动 :{proxy_port}  策略: {saved_strategy}")
         else:
             print(f"  代理自动启动失败: {result.get('error', 'unknown')}")
 

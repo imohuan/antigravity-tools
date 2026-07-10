@@ -7,7 +7,7 @@ import threading
 import logging
 
 from src.modules.proxy_server import ProxyServer, ProxyDatabase
-from src.utils.store import load_accounts, load_setting
+from src.utils.store import load_accounts, load_setting, save_setting
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["proxy"])
@@ -87,6 +87,7 @@ def proxy_set_strategy(req: SetStrategyRequest):
     """实时更新全局默认策略，无需重启代理"""
     from src.modules.proxy_server import ProxyRequestHandler
     ProxyRequestHandler.default_key_mode = req.strategy
+    save_setting("proxyStrategy", str(req.strategy))
     return {"success": True, "strategy": req.strategy}
 
 @router.post("/proxy/stop")
