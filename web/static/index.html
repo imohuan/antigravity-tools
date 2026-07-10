@@ -474,7 +474,8 @@
           </button>
         </div>
       </div>
-      <div class="w-full">
+      <div v-if="calendarData.length===0" class="text-center py-lg text-secondary font-body-sm">暂无数据</div>
+      <div v-else class="w-full">
         <div class="grid grid-cols-7 gap-1 mb-1 text-center text-[10px] font-semibold text-secondary">
           <div>日</div><div>一</div><div>二</div><div>三</div><div>四</div><div>五</div><div>六</div>
         </div>
@@ -505,7 +506,8 @@
 <!-- 每日消耗趋势折线图 -->
     <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md">
       <p class="font-label-md text-label-md text-secondary mb-sm uppercase tracking-wider">每日消耗趋势 (最近30天)</p>
-      <div class="relative w-full" style="height:240px" id="trendContainer" ref="trendContainer">
+      <div v-if="calendarData.length===0" class="text-center py-lg text-secondary font-body-sm">暂无数据</div>
+      <div v-else class="relative w-full" style="height:240px" id="trendContainer" ref="trendContainer">
         <svg id="trendSvg" class="w-full h-full overflow-visible"></svg>
         <div id="trendTooltip" class="absolute pointer-events-none opacity-0 transition-opacity duration-150 bg-black/90 text-white px-3 py-2 rounded-lg shadow-lg z-10 flex flex-col min-w-[110px]">
           <span id="ttDate" class="text-[10px] text-white/60 font-medium">2026-07-01</span>
@@ -1048,7 +1050,7 @@ function drawTrendChart() {
   if (!container || !svg) return;
 
   const data = calendarData.value.slice(-30);
-  if (data.length < 2) return;
+  if (data.length === 0) return;
 
   const W = container.clientWidth;
   const H = container.clientHeight;
@@ -1064,7 +1066,7 @@ function drawTrendChart() {
   if (cw <= 0 || ch <= 0) return;
 
   const maxV = Math.max(...data.map(d=>d.credits), 10);
-  const getX = (i) => pad.left + (i / (data.length-1)) * cw;
+  const getX = (i) => data.length > 1 ? pad.left + (i / (data.length-1)) * cw : pad.left + cw/2;
   const getY = (v) => pad.top + ch - (v / maxV) * ch;
 
   svg.innerHTML = '';
