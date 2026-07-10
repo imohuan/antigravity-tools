@@ -964,7 +964,7 @@ async function downloadExport() { if (selectedAccounts.value.length === 0) retur
               const map = new Map();
               (d.accounts || []).forEach(a => {
                 const wasExpanded = expandedMap.get(a.name) || false;
-                map.set(a.name, { name: a.name, expanded: wasExpanded, totalQuota: a.totalQuota || 0, totalRemain: a.totalRemain || 0, remainPercent: a.remainPercent || 0, packages: (a.packages || []).map(p => ({ ...p, typeClass: ({ '免费': 'bg-secondary-container text-on-secondary-container', '付费': 'bg-surface-container text-primary', '体验': 'bg-surface-container-low border border-outline-variant' })[p.type] || 'bg-surface-container text-secondary' })) });
+                map.set(a.name, { name: a.name, expanded: wasExpanded, totalQuota: a.totalQuota || 0, totalRemain: a.totalRemain || 0, remainPercent: a.remainPercent || 0, packages: (a.packages || []).map(p => ({ ...p, typeLabel: p.type || '?', typeClass: ({ '免费': 'bg-secondary-container text-on-secondary-container', '付费': 'bg-surface-container text-primary', '体验': 'bg-surface-container-low border border-outline-variant' })[p.type] || 'bg-surface-container text-secondary' })) });
               });
               const ordered = []; cachedOrder.forEach(name => { const item = map.get(name); if (item) ordered.push(item); }); map.forEach((v, k) => { if (!cachedOrder.includes(k)) ordered.push(v); }); quotaAccounts.value = ordered;
             } else if (source === 'legacy') {
