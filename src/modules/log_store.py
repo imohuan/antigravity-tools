@@ -1,0 +1,194 @@
+﻿"""SQLite 请求日志存储 — 只追加写入，支持聚合查询和定期清理
+
+替代旧的 JSON 全量日志方案：
+- 写入：INSERT 一行，几毫秒
+- 查询：SQL GROUP BY，秒出
+- 清理：自动删除 30 天前数据
+- WAL 模式：读写并发，不阻塞
+"""
+
+import logging
+import os
+import sqlite3
+import time
+from datetime import datetime
+
+logger = logging.getLogger(__name__)
+
+RETAIN_DAYS = 30
+
+
+class LogStore:
+    """SQLite 请求日志存储"""
+
+    def __init__(self, db_path: str):
+        self._db_path = db_path
+        self._conn: sqlite3.Connection | None = None
+
+    @property
+    def conn(self) -> sqlite3.Connection:
+        if self._conn is None:
+            os.makedirs(os.path.dirname(self._db_path), exist_ok=True)
+            self._conn = sqlite3.connect(self._db_path, check_same_thread=False)
+            self._conn.execute("PRAGMA journal_mode=WAL")
+            self._conn.execute("PRAGMA synchronous=NORMAL")
+            self._conn.execute("PRAGMA cache_size=-8000")
+            self._conn.execute("""
+                CREATE TABLE IF NOT EXISTS request_logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp REAL NOT NULL,
+                    date TEXT NOT NULL,
+                    hour INTEGER NOT NULL DEFAULT 0,
+                    main_key_id TEXT DEFAULT '',
+                    main_key_label TEXT DEFAULT '',
+                    model TEXT DEFAULT '',
+                    status TEXT DEFAULT '',
+                    prompt_tokens INTEGER DEFAULT 0,
+                    completion_tokens INTEGER DEFAULT 0,
+                    total_tokens INTEGER DEFAULT 0,
+                    credit REAL DEFAULT 0.0,
+                    duration_ms INTEGER DEFAULT 0,
+                    request_path TEXT DEFAULT ''
+                )
+            """)
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_logs_date ON request_logs(date)"
+            )
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_logs_model ON request_logs(model)"
+            )
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_logs_key ON request_logs(main_key_id)"
+            )
+            self._conn.commit()
+        return self._conn
+
+    def insert(self, log: dict):
+        """插入一条日志"""
+        ts = log.get("timestamp", time.time())
+        try:
+            self.conn.execute(
+                """INSERT INTO request_logs
+                   (timestamp, date, hour, main_key_id, main_key_label, model,
+                    status, prompt_tokens, completion_tokens, total_tokens,
+                    credit, duration_ms, request_path)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    ts,
+                    datetime.fromtimestamp(ts).strftime("%Y-%m-%d"),
+                    datetime.fromtimestamp(ts).hour,
+                    log.get("main_key_id", ""),
+                    log.get("main_key_label", ""),
+                    log.get("model", ""),
+                    log.get("status", "success"),
+                    log.get("prompt_tokens", 0),
+                    log.get("completion_tokens", 0),
+                    log.get("total_tokens", 0),
+                    log.get("credit", 0.0),
+                    log.get("duration_ms", 0),
+                    log.get("request_path", ""),
+                ),
+            )
+            self.conn.commit()
+        except Exception as e:
+            logger.error(f"[LogStore] 写入日志失败: {e}")
+
+    def aggregate_today(self) -> dict:
+        """聚合今天的统计数据"""
+        today = datetime.now().strftime("%Y-%m-%d")
+        row = self.conn.execute(
+            """SELECT
+                 COUNT(*) as total,
+                 SUM(CASE WHEN status='success' THEN 1 ELSE 0 END) as success,
+                 SUM(CASE WHEN status!='success' THEN 1 ELSE 0 END) as failed,
+                 COALESCE(SUM(total_tokens), 0) as total_tokens,
+                 COALESCE(SUM(credit), 0) as total_credits,
+                 COALESCE(AVG(duration_ms), 0) as avg_duration_ms
+               FROM request_logs WHERE date=?""",
+            (today,),
+        ).fetchone()
+        if not row or row[0] == 0:
+            return {}
+        return {
+            "date": today,
+            "request_count": row[0],
+            "success_count": row[1],
+            "failed_count": row[2],
+            "total_tokens": int(row[3]),
+            "total_credits": round(row[4], 4),
+            "avg_duration_ms": int(row[5]),
+        }
+
+    def aggregate_date(self, date_str: str) -> dict:
+        """聚合指定日期的统计数据"""
+        row = self.conn.execute(
+            """SELECT
+                 COUNT(*) as total,
+                 SUM(CASE WHEN status='success' THEN 1 ELSE 0 END) as success,
+                 SUM(CASE WHEN status!='success' THEN 1 ELSE 0 END) as failed,
+                 COALESCE(SUM(total_tokens), 0) as total_tokens,
+                 COALESCE(SUM(credit), 0) as total_credits,
+                 COALESCE(AVG(duration_ms), 0) as avg_duration_ms
+               FROM request_logs WHERE date=?""",
+            (date_str,),
+        ).fetchone()
+        if not row or row[0] == 0:
+            return {}
+        return {
+            "date": date_str,
+            "request_count": row[0],
+            "success_count": row[1],
+            "failed_count": row[2],
+            "total_tokens": int(row[3]),
+            "total_credits": round(row[4], 4),
+            "avg_duration_ms": int(row[5]),
+        }
+
+    def get_model_distribution(self, date_str: str) -> dict:
+        """获取指定日期按模型分布"""
+        rows = self.conn.execute(
+            """SELECT model, SUM(credit) as credits, COUNT(*) as cnt
+               FROM request_logs WHERE date=? AND credit > 0
+               GROUP BY model ORDER BY credits DESC""",
+            (date_str,),
+        ).fetchall()
+        return {
+            (row[0] or "unknown"): {"credits": round(row[1], 4), "count": row[2]}
+            for row in rows
+        }
+
+    def get_key_distribution(self, date_str: str) -> dict:
+        """获取指定日期按 Key 分布"""
+        rows = self.conn.execute(
+            """SELECT main_key_label, SUM(credit) as credits, COUNT(*) as cnt
+               FROM request_logs WHERE date=? AND credit > 0
+               GROUP BY main_key_label ORDER BY credits DESC""",
+            (date_str,),
+        ).fetchall()
+        return {
+            (row[0] or "unknown"): {"credits": round(row[1], 4), "count": row[2]}
+            for row in rows
+        }
+
+    def cleanup_old(self):
+        """清理超过保留期的日志"""
+        cutoff = datetime.now().strftime("%Y-%m-%d")
+        self.conn.execute(
+            "DELETE FROM request_logs WHERE date < date(?, ?)",
+            (cutoff, f"-{RETAIN_DAYS} days"),
+        )
+        self.conn.commit()
+
+    def migrate_from_json(self, json_logs: list):
+        """从旧的 JSON 日志迁移到 SQLite（一次性）"""
+        if not json_logs:
+            return 0
+        count = 0
+        for log in json_logs:
+            try:
+                self.insert(log)
+                count += 1
+            except Exception:
+                pass
+        logger.info(f"[LogStore] 从 JSON 迁移了 {count} 条日志到 SQLite")
+        return count

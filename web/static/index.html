@@ -423,6 +423,137 @@
             <div v-else class="text-center py-xl text-secondary font-body-sm text-body-sm">密钥池为空</div>
           </div>
         </div>
+        <div v-else-if="currentPage==='dashboard'" class="space-y-lg">
+  <!-- 总览卡片 -->
+  <div class="grid grid-cols-5 gap-gutter">
+    <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md text-center">
+      <p class="font-headline-md text-headline-md text-primary">{{fmtNum(dashboardOverview.total_requests)}}</p>
+      <p class="font-body-sm text-body-sm text-secondary">总请求数</p>
+    </div>
+    <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md text-center">
+      <p class="font-headline-md text-headline-md text-primary">{{fmtNum(dashboardOverview.total_tokens)}}</p>
+      <p class="font-body-sm text-body-sm text-secondary">总 Token</p>
+    </div>
+    <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md text-center">
+      <p class="font-headline-md text-headline-md text-primary">{{Math.round(dashboardOverview.total_credits)}}</p>
+      <p class="font-body-sm text-body-sm text-secondary">总消费</p>
+    </div>
+    <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md text-center">
+      <p class="font-headline-md text-headline-md text-primary">{{dashboardOverview.success_rate}}%</p>
+      <p class="font-body-sm text-body-sm text-secondary">成功率</p>
+    </div>
+    <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md text-center">
+      <p class="font-headline-md text-headline-md text-primary">{{dashboardOverview.avg_duration_ms>0?(dashboardOverview.avg_duration_ms/1000).toFixed(1)+'s':'--'}}</p>
+      <p class="font-body-sm text-body-sm text-secondary">平均耗时</p>
+    </div>
+  </div>
+
+  <!-- 成功/失败统计条 -->
+  <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md flex items-center gap-lg">
+    <div class="flex items-center gap-sm"><span class="w-3 h-3 rounded-full bg-primary"></span><span class="font-label-md text-label-md">成功 {{fmtNum(dashboardOverview.total_success)}}</span></div>
+    <div class="flex items-center gap-sm"><span class="w-3 h-3 rounded-full bg-error"></span><span class="font-label-md text-label-md">失败 {{fmtNum(dashboardOverview.total_failed)}}</span></div>
+    <div class="flex-1 bg-surface-container-low rounded-full h-2 overflow-hidden">
+      <div class="h-full bg-primary rounded-full transition-all" :style="{width:dashboardOverview.success_rate+'%'}"></div>
+    </div>
+    <span class="font-label-md text-label-md text-secondary">{{dashboardOverview.success_rate}}%</span>
+  </div>
+
+  <!-- 日历热力图 + 趋势图（并排） -->
+  <div class="grid grid-cols-2 gap-gutter">
+    <!-- 积分消耗日历 -->
+    <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md">
+      <div class="flex items-center justify-between mb-sm">
+        <p class="font-label-md text-label-md text-secondary uppercase tracking-wider">积分消耗月历</p>
+        <div class="flex items-center gap-xs bg-surface-container-low rounded-lg p-0.5">
+          <button @click="calMonth--" class="w-7 h-7 rounded flex items-center justify-center hover:bg-surface-container-high text-secondary hover:text-primary transition-colors">
+            <span class="material-symbols-outlined text-[14px]">chevron_left</span>
+          </button>
+          <span class="text-[11px] font-semibold text-primary px-2 min-w-[80px] text-center select-none">{{calYear}}年 {{calMonthDisplay}}月</span>
+          <button @click="calMonth++" :disabled="calMonth>=nowMonth" class="w-7 h-7 rounded flex items-center justify-center hover:bg-surface-container-high text-secondary hover:text-primary transition-colors disabled:opacity-30">
+            <span class="material-symbols-outlined text-[14px]">chevron_right</span>
+          </button>
+        </div>
+      </div>
+      <div class="w-full">
+        <div class="grid grid-cols-7 gap-1 mb-1 text-center text-[10px] font-semibold text-secondary">
+          <div>日</div><div>一</div><div>二</div><div>三</div><div>四</div><div>五</div><div>六</div>
+        </div>
+        <div class="grid grid-cols-7 gap-1" style="grid-auto-rows:minmax(38px,auto)">
+          <template v-for="(cell,i) in calCells" :key="i">
+            <div v-if="cell.day===null" class="rounded-md"></div>
+            <div v-else
+                 :class="['rounded-md border flex flex-col items-center justify-center transition-all p-0.5',
+                   cell.isToday ? 'bg-primary border-primary text-on-primary shadow-sm' :
+                   cell.hasCredits ? 'bg-surface-container-low border-outline-variant text-primary hover:scale-[1.05] cursor-pointer' :
+                   'bg-white border-outline-variant/50 text-outline']">
+              <span class="text-[8px] leading-none" :class="cell.isToday?'text-on-primary/70':'text-secondary'">{{cell.day}}</span>
+              <span class="text-[10px] font-bold leading-none mt-0.5"
+                    :class="cell.isToday?'text-on-primary':cell.hasCredits?'text-primary':'text-outline-variant'">
+                {{cell.hasCredits ? Math.round(cell.credits) : (cell.credits===0 ? '0' : '-')}}
+              </span>
+            </div>
+          </template>
+        </div>
+      </div>
+      <div class="flex items-center gap-md mt-sm pt-sm border-t border-outline-variant text-[10px] text-secondary">
+        <span class="flex items-center gap-1"><span class="w-3 h-3 bg-white border border-outline-variant/50 rounded-sm"></span>无消耗</span>
+        <span class="flex items-center gap-1"><span class="w-3 h-3 bg-surface-container-low border border-outline-variant rounded-sm"></span>有消耗</span>
+        <span class="flex items-center gap-1"><span class="w-3 h-3 bg-primary rounded-sm"></span>今天</span>
+      </div>
+    </div>
+
+<!-- 每日消耗趋势折线图 -->
+    <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md">
+      <p class="font-label-md text-label-md text-secondary mb-sm uppercase tracking-wider">每日消耗趋势 (最近30天)</p>
+      <div class="relative w-full" style="height:240px" id="trendContainer" ref="trendContainer">
+        <svg id="trendSvg" class="w-full h-full overflow-visible"></svg>
+        <div id="trendTooltip" class="absolute pointer-events-none opacity-0 transition-opacity duration-150 bg-black/90 text-white px-3 py-2 rounded-lg shadow-lg z-10 flex flex-col min-w-[110px]">
+          <span id="ttDate" class="text-[10px] text-white/60 font-medium">2026-07-01</span>
+          <span id="ttValue" class="text-xs font-bold text-white mt-0.5">0 积分</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 环形图（并排） -->
+  <div class="grid grid-cols-2 gap-gutter">
+    <!-- 模型消耗分布 -->
+    <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md">
+      <p class="font-label-md text-label-md text-secondary mb-sm uppercase tracking-wider">模型消耗分布</p>
+      <div class="flex items-center gap-md" v-if="dashboardOverview.by_model&&dashboardOverview.by_model.length>0">
+        <svg viewBox="0 0 120 120" class="w-28 h-28 shrink-0">
+          <circle v-for="(seg,i) in modelDonutSegs" :key="i" cx="60" cy="60" r="48" fill="none" :stroke="seg.color" stroke-width="20" :stroke-dasharray="seg.dash" :stroke-dashoffset="seg.offset" transform="rotate(-90 60 60)" style="transition:all 0.5s"/>
+        </svg>
+        <div class="space-y-xs flex-1 min-w-0">
+          <div v-for="(m,i) in dashboardOverview.by_model.slice(0,6)" :key="i" class="flex items-center gap-xs text-[11px]">
+            <span class="w-2 h-2 rounded-full shrink-0" :style="{background:donutColors[i%donutColors.length]}"></span>
+            <span class="text-primary truncate">{{m.name}}</span>
+            <span class="text-secondary ml-auto shrink-0">{{m.credits}}</span>
+          </div>
+        </div>
+      </div>
+      <div v-else class="text-center py-lg text-secondary font-body-sm">暂无数据</div>
+    </div>
+
+    <!-- 账号消耗分布 -->
+    <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md">
+      <p class="font-label-md text-label-md text-secondary mb-sm uppercase tracking-wider">账号消耗分布</p>
+      <div class="flex items-center gap-md" v-if="dashboardOverview.by_key&&dashboardOverview.by_key.length>0">
+        <svg viewBox="0 0 120 120" class="w-28 h-28 shrink-0">
+          <circle v-for="(seg,i) in keyDonutSegs" :key="i" cx="60" cy="60" r="48" fill="none" :stroke="seg.color" stroke-width="20" :stroke-dasharray="seg.dash" :stroke-dashoffset="seg.offset" transform="rotate(-90 60 60)" style="transition:all 0.5s"/>
+        </svg>
+        <div class="space-y-xs flex-1 min-w-0">
+          <div v-for="(k,i) in dashboardOverview.by_key.slice(0,6)" :key="i" class="flex items-center gap-xs text-[11px]">
+            <span class="w-2 h-2 rounded-full shrink-0" :style="{background:donutColors[i%donutColors.length]}"></span>
+            <span class="text-primary truncate">{{k.name}}</span>
+            <span class="text-secondary ml-auto shrink-0">{{k.credits}}</span>
+          </div>
+        </div>
+      </div>
+      <div v-else class="text-center py-lg text-secondary font-body-sm">暂无数据</div>
+    </div>
+  </div>
+</div>
         <div v-else-if="currentPage==='logs'" class="space-y-lg">
           <div class="flex items-center justify-between">
             <span class="font-headline-lg text-headline-lg text-primary">请求日志</span>
@@ -818,7 +949,7 @@
   </div>
 
   <script type="module">
-    import { createApp, ref, reactive, computed, onMounted } from 'vue';
+    import { createApp, ref, reactive, computed, onMounted, watch, nextTick } from 'vue';
     createApp({
       setup() {
         const currentPage = ref('accounts');
@@ -830,6 +961,7 @@
         function showToast(msg, type) { toast.msg = msg; toast.type = type || 'success'; toast.show = true; setTimeout(() => toast.show = false, 3000); }
         function fmtNum(n) { if (n == null || n === '' || isNaN(Number(n))) return '0'; return Number(n).toLocaleString(); }
         const navItems = [
+          { id: 'dashboard', label: '仪表盘', icon: 'dashboard' },
           { id: 'accounts', label: '账户', icon: 'people' },
           { id: 'checkin', label: '签到', icon: 'check_circle' },
           { id: 'quota', label: '配额', icon: 'account_balance_wallet' },
@@ -838,6 +970,232 @@
           { id: 'settings', label: '设置', icon: 'settings' },
         ];
         const stats = reactive({ accountCount: 0, activeCount: 0, checkedToday: 0, totalCredits: 0 });
+// --- 仪表盘数据 ---
+const dashboardOverview = reactive({ total_requests:0,total_success:0,total_failed:0,success_rate:0,total_tokens:0,total_credits:0,avg_duration_ms:0,by_model:[],by_key:[] });
+const calendarData = ref([]);
+const calendarOffset = ref(0);
+const donutColors = ['#000','#5f5e61','#78767b','#a8a5aa','#c8c5ca','#e2e2e3','#eeeeef','#f3f3f4'];
+const calendarMonths = computed(() => {
+  const months = [];
+  const base = new Date();
+  base.setMonth(base.getMonth() + calendarOffset.value);
+  for (let m = 0; m < 4; m++) {
+    const d = new Date(base.getFullYear(), base.getMonth() - m, 1);
+    months.unshift({ year: d.getFullYear(), month: d.getMonth() });
+  }
+  return months;
+});
+const calendarTitle = computed(() => {
+  if (calendarMonths.value.length === 0) return '';
+  const first = calendarMonths.value[0];
+  const last = calendarMonths.value[calendarMonths.value.length - 1];
+  const fmt = (y,m) => y+'年'+(m+1)+'月';
+  return fmt(first.year, first.month) + ' - ' + fmt(last.year, last.month);
+});
+// --- 日历状态（真日历布局，每月一页，可翻月）---
+const _nowDate = new Date();
+const nowYear = ref(_nowDate.getFullYear());
+const nowMonth = ref(_nowDate.getMonth()); // 0-11
+const calYear = ref(_nowDate.getFullYear());
+const calMonth = ref(_nowDate.getMonth());
+const calMonthDisplay = computed(() => calMonth.value + 1);
+const todayStr = computed(() => {
+  const d = new Date();
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+});
+
+// creditsMap: { "2026-07-10": 52.3, "2026-07-09": 0, ... }
+const creditsMap = computed(() => {
+  const map = {};
+  calendarData.value.forEach(d => { map[d.date] = d.credits; });
+  return map;
+});
+
+const calCells = computed(() => {
+  const y = calYear.value;
+  const m = calMonth.value;
+  const firstDay = new Date(y, m, 1).getDay(); // 0=Sun
+  const daysInMonth = new Date(y, m+1, 0).getDate();
+  const cells = [];
+  const t = todayStr.value;
+
+  // 月初空白
+  for (let i = 0; i < firstDay; i++) {
+    cells.push({ day: null });
+  }
+  // 每一天
+  for (let d = 1; d <= daysInMonth; d++) {
+    const key = y+'-'+String(m+1).padStart(2,'0')+'-'+String(d).padStart(2,'0');
+    const v = creditsMap.value[key];
+    cells.push({
+      day: d,
+      credits: v !== undefined ? v : 0,
+      hasCredits: v !== undefined && v > 0,
+      isToday: key === t,
+    });
+  }
+  return cells;
+});
+
+// --- 趋势图：原生 SVG + JS 绘制（响应式）---
+const trendContainer = ref(null);
+let trendDrawTimer = null;
+
+function drawTrendChart() {
+  const container = document.getElementById('trendContainer');
+  const svg = document.getElementById('trendSvg');
+  const tooltip = document.getElementById('trendTooltip');
+  if (!container || !svg) return;
+
+  const data = calendarData.value.slice(-30);
+  if (data.length < 2) return;
+
+  const W = container.clientWidth;
+  const H = container.clientHeight;
+  // Guard: DOM not yet rendered (height=0)
+  if (W <= 0 || H <= 0) {
+    // Retry in 200ms
+    setTimeout(drawTrendChart, 200);
+    return;
+  }
+  const pad = { top: 20, right: 20, bottom: 30, left: 40 };
+  const cw = W - pad.left - pad.right;
+  const ch = H - pad.top - pad.bottom;
+  if (cw <= 0 || ch <= 0) return;
+
+  const maxV = Math.max(...data.map(d=>d.credits), 10);
+  const getX = (i) => pad.left + (i / (data.length-1)) * cw;
+  const getY = (v) => pad.top + ch - (v / maxV) * ch;
+
+  svg.innerHTML = '';
+
+  // Grid lines
+  for (let i = 0; i <= 4; i++) {
+    const y = getY(maxV * i / 4);
+    const line = document.createElementNS('http://www.w3.org/2000/svg','line');
+    line.setAttribute('x1', pad.left); line.setAttribute('y1', y);
+    line.setAttribute('x2', W-pad.right); line.setAttribute('y2', y);
+    line.setAttribute('stroke', '#e2e2e3'); line.setAttribute('stroke-width', '0.5');
+    svg.appendChild(line);
+  }
+
+  // X labels (every 5 days)
+  data.forEach((d,i) => {
+    if (i % 5 === 0 || i === data.length-1) {
+      const x = getX(i);
+      const t = document.createElementNS('http://www.w3.org/2000/svg','text');
+      t.setAttribute('x', x); t.setAttribute('y', H-4);
+      t.setAttribute('text-anchor','middle'); t.setAttribute('fill','#78767b');
+      t.setAttribute('font-size','9'); t.textContent = d.date.slice(5);
+      svg.appendChild(t);
+    }
+  });
+
+  // Area fill
+  let areaD = 'M '+getX(0)+' '+getY(0);
+  data.forEach((d,i) => { areaD += ' L '+getX(i)+' '+getY(d.credits); });
+  areaD += ' L '+getX(data.length-1)+' '+(pad.top+ch)+' L '+getX(0)+' '+(pad.top+ch)+' Z';
+  const area = document.createElementNS('http://www.w3.org/2000/svg','path');
+  area.setAttribute('d', areaD); area.setAttribute('fill', '#000'); area.setAttribute('fill-opacity', '0.05');
+  svg.appendChild(area);
+
+  // Line
+  let lineD = '';
+  data.forEach((d,i) => { lineD += (i===0?'M':'L')+' '+getX(i)+' '+getY(d.credits); });
+  const line = document.createElementNS('http://www.w3.org/2000/svg','path');
+  line.setAttribute('d', lineD); line.setAttribute('fill','none');
+  line.setAttribute('stroke','#000'); line.setAttribute('stroke-width','2');
+  line.setAttribute('stroke-linecap','round'); line.setAttribute('stroke-linejoin','round');
+  svg.appendChild(line);
+
+  // Dots + hover rects
+  const colW = cw / (data.length-1);
+  data.forEach((d,i) => {
+    const x = getX(i), y = getY(d.credits);
+
+    // Dot
+    const dot = document.createElementNS('http://www.w3.org/2000/svg','circle');
+    dot.setAttribute('cx',x); dot.setAttribute('cy',y); dot.setAttribute('r','3.5');
+    dot.setAttribute('fill','#fff'); dot.setAttribute('stroke','#000'); dot.setAttribute('stroke-width','1.5');
+    dot.setAttribute('id','dot-'+i);
+    svg.appendChild(dot);
+
+    // Guide line
+    const guide = document.createElementNS('http://www.w3.org/2000/svg','line');
+    guide.setAttribute('x1',x); guide.setAttribute('y1',pad.top);
+    guide.setAttribute('x2',x); guide.setAttribute('y2',pad.top+ch);
+    guide.setAttribute('stroke','#78767b'); guide.setAttribute('stroke-width','1');
+    guide.setAttribute('stroke-dasharray','3,3'); guide.setAttribute('opacity','0');
+    guide.setAttribute('id','guide-'+i);
+    svg.insertBefore(guide, line);
+
+    // Hover rect
+    const rect = document.createElementNS('http://www.w3.org/2000/svg','rect');
+    rect.setAttribute('x', x-colW/2); rect.setAttribute('y', pad.top);
+    rect.setAttribute('width', colW); rect.setAttribute('height', ch);
+    rect.setAttribute('fill','transparent'); rect.setAttribute('cursor','pointer');
+
+    rect.addEventListener('mouseenter', () => {
+      dot.setAttribute('r','6'); dot.setAttribute('fill','#000'); dot.setAttribute('stroke','#fff');
+      guide.setAttribute('opacity','1');
+      document.getElementById('ttDate').textContent = d.date;
+      document.getElementById('ttValue').textContent = d.credits+' 积分';
+      tooltip.style.opacity = '1';
+      const tw = tooltip.offsetWidth||110, th = tooltip.offsetHeight||40;
+      let tx = x - tw/2, ty = y - th - 10;
+      if (tx < 5) tx = 5;
+      if (tx+tw > W) tx = W-tw-5;
+      if (ty < 0) ty = y + 12;
+      tooltip.style.left = tx+'px';
+      tooltip.style.top = ty+'px';
+    });
+    rect.addEventListener('mouseleave', () => {
+      dot.setAttribute('r','3.5'); dot.setAttribute('fill','#fff'); dot.setAttribute('stroke','#000');
+      guide.setAttribute('opacity','0');
+      tooltip.style.opacity = '0';
+    });
+    svg.appendChild(rect);
+  });
+}
+
+// Watch for data changes and redraw
+const modelDonutSegs = computed(() => {
+  const items = (dashboardOverview.by_model||[]).filter(m=>m.credits>0);
+  if (items.length===0) return [];
+  const total = items.reduce((s,m)=>s+m.credits,0)||1;
+  const circ = 2*Math.PI*48;
+  let acc = 0;
+  return items.map((m,i) => {
+    const dash = circ*m.credits/total;
+    const off = -acc;
+    acc += dash;
+    return { dash: dash+' '+circ, offset: off, color: donutColors[i%donutColors.length] };
+  });
+});
+const keyDonutSegs = computed(() => {
+  const items = (dashboardOverview.by_key||[]).filter(k=>k.credits>0);
+  if (items.length===0) return [];
+  const total = items.reduce((s,k)=>s+k.credits,0)||1;
+  const circ = 2*Math.PI*48;
+  let acc = 0;
+  return items.map((k,i) => {
+    const dash = circ*k.credits/total;
+    const off = -acc;
+    acc += dash;
+    return { dash: dash+' '+circ, offset: off, color: donutColors[i%donutColors.length] };
+  });
+});
+async function loadDashboard() {
+  try {
+    const [ov, cal] = await Promise.all([
+      fetch('/api/proxy/stats/overview').then(r=>r.json()),
+      fetch('/api/proxy/stats/calendar?months=4').then(r=>r.json())
+    ]);
+    if (ov&&ov.success) Object.assign(dashboardOverview, ov);
+    if (cal&&cal.success) calendarData.value = cal.data||[];
+    nextTick(() => { drawTrendChart(); });
+  } catch(e) { console.error('Dashboard load failed', e); }
+}
 const accounts = ref([]);
 const selectedAccounts = ref([]);
 const isAllSelected = computed(() => accounts.value.length > 0 && selectedAccounts.value.length === accounts.value.length);
@@ -1022,8 +1380,24 @@ async function downloadExport() { if (selectedAccounts.value.length === 0) retur
         async function toggleProxyKey(k) { proxyKeyLoading[k.id] = true; const d = await api('/api/proxy/keys/' + k.id + '/toggle', { method: 'POST' }); proxyKeyLoading[k.id] = false; if (d) { k.active = d.active; showToast(d.active ? '已启用' : '已禁用'); } }
         async function saveSettings() { const r = await api('/api/settings', { method: 'POST', body: JSON.stringify({ webPort: settings.webPort, proxyPort: settings.proxyPort, httpProxy: settings.httpProxy, autoStartProxy: settings.autoStartProxy, checkinConcurrency: settings.checkinConcurrency }) }); if (r && r.success) { showToast('设置已保存（重启生效）'); } else { showToast('保存失败', 'error'); } }
         async function loadSettings() { const d = await api('/api/settings'); if (d) { settings.webPort = d.webPort || 8866; settings.proxyPort = d.proxyPort || 8867; settings.httpProxy = d.httpProxy || ''; settings.autoStartProxy = d.autoStartProxy !== undefined ? d.autoStartProxy : true; settings.checkinConcurrency = d.checkinConcurrency || 5; } }
-        onMounted(async () => { loadQuotaCache(); await loadSettings(); await loadAccounts(); await loadProxyStatus(); });
-        return { currentPage, activePageLabel, navItems, now, port, toast, showToast, fmtNum, stats, accounts, selectedAccounts, isAllSelected, toggleSelectAll, selectAllAccounts, invertSelection, showAddModal, addMethod, addMethods, addForm, addLoading, addError, addAccount, deleteAccount, quotaLoading, checkinLoading, querySingleQuota, checkinSingle, checkinAllLoading, lastCheckin, checkinLogs, checkinAll, quotaAllLoading, quotaSummary, quotaAccounts, queryAllQuota, refreshQuota, proxyInfo, proxyLoading, proxyStrategy, strategyOptions, strategyLabel, showStrategyDropdown, selectStrategy, hideStrategyDropdown, toggleProxy, showImportKeysModal, importKeysAccounts, importKeysLoading, importAllSelected, openImportKeysModal, toggleSelectAllImport, importSelectedKeys, deleteProxyKey, proxyKeyLoading, toggleProxyKey, settings, saveSettings, showImportModal, importMode, importModes, importFileName, importText, importPreview, importError, importResult, importLoading, openImportModal, closeImportModal, onImportFileChange, parseImportText, submitImport, showExportModal, exportLoading, exportContent, openExportModal, copyExportToClipboard, downloadExport, requestLogs, requestLogsLoading, logsSince, logsPage, logsTotal, logsTotalPages, logsPageSize, strategyLabelMap, formatLogTime, loadRequestLogs, clearLogs, goToPage, onPageSizeChange, showPageSizeDropdown, pageSizeOptions, setPageSize, hidePageSizeDropdown };
+        onMounted(async () => { loadQuotaCache(); await loadSettings(); await loadAccounts(); await loadProxyStatus(); loadDashboard();
+  // 趋势图重绘（窗口 resize + 数据变化）
+  window.addEventListener('resize', () => { clearTimeout(trendDrawTimer); trendDrawTimer = setTimeout(drawTrendChart, 100); });
+  watch(calendarData, () => { nextTick(() => drawTrendChart()); });
+  watch(currentPage, (p) => { if (p==='dashboard') { nextTick(() => { setTimeout(drawTrendChart, 300); }); } });
+  // 日历翻月限制：不能超过当前月
+  watch(calYear, () => {
+    if (calYear.value > nowYear.value || (calYear.value===nowYear.value && calMonth.value>nowMonth.value)) {
+      calYear.value = nowYear.value; calMonth.value = nowMonth.value;
+    }
+  });
+  watch(calMonth, () => {
+    if (calYear.value===nowYear.value && calMonth.value>nowMonth.value) {
+      calMonth.value = nowMonth.value;
+    }
+  });
+});
+        return { currentPage, activePageLabel, navItems, now, port, toast, showToast, fmtNum, stats, accounts, selectedAccounts, isAllSelected, toggleSelectAll, selectAllAccounts, invertSelection, showAddModal, addMethod, addMethods, addForm, addLoading, addError, addAccount, deleteAccount, quotaLoading, checkinLoading, querySingleQuota, checkinSingle, checkinAllLoading, lastCheckin, checkinLogs, checkinAll, quotaAllLoading, quotaSummary, quotaAccounts, queryAllQuota, refreshQuota, proxyInfo, proxyLoading, proxyStrategy, strategyOptions, strategyLabel, showStrategyDropdown, selectStrategy, hideStrategyDropdown, toggleProxy, showImportKeysModal, importKeysAccounts, importKeysLoading, importAllSelected, openImportKeysModal, toggleSelectAllImport, importSelectedKeys, deleteProxyKey, proxyKeyLoading, toggleProxyKey, settings, saveSettings, showImportModal, importMode, importModes, importFileName, importText, importPreview, importError, importResult, importLoading, openImportModal, closeImportModal, onImportFileChange, parseImportText, submitImport, showExportModal, exportLoading, exportContent, openExportModal, copyExportToClipboard, downloadExport, requestLogs, requestLogsLoading, logsSince, logsPage, logsTotal, logsTotalPages, logsPageSize, strategyLabelMap, formatLogTime, dashboardOverview, calendarData, calYear, calMonth, calMonthDisplay, nowYear, nowMonth, creditsMap, calCells, todayStr, modelDonutSegs, keyDonutSegs, donutColors, loadDashboard, drawTrendChart, trendContainer, trendDrawTimer, loadRequestLogs, clearLogs, goToPage, onPageSizeChange, showPageSizeDropdown, pageSizeOptions, setPageSize, hidePageSizeDropdown };
       }
     }).mount('#app');
   </script>
