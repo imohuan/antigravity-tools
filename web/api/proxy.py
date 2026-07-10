@@ -198,16 +198,16 @@ def proxy_import_from_accounts(req: ImportFromAccountsRequest):
             skipped += 1
             continue
 
-         key_data = {
-             "key_id": f"ck_{secrets.token_hex(4)}",
-             "api_key": import_key,
-             "label": acc.display_name or acc.uid,
-             "status": "active",
-             "used_count": 0,
-             "points": f"{acc.quota.credits_remaining:.0f}/{acc.quota.credits_total:.0f}" if acc.quota and acc.quota.credits_total > 0 else "",
-             "points_updated_at": "imported" if acc.quota and acc.quota.credits_total > 0 else "",
-             "created_at": dt.datetime.now().isoformat(),
-         }
+        key_data = {
+            "key_id": f"ck_{secrets.token_hex(4)}",
+            "api_key": import_key,
+            "label": acc.display_name or acc.uid,
+            "status": "active",
+            "used_count": 0,
+            "points": f"{acc.quota.credits_remaining:.0f}/{acc.quota.credits_total:.0f}" if acc.quota and acc.quota.credits_total > 0 else "",
+            "points_updated_at": "imported" if acc.quota and acc.quota.credits_total > 0 else "",
+            "created_at": dt.datetime.now().isoformat(),
+        }
         db.add_upstream_key(key_data)
         imported += 1
 
@@ -231,55 +231,55 @@ def proxy_quota(cache: str = "true"):
         updated_keys = []
         for k in keys:
             api_key = k.get("api_key", "")
-             if not api_key:
-                 updated_keys.append(k)
-                 continue
-             try:
-                 key_type = k.get("key_type", "")
-                 if api_key.startswith("ck_") or key_type == "apikey":
-                     client = ApiClient.from_api_key(api_key)
-                 else:
-                     uid = k.get("uid", "")
-                     domain = k.get("domain", "www.codebuddy.cn")
-                     if not uid:
-                         # 老数据没有 uid，尝试从 accounts 匹配
-                         from src.utils.store import load_accounts as _la
-                         accs = _la()
-                         matched = next((a for a in accs if a.auth_token == api_key or a.api_key == api_key), None)
-                         if matched:
-                             uid = matched.uid
-                             domain = matched.domain or "www.codebuddy.cn"
-                         else:
-                             updated_keys.append(k)
-                             continue
-                     client = ApiClient(access_token=api_key, uid=uid, domain=domain)
-                 qr = client.get_user_resource()
-                 if qr.get("success"):
-                     key_total = float(qr.get("total_credits", 0))
-                     key_remain = float(qr.get("remaining_credits", 0))
-                     raw_packages = qr.get("packages", [])
-                     packages_dicts = []
-                     for p in raw_packages:
-                         if hasattr(p, '__dict__'):
-                             d = {}
-                             for attr in ['package_name', 'type_label', 'cycle_remain', 'cycle_size',
+            if not api_key:
+                updated_keys.append(k)
+                continue
+            try:
+                key_type = k.get("key_type", "")
+                if api_key.startswith("ck_") or key_type == "apikey":
+                    client = ApiClient.from_api_key(api_key)
+                else:
+                    uid = k.get("uid", "")
+                    domain = k.get("domain", "www.codebuddy.cn")
+                    if not uid:
+                        # 老数据没有 uid，尝试从 accounts 匹配
+                        from src.utils.store import load_accounts as _la
+                        accs = _la()
+                        matched = next((a for a in accs if a.auth_token == api_key or a.api_key == api_key), None)
+                        if matched:
+                            uid = matched.uid
+                            domain = matched.domain or "www.codebuddy.cn"
+                        else:
+                            updated_keys.append(k)
+                            continue
+                    client = ApiClient(access_token=api_key, uid=uid, domain=domain)
+                qr = client.get_user_resource()
+                if qr.get("success"):
+                    key_total = float(qr.get("total_credits", 0))
+                    key_remain = float(qr.get("remaining_credits", 0))
+                    raw_packages = qr.get("packages", [])
+                    packages_dicts = []
+                    for p in raw_packages:
+                        if hasattr(p, '__dict__'):
+                            d = {}
+                            for attr in ['package_name', 'type_label', 'cycle_remain', 'cycle_size',
                                           'cycle_start', 'cycle_end', 'package_type', 'capacity_unit']:
-                                 val = getattr(p, attr, None)
-                                 if val is not None:
-                                     d[attr] = str(val) if not isinstance(val, (int, float)) else val
-                             packages_dicts.append(d)
-                         elif isinstance(p, dict):
-                             packages_dicts.append(p)
-                     from datetime import datetime
-                     db.update_upstream_key(api_key, {
-                         "points": f"{key_remain:.0f}/{key_total:.0f}",
-                         "packages": packages_dicts,
-                         "points_updated_at": datetime.now().isoformat(),
-                     })
-                     k["points"] = f"{key_remain:.0f}/{key_total:.0f}"
-                     k["packages"] = packages_dicts
-             except Exception as e:
-                 _log.getLogger(__name__).warning("proxy/quota: Key %s 实时查询失败: %s", api_key[:16], e)
+                                val = getattr(p, attr, None)
+                                if val is not None:
+                                    d[attr] = str(val) if not isinstance(val, (int, float)) else val
+                            packages_dicts.append(d)
+                        elif isinstance(p, dict):
+                            packages_dicts.append(p)
+                    from datetime import datetime
+                    db.update_upstream_key(api_key, {
+                        "points": f"{key_remain:.0f}/{key_total:.0f}",
+                        "packages": packages_dicts,
+                        "points_updated_at": datetime.now().isoformat(),
+                    })
+                    k["points"] = f"{key_remain:.0f}/{key_total:.0f}"
+                    k["packages"] = packages_dicts
+            except Exception as e:
+                _log.getLogger(__name__).warning("proxy/quota: Key %s 实时查询失败: %s", api_key[:16], e)
             updated_keys.append(k)
         keys = updated_keys
 
@@ -374,16 +374,3 @@ def proxy_logs(since: float = 0, limit: int = 50, page: int = 1):
         "success": True,
         **result,
     }
-         key_data = {
-             "key_id": f"ck_{secrets.token_hex(4)}",
-             "api_key": import_key,
-             "label": acc.display_name or acc.uid,
-             "status": "active",
-             "used_count": 0,
-             "uid": acc.uid,
-             "domain": acc.domain or "www.codebuddy.cn",
-             "key_type": "apikey" if (acc.api_key and acc.api_key.startswith("ck_")) else "auth_token",
-             "points": f"{acc.quota.credits_remaining:.0f}/{acc.quota.credits_total:.0f}" if acc.quota and acc.quota.credits_total > 0 else "",
-             "points_updated_at": "imported" if acc.quota and acc.quota.credits_total > 0 else "",
-             "created_at": dt.datetime.now().isoformat(),
-         }
