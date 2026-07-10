@@ -853,7 +853,7 @@ const quotaAllLoading = ref(false); const quotaSummary = reactive({ totalRemain:
 const proxyInfo = reactive({ running: false, port: 8867, total_keys: 0, active_keys: 0, exhausted_keys: 0, keys: [] });
         const requestLogs = ref([]); const requestLogsLoading = ref(false); const logsSince = ref(0); const logsPage = ref(1); const logsTotal = ref(0); const logsTotalPages = ref(0); const logsPageSize = ref(10); const showPageSizeDropdown = ref(false); const pageSizeOptions = [10, 20, 50, 100];
         const strategyLabelMap = { 1: '专一', 2: '临期优先', 3: '轮询', 4: '会话亲和' };
-        function goToPage(p) { if (p >= 1 && p <= logsTotalPages.value) { loadRequestLogs(p); } }
+        function goToPage(p) { if (p >= 1) { loadRequestLogs(p); } }
         function setPageSize(s) { logsPageSize.value = s; showPageSizeDropdown.value = false; logsPage.value = 1; loadRequestLogs(1); }
         function hidePageSizeDropdown() { setTimeout(()=>{showPageSizeDropdown.value=false}, 150); }
         function onPageSizeChange() { logsPage.value = 1; loadRequestLogs(1); }
