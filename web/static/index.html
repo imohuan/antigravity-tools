@@ -929,7 +929,7 @@ async function downloadExport() { if (selectedAccounts.value.length === 0) retur
         async function loadQuotaCache() {
           // 第一步：尝试从服务器获取配额
           try {
-            const d = await api('/api/proxy/quota');
+            const d = await api('/api/proxy/quota?cache=true');
             if (d && d.success && d.summary && d.accounts && d.accounts.length > 0) {
               quotaSummary.totalRemain = d.summary.totalRemain || 0;
               quotaSummary.totalCredits = d.summary.totalCredits || 0;
@@ -947,7 +947,7 @@ async function downloadExport() { if (selectedAccounts.value.length === 0) retur
         }
         async function queryAllQuota() { quotaAllLoading.value = true; const cached = quotaAccounts.value; const expandedMap = new Map(); const cachedOrder = cached.map(a => a.name); cached.forEach(a => expandedMap.set(a.name, a.expanded));
           // 第一步：尝试从代理服务器获取配额（后端维护的数据）
-          let d = await api('/api/proxy/quota');
+          let d = await api('/api/proxy/quota?cache=false');
           let source = 'server';
           // 第二步：如果服务器数据不可用，回退到传统 /api/quota/all
           if (!d || !d.success || !d.accounts || d.accounts.length === 0) {

@@ -215,10 +215,56 @@ def proxy_import_from_accounts(req: ImportFromAccountsRequest):
 
 # ─── 配额接口：返回代理 Key 池的配额数据 ───
 @router.get("/proxy/quota")
-def proxy_quota():
-    """获取代理 Key 池的配额数据（优先使用后端数据）"""
+def proxy_quota(cache: str = "true"):
+    """获取代理 Key 池的配额数据。
+    cache=true（默认）：直接读数据库缓存（快，但 packages 可能不完整）。
+    cache=false：实时查询每个 Key 的积分（慢，但 packages 完整）。
+    """
     db = _get_db()
     keys = db.get_upstream_keys()
+
+    # cache=false 时：实时查询每个 Key 的积分，更新数据库缓存
+    if cache.lower() != "true":
+        import logging as _log
+        _log.getLogger(__name__).info("proxy/quota: cache=false, 实时查询 %d 个 Key", len(keys))
+        from src.modules.api_client import ApiClient
+        updated_keys = []
+        for k in keys:
+            api_key = k.get("api_key", "")
+            if api_key.startswith("ck_"):
+                try:
+                    client = ApiClient.from_api_key(api_key)
+                    qr = client.get_user_resource()
+                    if qr.get("success"):
+                        key_total = float(qr.get("total_credits", 0))
+                        key_remain = float(qr.get("remaining_credits", 0))
+                        raw_packages = qr.get("packages", [])
+                        # 将 ResourcePackage 对象转为可序列化的 dict
+                        packages_dicts = []
+                        for p in raw_packages:
+                            if hasattr(p, '__dict__'):
+                                d = {}
+                                for attr in ['package_name', 'type_label', 'cycle_remain', 'cycle_size',
+                                             'cycle_start', 'cycle_end', 'package_type', 'capacity_unit']:
+                                    val = getattr(p, attr, None)
+                                    if val is not None:
+                                        d[attr] = str(val) if not isinstance(val, (int, float)) else val
+                                packages_dicts.append(d)
+                            elif isinstance(p, dict):
+                                packages_dicts.append(p)
+                        # 更新数据库缓存
+                        from datetime import datetime
+                        db.update_upstream_key(api_key, {
+                            "points": f"{key_remain:.0f}/{key_total:.0f}",
+                            "packages": packages_dicts,
+                            "points_updated_at": datetime.now().isoformat(),
+                        })
+                        k["points"] = f"{key_remain:.0f}/{key_total:.0f}"
+                        k["packages"] = packages_dicts
+                except Exception as e:
+                    _log.getLogger(__name__).warning("proxy/quota: Key %s 实时查询失败: %s", api_key[:16], e)
+            updated_keys.append(k)
+        keys = updated_keys
 
     accounts = []
     total_remaining = 0.0
