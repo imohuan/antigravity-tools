@@ -1060,17 +1060,16 @@ class ProxyDatabase:
         if self._stats_timer is not None:
             return
 
-        # 首次迁移：把 proxy_db.json 里已有的 request_logs 迁移到 SQLite
-        try:
-            with self._lock:
-                old_logs = list(self._data.get("request_logs", []))
-            if old_logs:
-                migrated = self.log_store.migrate_from_json(old_logs)
-                logger.info(f"[StatsTimer] 从 JSON 迁移了 {migrated} 条旧日志到 SQLite")
-                # 把迁移的日志聚合到 daily_stats.json
-                self._aggregate_historical_logs(old_logs)
-        except Exception as e:
-            logger.error(f"[StatsTimer] 迁移旧日志失败: {e}")
+        # [已废弃] 首次迁移：旧 JSON 日志已迁移完毕，不再重复执行
+        # try:
+        #     with self._lock:
+        #         old_logs = list(self._data.get("request_logs", []))
+        #     if old_logs:
+        #         migrated = self.log_store.migrate_from_json(old_logs)
+        #         logger.info(f"[StatsTimer] 从 JSON 迁移了 {migrated} 条旧日志到 SQLite")
+        #         self._aggregate_historical_logs(old_logs)
+        # except Exception as e:
+        #     logger.error(f"[StatsTimer] 迁移旧日志失败: {e}")
 
         def _run():
             while True:
