@@ -60,6 +60,48 @@ class LogStore:
             self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_logs_key ON request_logs(main_key_id)"
             )
+            self._conn.execute("""
+                CREATE TABLE IF NOT EXISTS daily_stats (
+                    date TEXT PRIMARY KEY,
+                    requests INTEGER DEFAULT 0,
+                    success INTEGER DEFAULT 0,
+                    failed INTEGER DEFAULT 0,
+                    tokens INTEGER DEFAULT 0,
+                    credits REAL DEFAULT 0.0,
+                    duration_sum INTEGER DEFAULT 0
+                )
+            """)
+            self._conn.execute("""
+                CREATE TABLE IF NOT EXISTS daily_model_stats (
+                    date TEXT NOT NULL,
+                    model TEXT NOT NULL,
+                    count INTEGER DEFAULT 0,
+                    credits REAL DEFAULT 0.0,
+                    PRIMARY KEY (date, model)
+                )
+            """)
+            self._conn.execute("""
+                CREATE TABLE IF NOT EXISTS daily_key_stats (
+                    date TEXT NOT NULL,
+                    key_label TEXT NOT NULL,
+                    count INTEGER DEFAULT 0,
+                    credits REAL DEFAULT 0.0,
+                    PRIMARY KEY (date, key_label)
+                )
+            """)
+
+            # 补全前端需要的字段（兼容旧数据库）
+            for col, col_type in [
+                ("key_mode", "TEXT DEFAULT ''"),
+                ("error", "TEXT DEFAULT ''"),
+                ("first_token_ms", "INTEGER DEFAULT 0"),
+                ("attempt", "INTEGER DEFAULT 1"),
+            ]:
+                try:
+                    self._conn.execute(f"ALTER TABLE request_logs ADD COLUMN {col} {col_type}")
+                except sqlite3.OperationalError:
+                    pass
+
             self._conn.commit()
         return self._conn
 
@@ -71,8 +113,9 @@ class LogStore:
                 """INSERT INTO request_logs
                    (timestamp, date, hour, main_key_id, main_key_label, model,
                     status, prompt_tokens, completion_tokens, total_tokens,
-                    credit, duration_ms, request_path)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    credit, duration_ms, request_path,
+                    key_mode, error, first_token_ms, attempt)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     ts,
                     datetime.fromtimestamp(ts).strftime("%Y-%m-%d"),
@@ -87,8 +130,53 @@ class LogStore:
                     log.get("credit", 0.0),
                     log.get("duration_ms", 0),
                     log.get("request_path", ""),
+                    log.get("key_mode", ""),
+                    log.get("error", ""),
+                    log.get("first_token_ms", 0),
+                    log.get("attempt", 1),
                 ),
             )
+
+            # INSERT 明细后，立即 UPSERT 三张聚合表
+            date_str = datetime.fromtimestamp(ts).strftime("%Y-%m-%d")
+            model = log.get("model", "") or "unknown"
+            key_label = log.get("main_key_label", "") or "unknown"
+            status = log.get("status", "success")
+            is_success = 1 if status == "success" else 0
+            is_failed = 0 if status == "success" else 1
+            credit = log.get("credit", 0.0) or 0.0
+            tokens = log.get("total_tokens", 0) or 0
+            duration = log.get("duration_ms", 0) or 0
+
+            self.conn.execute("""
+                INSERT INTO daily_stats (date, requests, success, failed, tokens, credits, duration_sum)
+                VALUES (?, 1, ?, ?, ?, ?, ?)
+                ON CONFLICT(date) DO UPDATE SET
+                    requests = requests + 1,
+                    success = success + ?,
+                    failed = failed + ?,
+                    tokens = tokens + ?,
+                    credits = credits + ?,
+                    duration_sum = duration_sum + ?
+            """, (date_str, is_success, is_failed, tokens, credit, duration,
+                  is_success, is_failed, tokens, credit, duration))
+
+            self.conn.execute("""
+                INSERT INTO daily_model_stats (date, model, count, credits)
+                VALUES (?, ?, 1, ?)
+                ON CONFLICT(date, model) DO UPDATE SET
+                    count = count + 1,
+                    credits = credits + ?
+            """, (date_str, model, credit, credit))
+
+            self.conn.execute("""
+                INSERT INTO daily_key_stats (date, key_label, count, credits)
+                VALUES (?, ?, 1, ?)
+                ON CONFLICT(date, key_label) DO UPDATE SET
+                    count = count + 1,
+                    credits = credits + ?
+            """, (date_str, key_label, credit, credit))
+
             self.conn.commit()
         except Exception as e:
             logger.error(f"[LogStore] 写入日志失败: {e}")
