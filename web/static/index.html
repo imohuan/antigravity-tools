@@ -435,7 +435,7 @@
       <p class="font-body-sm text-body-sm text-secondary">总 Token</p>
     </div>
     <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md text-center">
-      <p class="font-headline-md text-headline-md text-primary">{{Math.round(dashboardOverview.total_credits)}}</p>
+      <p class="font-headline-md text-headline-md text-primary">{{fmtCredit(dashboardOverview.total_credits)}}</p>
       <p class="font-body-sm text-body-sm text-secondary">总消费</p>
     </div>
     <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md text-center">
@@ -490,7 +490,7 @@
               <span class="text-[8px] leading-none" :class="cell.isToday?'text-on-primary/70':'text-secondary'">{{cell.day}}</span>
               <span class="text-[10px] font-bold leading-none mt-0.5"
                     :class="cell.isToday?'text-on-primary':cell.hasCredits?'text-primary':'text-outline-variant'">
-                {{cell.hasCredits ? Math.round(cell.credits) : (cell.credits===0 ? '0' : '-')}}
+                {{cell.hasCredits ? fmtCredit(cell.credits) : (cell.credits===0 ? '0' : '-')}}
               </span>
             </div>
           </template>
@@ -530,7 +530,7 @@
           <div v-for="(m,i) in dashboardOverview.by_model.slice(0,6)" :key="i" class="flex items-center gap-xs text-[11px]">
             <span class="w-2 h-2 rounded-full shrink-0" :style="{background:donutColors[i%donutColors.length]}"></span>
             <span class="text-primary truncate">{{m.name}}</span>
-            <span class="text-secondary ml-auto shrink-0">{{m.credits}}</span>
+            <span class="text-secondary ml-auto shrink-0">{{fmtCredit(m.credits)}}</span>
           </div>
         </div>
       </div>
@@ -548,7 +548,7 @@
           <div v-for="(k,i) in dashboardOverview.by_key.slice(0,6)" :key="i" class="flex items-center gap-xs text-[11px]">
             <span class="w-2 h-2 rounded-full shrink-0" :style="{background:donutColors[i%donutColors.length]}"></span>
             <span class="text-primary truncate">{{k.name}}</span>
-            <span class="text-secondary ml-auto shrink-0">{{k.credits}}</span>
+            <span class="text-secondary ml-auto shrink-0">{{fmtCredit(k.credits)}}</span>
           </div>
         </div>
       </div>
@@ -1141,7 +1141,7 @@ function drawTrendChart() {
       dot.setAttribute('r','6'); dot.setAttribute('fill','#000'); dot.setAttribute('stroke','#fff');
       guide.setAttribute('opacity','1');
       document.getElementById('ttDate').textContent = d.date;
-      document.getElementById('ttValue').textContent = d.credits+' 积分';
+      document.getElementById('ttValue').textContent = fmtCredit(d.credits)+' 积分';
       tooltip.style.opacity = '1';
       const tw = tooltip.offsetWidth||110, th = tooltip.offsetHeight||40;
       let tx = x - tw/2, ty = y - th - 10;
@@ -1218,7 +1218,13 @@ const proxyInfo = reactive({ running: false, port: 8867, total_keys: 0, active_k
         function hidePageSizeDropdown() { setTimeout(()=>{showPageSizeDropdown.value=false}, 150); }
         function onPageSizeChange() { logsPage.value = 1; loadRequestLogs(1); }
         function clearLogs() { logsSince.value = Date.now() / 1000; requestLogs.value = []; }
-        function formatLogTime(ts) { if (!ts) return '-'; const d = new Date(ts*1000); return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')+':'+String(d.getSeconds()).padStart(2,'0'); }
+                function fmtCredit(n) {
+            const v = Number(n) || 0;
+            const s = v.toFixed(1);
+            return s.endsWith('.0') ? s.slice(0, -2) : s;
+        }
+
+function formatLogTime(ts) { if (!ts) return '-'; const d = new Date(ts*1000); return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')+':'+String(d.getSeconds()).padStart(2,'0'); }
         async function loadRequestLogs(page) { requestLogsLoading.value = true; if (typeof page === 'number' && page >= 1) logsPage.value = page; const p = logsPage.value; const ps = logsPageSize.value; const sinceParam = logsSince.value > 0 ? '&since=' + logsSince.value : ''; const d = await api('/api/proxy/logs?limit=' + ps + '&page=' + p + sinceParam); requestLogsLoading.value = false; if (d && d.logs) { requestLogs.value = d.logs; logsTotal.value = d.total || 0; logsTotalPages.value = d.total_pages || 0; } } const proxyLoading = ref(false);
         const proxyStrategy = ref(parseInt(localStorage.getItem('ag_proxy_strategy')||'1'));
         const showStrategyDropdown = ref(false);
