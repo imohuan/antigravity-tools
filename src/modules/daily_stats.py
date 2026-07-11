@@ -69,16 +69,8 @@ class DailyStatsManager:
         return self._load()
 
     def get_calendar(self, months: int = 4) -> list[dict]:
-        """获取日历热力图数据"""
-        stats = self._load()
-        result = []
-        for date_key, day in sorted(stats.items()):
-            result.append({
-                "date": date_key,
-                "credits": day.get("total_credits", 0),
-                "count": day.get("request_count", 0),
-            })
-        return result[-(months * 31):]
+        """获取日历热力图数据 — 实时从 SQLite 聚合"""
+        return self._log_store.aggregate_calendar(months)
 
     def get_overview(self) -> dict:
         """获取全局总览 — 实时从 SQLite 聚合，不依赖 daily_stats.json 定时同步"""
@@ -100,10 +92,13 @@ class DailyStatsManager:
         total_success = agg["success_count"]
         total_failed = agg["failed_count"]
 
-        by_model = self._log_store.get_all_model_distribution()
-        by_key = self._log_store.get_all_key_distribution()
+        # 模型和 Key 分布只在数据量较小时实时查，大量数据时跳过避免卡顿
+        by_model = {}
+        by_key = {}
+        if total_requests <= 50000:
+            by_model = self._log_store.get_all_model_distribution()
+            by_key = self._log_store.get_all_key_distribution()
 
-        avg_duration = agg["avg_duration_ms"]
         success_rate = (
             round(total_success / total_requests * 100, 1)
             if total_requests > 0
@@ -124,7 +119,7 @@ class DailyStatsManager:
             "success_rate": success_rate,
             "total_tokens": agg["total_tokens"],
             "total_credits": agg["total_credits"],
-            "avg_duration_ms": avg_duration,
+            "avg_duration_ms": agg["avg_duration_ms"],
             "by_model": [
                 {"name": k, "credits": v["credits"], "count": v["count"]}
                 for k, v in top_models

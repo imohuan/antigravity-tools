@@ -168,6 +168,21 @@ class LogStore:
             "avg_duration_ms": int(row[5]),
         }
 
+    def aggregate_calendar(self, months: int = 4) -> list[dict]:
+        rows = self.conn.execute(
+            """SELECT date,
+                 COUNT(*) as total,
+                 COALESCE(SUM(credit), 0) as total_credits
+               FROM request_logs
+               WHERE date >= date('now', ?)
+               GROUP BY date ORDER BY date""",
+            (f"-{months} months",),
+        ).fetchall()
+        return [
+            {"date": row[0], "credits": round(row[2], 4), "count": row[1]}
+            for row in rows
+        ]
+
     def get_all_model_distribution(self) -> dict:
         """获取所有日期的模型分布"""
         rows = self.conn.execute(
