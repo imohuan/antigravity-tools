@@ -547,9 +547,7 @@ class ProxyDatabase:
         # 日志存储和统计管理器（懒加载）
         self._log_store = None
         self._daily_stats = None
-        self._stats_timer = None
-        # 自动启动统计定时器（不依赖 ProxyServer.start()）
-        self.start_stats_timer()
+
 
     def _load(self) -> dict:
         """从文件加载数据（带重试，读取失败时重试而非返回空数据）"""
@@ -558,9 +556,7 @@ class ProxyDatabase:
             return {
                 "upstream_keys": [],
                 "sub_api_keys": [],
-                "request_logs": [],
-                "daily_stats": {},
-                "settings": {"upstream_proxy": ""},
+"settings": {"upstream_proxy": ""},
             }
         # 最多重试 3 次，应对并发写入导致的短暂读取失败
         for attempt in range(3):
@@ -587,9 +583,7 @@ class ProxyDatabase:
         return {
             "upstream_keys": [],
             "sub_api_keys": [],
-            "request_logs": [],
-            "daily_stats": {},
-            "settings": {"upstream_proxy": ""},
+"settings": {"upstream_proxy": ""},
         }
 
     def _save(self):
@@ -1049,164 +1043,46 @@ class ProxyDatabase:
     @property
     def daily_stats(self) -> DailyStatsManager:
         if self._daily_stats is None:
-            import os as _os
-            data_dir = _os.path.dirname(self._db_path)
-            self._daily_stats = DailyStatsManager(
-                _os.path.join(data_dir, "daily_stats.json"),
-                self.log_store
-            )
+            self._daily_stats = DailyStatsManager(self.log_store)
         return self._daily_stats
 
-    def start_stats_timer(self):
-        """启动定时器：首次迁移旧日志，然后每60秒聚合一次 + 清理旧日志"""
-        if self._stats_timer is not None:
-            return
 
-        # [已废弃] 首次迁移：旧 JSON 日志已迁移完毕，不再重复执行
-        # try:
-        #     with self._lock:
-        #         old_logs = list(self._data.get("request_logs", []))
-        #     if old_logs:
-        #         migrated = self.log_store.migrate_from_json(old_logs)
-        #         logger.info(f"[StatsTimer] 从 JSON 迁移了 {migrated} 条旧日志到 SQLite")
-        #         self._aggregate_historical_logs(old_logs)
-        # except Exception as e:
-        #     logger.error(f"[StatsTimer] 迁移旧日志失败: {e}")
-
-        def _run():
-            while True:
-                import time as _time
-                _time.sleep(60)
-                try:
-                    self.daily_stats.sync_today()
-                    self.log_store.cleanup_old()
-                except Exception as e:
-                    logger.error(f"[StatsTimer] 聚合失败: {e}")
-        self._stats_timer = threading.Thread(target=_run, daemon=True)
-        self._stats_timer.start()
-        logger.info("[StatsTimer] 已启动，每60秒聚合一次")
-
-    def _aggregate_historical_logs(self, logs: list):
-        """把旧日志按日期聚合后写入 daily_stats.json"""
-        from collections import defaultdict
-        from datetime import datetime
-
-        by_date = defaultdict(lambda: {
-            "total": 0, "success": 0, "failed": 0,
-            "total_tokens": 0, "total_credits": 0.0, "total_duration": 0,
-            "by_model": defaultdict(lambda: {"credits": 0.0, "count": 0}),
-            "by_key": defaultdict(lambda: {"credits": 0.0, "count": 0}),
-        })
-
-        for log in logs:
-            ts = log.get("timestamp", 0)
-            if not ts:
-                continue
-            date_str = datetime.fromtimestamp(ts).strftime("%Y-%m-%d")
-            d = by_date[date_str]
-            d["total"] += 1
-            if log.get("status") == "success":
-                d["success"] += 1
-            else:
-                d["failed"] += 1
-            d["total_tokens"] += log.get("total_tokens", 0)
-            credit = log.get("credit", 0.0)
-            d["total_credits"] = round(d["total_credits"] + credit, 4)
-            d["total_duration"] += log.get("duration_ms", 0)
-            model = log.get("model", "unknown") or "unknown"
-            d["by_model"][model]["credits"] = round(d["by_model"][model]["credits"] + credit, 4)
-            d["by_model"][model]["count"] += 1
-            key_label = log.get("main_key_label", "unknown") or "unknown"
-            d["by_key"][key_label]["credits"] = round(d["by_key"][key_label]["credits"] + credit, 4)
-            d["by_key"][key_label]["count"] += 1
-
-        # 加载现有 daily_stats.json 并合并
-        stats = self.daily_stats._load()
-        for date_str, d in by_date.items():
-            avg_dur = int(d["total_duration"] / d["total"]) if d["total"] > 0 else 0
-            entry = {
-                "date": date_str,
-                "request_count": d["total"],
-                "success_count": d["success"],
-                "failed_count": d["failed"],
-                "total_tokens": d["total_tokens"],
-                "total_credits": d["total_credits"],
-                "avg_duration_ms": avg_dur,
-                "by_model": {k: dict(v) for k, v in d["by_model"].items()},
-                "by_key": {k: dict(v) for k, v in d["by_key"].items()},
-            }
-            if date_str in stats:
-                existing = stats[date_str]
-                existing["request_count"] += entry["request_count"]
-                existing["success_count"] += entry["success_count"]
-                existing["failed_count"] += entry["failed_count"]
-                existing["total_tokens"] += entry["total_tokens"]
-                existing["total_credits"] = round(existing["total_credits"] + entry["total_credits"], 4)
-                old_cnt = existing.get("_old_count", existing["request_count"] - entry["request_count"])
-                new_cnt = entry["request_count"]
-                if old_cnt + new_cnt > 0:
-                    existing["avg_duration_ms"] = int(
-                        (existing["avg_duration_ms"] * old_cnt + entry["avg_duration_ms"] * new_cnt) /
-                        (old_cnt + new_cnt)
-                    )
-                for cat in ["by_model", "by_key"]:
-                    for k, v in entry[cat].items():
-                        if k in existing[cat]:
-                            existing[cat][k]["credits"] = round(existing[cat][k]["credits"] + v["credits"], 4)
-                            existing[cat][k]["count"] += v["count"]
-                        else:
-                            existing[cat][k] = v
-            else:
-                stats[date_str] = entry
-
-        self.daily_stats._save(stats)
-        logger.info(f"[StatsTimer] 已聚合 {len(by_date)} 天的历史数据到 daily_stats.json")
 
     def add_request_log(self, log: dict):
-        # 1. 写入 SQLite（不持锁，极快）
         try:
             self.log_store.insert(log)
         except Exception as e:
             logger.error(f"[add_request_log] SQLite写入失败: {e}")
 
-        # 2. 更新内存 JSON 日志（兼容现有 UI 的请求记录表格）
-        with self._lock:
-            logs = self._data.setdefault("request_logs", [])
-            logs.append(log)
-            if len(logs) > 2000:
-                self._data["request_logs"] = logs[-2000:]
-            self._save()
-
     def get_request_logs(self, since: float = 0, limit: int = 50, page: int = 1, reverse: bool = True) -> dict:
-        """获取请求日志（分页）
+        """获取请求日志（分页）— 从 SQLite 查询"""
+        order = "DESC" if reverse else "ASC"
+        offset = (page - 1) * limit
 
-        Args:
-            since: 只返回此时间戳之后的日志（0=全部）
-            limit: 每页条数
-            page: 页码（从 1 开始）
-            reverse: True=最新的在前，False=最早的在前
-        Returns:
-            {"logs": [...], "total": int, "page": int, "limit": int, "total_pages": int}
-        """
-        with self._lock:
-            logs = self._data.get("request_logs", [])
-            if since:
-                logs = [l for l in logs if l.get("timestamp", 0) > since]
-            total = len(logs)
-            if reverse:
-                logs = list(reversed(logs))
-            # 分页切片
-            start = (page - 1) * limit
-            end = start + limit
-            page_logs = logs[start:end]
-            total_pages = max(1, (total + limit - 1) // limit) if total > 0 else 0
-            return {
-                "logs": page_logs,
-                "total": total,
-                "page": page,
-                "limit": limit,
-                "total_pages": total_pages,
-            }
+        if since > 0:
+            total = self.log_store.conn.execute(
+                "SELECT COUNT(*) FROM request_logs WHERE timestamp > ?", (since,)
+            ).fetchone()[0]
+            rows = self.log_store.conn.execute(
+                f"SELECT * FROM request_logs WHERE timestamp > ? ORDER BY timestamp {order} LIMIT ? OFFSET ?",
+                (since, limit, offset)
+            ).fetchall()
+        else:
+            total = self.log_store.conn.execute(
+                "SELECT COUNT(*) FROM request_logs"
+            ).fetchone()[0]
+            rows = self.log_store.conn.execute(
+                f"SELECT * FROM request_logs ORDER BY timestamp {order} LIMIT ? OFFSET ?",
+                (limit, offset)
+            ).fetchall()
+
+        cols = [desc[0] for desc in self.log_store.conn.execute(
+            "SELECT * FROM request_logs LIMIT 0"
+        ).description]
+        logs = [dict(zip(cols, row)) for row in rows]
+
+        total_pages = max(1, (total + limit - 1) // limit) if total > 0 else 0
+        return {"logs": logs, "total": total, "page": page, "limit": limit, "total_pages": total_pages}
 
     # === 每日聚合统计（委托给 DailyStatsManager）===
 
@@ -1220,7 +1096,7 @@ class ProxyDatabase:
         return self.daily_stats.get_calendar(months)
 
     def sync_daily_stats(self):
-        self.daily_stats.sync_today()
+        pass  # sync_today 已移除，写时预聚合自动更新
 
 
 class ProxyRouter:
@@ -3131,8 +3007,7 @@ class ProxyServer:
             # 启动后台健康检测线程（优化项 #17）
             self.router.start_health_check()
             logger.info(f"API 代理服务已启动: http://{self.host}:{self.port}")
-            # 启动每日统计定时器
-            self.db.start_stats_timer()
+
             return True
         except Exception as e:
             logger.error(f"启动代理服务失败: {e}")
