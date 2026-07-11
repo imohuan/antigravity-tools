@@ -1,4 +1,4 @@
-﻿"""每日聚合统计 — 独立 daily_stats.json 持久化
+"""每日聚合统计 — 独立 daily_stats.json 持久化
 
 每天一行聚合数据，永久保留。文件极小（365 天 ~几十 KB）。
 """
@@ -6,7 +6,6 @@
 import json
 import logging
 import os
-from collections import defaultdict
 from datetime import datetime
 
 from .log_store import LogStore
@@ -82,44 +81,29 @@ class DailyStatsManager:
         return result[-(months * 31):]
 
     def get_overview(self) -> dict:
-        """获取全局总览"""
-        stats = self._load()
+        """获取全局总览 — 实时从 SQLite 聚合，不依赖 daily_stats.json 定时同步"""
+        agg = self._log_store.aggregate_all()
+        if not agg:
+            return {
+                "total_requests": 0,
+                "total_success": 0,
+                "total_failed": 0,
+                "success_rate": 0,
+                "total_tokens": 0,
+                "total_credits": 0,
+                "avg_duration_ms": 0,
+                "by_model": [],
+                "by_key": [],
+            }
 
-        total_requests = 0
-        total_success = 0
-        total_failed = 0
-        total_tokens = 0
-        total_credits = 0.0
-        total_duration = 0
+        total_requests = agg["request_count"]
+        total_success = agg["success_count"]
+        total_failed = agg["failed_count"]
 
-        by_model = defaultdict(lambda: {"credits": 0.0, "count": 0})
-        by_key = defaultdict(lambda: {"credits": 0.0, "count": 0})
+        by_model = self._log_store.get_all_model_distribution()
+        by_key = self._log_store.get_all_key_distribution()
 
-        for day in stats.values():
-            total_requests += day.get("request_count", 0)
-            total_success += day.get("success_count", 0)
-            total_failed += day.get("failed_count", 0)
-            total_tokens += day.get("total_tokens", 0)
-            total_credits += day.get("total_credits", 0)
-            total_duration += day.get("avg_duration_ms", 0) * day.get(
-                "request_count", 0
-            )
-
-            for model, data in (day.get("by_model") or {}).items():
-                by_model[model]["credits"] = round(
-                    by_model[model]["credits"] + data["credits"], 4
-                )
-                by_model[model]["count"] += data["count"]
-
-            for key, data in (day.get("by_key") or {}).items():
-                by_key[key]["credits"] = round(
-                    by_key[key]["credits"] + data["credits"], 4
-                )
-                by_key[key]["count"] += data["count"]
-
-        avg_duration = (
-            int(total_duration / total_requests) if total_requests > 0 else 0
-        )
+        avg_duration = agg["avg_duration_ms"]
         success_rate = (
             round(total_success / total_requests * 100, 1)
             if total_requests > 0
@@ -138,8 +122,8 @@ class DailyStatsManager:
             "total_success": total_success,
             "total_failed": total_failed,
             "success_rate": success_rate,
-            "total_tokens": total_tokens,
-            "total_credits": round(total_credits, 4),
+            "total_tokens": agg["total_tokens"],
+            "total_credits": agg["total_credits"],
             "avg_duration_ms": avg_duration,
             "by_model": [
                 {"name": k, "credits": v["credits"], "count": v["count"]}

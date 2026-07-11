@@ -548,6 +548,8 @@ class ProxyDatabase:
         self._log_store = None
         self._daily_stats = None
         self._stats_timer = None
+        # 自动启动统计定时器（不依赖 ProxyServer.start()）
+        self.start_stats_timer()
 
     def _load(self) -> dict:
         """从文件加载数据（带重试，读取失败时重试而非返回空数据）"""

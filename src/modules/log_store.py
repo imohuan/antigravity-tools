@@ -1,4 +1,4 @@
-﻿"""SQLite 请求日志存储 — 只追加写入，支持聚合查询和定期清理
+"""SQLite 请求日志存储 — 只追加写入，支持聚合查询和定期清理
 
 替代旧的 JSON 全量日志方案：
 - 写入：INSERT 一行，几毫秒
@@ -142,6 +142,54 @@ class LogStore:
             "total_tokens": int(row[3]),
             "total_credits": round(row[4], 4),
             "avg_duration_ms": int(row[5]),
+        }
+
+    
+    def aggregate_all(self) -> dict:
+        """聚合所有日期的全局统计（实时查询 SQLite，不依赖 daily_stats.json）"""
+        row = self.conn.execute(
+            """SELECT
+                 COUNT(*) as total,
+                 SUM(CASE WHEN status='success' THEN 1 ELSE 0 END) as success,
+                 SUM(CASE WHEN status!='success' THEN 1 ELSE 0 END) as failed,
+                 COALESCE(SUM(total_tokens), 0) as total_tokens,
+                 COALESCE(SUM(credit), 0) as total_credits,
+                 COALESCE(AVG(duration_ms), 0) as avg_duration_ms
+               FROM request_logs"""
+        ).fetchone()
+        if not row or row[0] == 0:
+            return {}
+        return {
+            "request_count": row[0],
+            "success_count": row[1],
+            "failed_count": row[2],
+            "total_tokens": int(row[3]),
+            "total_credits": round(row[4], 4),
+            "avg_duration_ms": int(row[5]),
+        }
+
+    def get_all_model_distribution(self) -> dict:
+        """获取所有日期的模型分布"""
+        rows = self.conn.execute(
+            """SELECT model, SUM(credit) as credits, COUNT(*) as cnt
+               FROM request_logs WHERE credit > 0
+               GROUP BY model ORDER BY credits DESC"""
+        ).fetchall()
+        return {
+            (row[0] or "unknown"): {"credits": round(row[1], 4), "count": row[2]}
+            for row in rows
+        }
+
+    def get_all_key_distribution(self) -> dict:
+        """获取所有日期的 Key 分布"""
+        rows = self.conn.execute(
+            """SELECT main_key_label, SUM(credit) as credits, COUNT(*) as cnt
+               FROM request_logs WHERE credit > 0
+               GROUP BY main_key_label ORDER BY credits DESC"""
+        ).fetchall()
+        return {
+            (row[0] or "unknown"): {"credits": round(row[1], 4), "count": row[2]}
+            for row in rows
         }
 
     def get_model_distribution(self, date_str: str) -> dict:
