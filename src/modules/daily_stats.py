@@ -20,16 +20,42 @@ class DailyStatsManager:
         return {}
 
     def get_calendar(self, months: int = 4) -> list[dict]:
-        """获取日历热力图数据 — 从聚合表查"""
+        """获取日历热力图数据 — 从聚合表查，自动补全缺失日期为 0
+
+        返回最近 N 个月的完整日期序列，没有记录的日期也包含（credits=0, count=0）。
+        这样前端日历和折线图能正确显示"无消耗"日期，不会出现位置缺失。
+        """
+        import datetime as dt
+        today = dt.date.today()
+        # 计算起始日期：months 个月的 1 号
+        start_year = today.year
+        start_month = today.month - months + 1
+        while start_month <= 0:
+            start_month += 12
+            start_year -= 1
+        start_date = dt.date(start_year, start_month, 1)
+
+        # 从数据库查询
         rows = self._log_store.conn.execute(
             "SELECT date, credits, requests FROM daily_stats "
-            "WHERE date >= date('now', ?) ORDER BY date",
-            (f"-{months} months",),
+            "WHERE date >= ? AND date <= ? ORDER BY date",
+            (start_date.isoformat(), today.isoformat()),
         ).fetchall()
-        return [
-            {"date": r[0], "credits": round(r[1], 4), "count": r[2]}
-            for r in rows
-        ]
+        # 索引化
+        existing = {r[0]: (round(r[1], 4), r[2]) for r in rows}
+
+        # 逐日补全
+        out = []
+        d = start_date
+        while d <= today:
+            key = d.isoformat()
+            if key in existing:
+                credits, count = existing[key]
+            else:
+                credits, count = 0.0, 0
+            out.append({"date": key, "credits": credits, "count": count})
+            d += dt.timedelta(days=1)
+        return out
 
     def get_overview(self) -> dict:
         """获取全局总览 — 从聚合表查"""
