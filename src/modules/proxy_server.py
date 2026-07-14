@@ -2520,7 +2520,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             self._send_json(200, {
                 "object": "api.index",
                 "message": "Antigravity Proxy is running",
-                "version": "1.8.0",
+                "version": "1.8.1",
             })
             return
 

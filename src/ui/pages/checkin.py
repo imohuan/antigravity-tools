@@ -1,5 +1,6 @@
 """签到页面"""
 
+import logging
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -41,12 +42,18 @@ class StatusRefreshWorker(QThread):
 
     def _process_account(self, account):
         """处理单个账号，返回 (uid, checked_today, daily_credit, monthly_credits)"""
+        # 每次签到前重新获取代理 IP（一号一IP）
+        from ...utils.proxy import get_proxy_with_info
+        _current_proxy, _proxy_info = get_proxy_with_info()
+        uid_short = (account.uid or "?")[:10]
+        proxy_tag = f"代理[{_proxy_info}]" if _proxy_info else "直连"
+        logging.info(f"📡 {uid_short} 使用{proxy_tag}刷新签到状态")
         try:
             # 优先使用 API Key 模式
             if account.api_key and account.api_key.startswith("ck_"):
-                client = ApiClient.from_api_key(account.api_key, proxy=self.proxy)
+                client = ApiClient.from_api_key(account.api_key, proxy=_current_proxy)
             else:
-                client = ApiClient.from_account(account, proxy=self.proxy)
+                client = ApiClient.from_account(account, proxy=_current_proxy)
             result = client.daily_checkin()
             if result["success"]:
                 checked = True
@@ -134,9 +141,15 @@ class CheckinWorker(QThread):
         """签到单个账号，返回 (name, status, message)"""
         if self._stop_flag:
             return (account.display_name, "stopped", "已停止")
+        # 每次签到前重新获取代理 IP（一号一IP）
+        from ...utils.proxy import get_proxy_with_info
+        _current_proxy, _proxy_info = get_proxy_with_info()
+        uid_short = (account.uid or "?")[:10]
+        proxy_tag = f"代理[{_proxy_info}]" if _proxy_info else "直连"
+        logging.info(f"📡 {uid_short} 使用{proxy_tag}签到")
         try:
             manager = CheckinManager()
-            result = manager.checkin_account(account, proxy=self.proxy)
+            result = manager.checkin_account(account, proxy=_current_proxy)
             if result["success"]:
                 if result.get("already"):
                     return (account.display_name, "already",
@@ -539,7 +552,13 @@ class CheckinPage(QWidget):
         self._progress_bar.setRange(0, len(self._accounts))
         self._progress_bar.setValue(0)
 
-        self._status_worker = StatusRefreshWorker(self._accounts, max_workers=max_workers)
+        from ...utils.proxy import get_proxy_from_settings
+        # 预检代理配置（不缓存 IP，每账号单独提取）
+        try:
+            get_proxy_from_settings()
+        except Exception:
+            pass
+        self._status_worker = StatusRefreshWorker(self._accounts, proxy=None, max_workers=max_workers)
         self._status_worker.progress.connect(self._on_status_refresh)
         self._status_worker.finished_all.connect(self._on_status_refresh_done)
         self._status_worker.start()
@@ -588,7 +607,13 @@ class CheckinPage(QWidget):
         self._btn_stop.setVisible(True)
         self._is_checking = True
 
-        self._worker = CheckinWorker(unchecked, max_workers=max_workers)
+        from ...utils.proxy import get_proxy_from_settings
+        # 预检代理配置（不缓存 IP，每账号单独提取）
+        try:
+            get_proxy_from_settings()
+        except Exception:
+            pass
+        self._worker = CheckinWorker(unchecked, proxy=None, max_workers=max_workers)
         self._worker.progress.connect(self._on_checkin_progress)
         self._worker.finished_all.connect(self._on_checkin_finished)
         self._progress_bar.setVisible(True)

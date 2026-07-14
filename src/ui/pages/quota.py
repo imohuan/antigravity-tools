@@ -23,22 +23,24 @@ class QuotaQueryThread(QThread):
     result_ready = Signal(dict)  # 查询结果
     status_update = Signal(str)  # 状态更新
 
-    def __init__(self, access_token: str, uid: str, domain: str = "www.codebuddy.cn", api_key: str = ""):
+    def __init__(self, access_token: str, uid: str, domain: str = "www.codebuddy.cn", api_key: str = "", proxy=None):
         super().__init__()
         self.access_token = access_token
         self.uid = uid
         self.domain = domain
         self.api_key = api_key  # API Key (ck_xxx)，优先使用
+        self._proxy = proxy
 
     def run(self):
         # 优先使用 API Key 模式
         if self.api_key and self.api_key.startswith("ck_"):
-            client = ApiClient.from_api_key(self.api_key)
+            client = ApiClient.from_api_key(self.api_key, proxy=self._proxy)
         else:
             client = ApiClient(
                 access_token=self.access_token,
                 uid=self.uid,
                 domain=self.domain,
+                proxy=self._proxy,
             )
 
         # 查询积分
@@ -215,11 +217,18 @@ class AccountQuotaCard(QFrame):
         self._status_label.setText("⏳ 正在查询...")
         self._status_label.setStyleSheet("color: #D69E2E; font-size: 11px;")
 
+        from ...utils.proxy import get_proxy_from_settings
+        try:
+            _proxy = get_proxy_from_settings()
+        except Exception:
+            _proxy = None
+
         self._query_thread = QuotaQueryThread(
             access_token=self._account.auth_token,
             uid=self._account.uid,
             domain=self._account.domain or "www.codebuddy.cn",
             api_key=self._account.api_key or "",
+            proxy=_proxy,
         )
         self._query_thread.result_ready.connect(self._on_quota_result)
         self._query_thread.status_update.connect(self._on_status_update)
@@ -322,14 +331,21 @@ class AccountQuotaCard(QFrame):
         self._checkin_btn.setText("签到中...")
         self._checkin_label.setText("⏳ 签到中...")
 
+        from ...utils.proxy import get_proxy_from_settings
+        try:
+            _proxy = get_proxy_from_settings()
+        except Exception:
+            _proxy = None
+
         # 优先使用 API Key 模式
         if self._account.api_key and self._account.api_key.startswith("ck_"):
-            client = ApiClient.from_api_key(self._account.api_key)
+            client = ApiClient.from_api_key(self._account.api_key, proxy=_proxy)
         else:
             client = ApiClient(
                 access_token=self._account.auth_token,
                 uid=self._account.uid,
                 domain=self._account.domain or "www.codebuddy.cn",
+                proxy=_proxy,
             )
         result = client.daily_checkin()
 

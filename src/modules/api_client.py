@@ -72,7 +72,7 @@ def _safe_response_text(resp: requests.Response, limit: int = 1000) -> str:
         return ""
 
 
-def check_api_key_chat_status(api_key: str, attempts: int = 3) -> dict:
+def check_api_key_chat_status(api_key: str, attempts: int = 3, proxy: Optional[str] = None) -> dict:
     """Probe whether a WorkBuddy API key can start a chat request.
 
     Returns:
@@ -103,7 +103,12 @@ def check_api_key_chat_status(api_key: str, attempts: int = 3) -> dict:
 
     with requests.Session() as session:
         session.trust_env = False
-        session.proxies = {"http": None, "https": None}
+        if proxy:
+            session.proxies = {"http": proxy, "https": proxy}
+            # HTTPS 代理的 TLS 证书通常是自签名/IP 证书，不验证
+            session.verify = False
+        else:
+            session.proxies = {"http": None, "https": None}
 
         for attempt in range(1, max(1, attempts) + 1):
             try:
@@ -297,9 +302,8 @@ class ApiClient:
 
         if proxy:
             self.session.proxies = {"http": proxy, "https": proxy}
-
-    @staticmethod
-    def from_api_key(api_key: str, proxy: Optional[str] = None) -> "ApiClient":
+            # HTTPS 代理的 TLS 证书通常是自签名/IP 证书，不验证
+            self.session.verify = False
         """从 API Key (ck_xxx) 创建客户端（推荐方式）
 
         API Key 模式优势：
