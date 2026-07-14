@@ -1,4 +1,4 @@
-﻿"""本地 API 中转代理服务
+"""本地 API 中转代理服务
 
 功能：
 - 管理上游 Key 池（主 Key）
@@ -10,17 +10,19 @@
 """
 
 import base64
+import copy
 import hashlib
 import json
 import logging
 import random
+import re
 import secrets
 import select
 import socket
 import threading
 import time
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 from typing import Optional
@@ -28,6 +30,7 @@ from urllib.parse import urlparse
 
 import requests
 
+from ..utils.store import load_setting
 from src.modules.log_store import LogStore
 from src.modules.daily_stats import DailyStatsManager
 
@@ -59,13 +62,17 @@ SUPPORTED_MODELS = [
     # MiniMax
     "minimax-m3", "minimax-m2.7", "minimax-m2.5",
     # Kimi
-    "kimi-k2.6", "kimi-k2.5",
+    "kimi-k2.6", "kimi-k2.5", "kimi-k2.7",
     # 混元
-    "hy3-preview", "hunyuan-chat", "hunyuan-2.0-thinking",
+    "hy3", "hy3-preview", "hunyuan-chat", "hunyuan-2.0-thinking",
 ]
 
 # 模型上下文长度（maxInputTokens），用于 WorkBuddy 客户端判断是否需要压缩上下文
 # 如果 /v1/models 不返回此字段，WorkBuddy 无法知道模型上下文限制，不会触发自动压缩
+MODEL_ID_ALIASES = {
+    "kimi-k2.7-code": "kimi-k2.7",
+}
+
 MODEL_CONTEXT_LENGTHS = {
     "auto": 168000,                    # 官方虚拟模型，服务端动态选模型；与 dist 一致
     # DeepSeek 系列
@@ -90,7 +97,9 @@ MODEL_CONTEXT_LENGTHS = {
     # Kimi
     "kimi-k2.6": 256000,               # 256K
     "kimi-k2.5": 1000000,              # 百万级上下文
+    "kimi-k2.7": 256000,               # 256K
     # 混元
+    "hy3": 256000,                     # 256K
     "hy3-preview": 256000,             # 256K
     "hunyuan-chat": 256000,            # 256K（混元 2.0 Instruct）
     "hunyuan-2.0-thinking": 256000,    # 256K（混元 2.0 Think）
@@ -98,13 +107,17 @@ MODEL_CONTEXT_LENGTHS = {
 
 MODEL_SUPPORTS_IMAGES = {
     "auto": True,
-    "glm-5.2": True,       # WorkBuddy 官方已支持图片输入
-    "glm-5.1": True,       # WorkBuddy 官方已支持图片输入
-    "glm-5.0": False,
-    "glm-5.0-turbo": False,
+    # GLM 系列：全部支持图片输入
+    "glm-5.2": True,
+    "glm-5.1": True,
+    "glm-5.0": True,
+    "glm-5.0-turbo": True,
     "glm-5v-turbo": True,
-    "glm-4.7": False,
-    "glm-4.6": False,
+    "glm-4.7": True,
+    "glm-4.6": True,
+    # 新增模型
+    "kimi-k2.7": True,
+    "hy3": True,
 }
 
 MODEL_MAX_OUTPUT_TOKENS = {
@@ -116,6 +129,9 @@ MODEL_MAX_OUTPUT_TOKENS = {
     "glm-5v-turbo": 8192,
     "glm-4.7": 131072,
     "glm-4.6": 131072,
+    # 新增模型
+    "kimi-k2.7": 131072,
+    "hy3": 131072,
 }
 
 IMAGE_UNSUPPORTED_TEXT_MODELS = {m for m, v in MODEL_SUPPORTS_IMAGES.items() if not v}
@@ -155,14 +171,29 @@ def _image_url_from_part(part: dict):
         if isinstance(image_url, str):
             return image_url
     if part_type in ("image", "input_image"):
+        source = part.get("source")
+        if isinstance(source, dict):
+            source_type = source.get("type")
+            if source_type == "url" and isinstance(source.get("url"), str):
+                return source["url"]
+            if source_type == "base64" and isinstance(source.get("data"), str):
+                media_type = source.get("media_type") or source.get("mediaType") or "image/jpeg"
+                data = source["data"]
+                return data if data.startswith("data:") else f"data:{media_type};base64,{data}"
         url = part.get("url")
         if isinstance(url, str):
             return url
+        uri = part.get("uri")
+        if isinstance(uri, str):
+            return uri
         image = part.get("image")
         if isinstance(image, dict):
             url = image.get("url")
             if isinstance(url, str):
                 return url
+            uri = image.get("uri")
+            if isinstance(uri, str):
+                return uri
             data = image.get("data")
             media_type = image.get("mediaType") or image.get("media_type") or "image/jpeg"
             if isinstance(data, str):
@@ -196,6 +227,182 @@ def _detect_multimodal_images(request_data: dict) -> dict:
         "data_uri_count": data_uri_count,
         "max_image_chars": max_image_chars,
     }
+
+
+def _truncate_for_log(value: str, limit: int = 1200) -> str:
+    if not isinstance(value, str):
+        value = str(value)
+    if len(value) <= limit:
+        return value
+    return f"{value[:limit]}...(truncated {len(value) - limit} chars)"
+
+
+def _safe_json_for_log(value, limit: int = 8000) -> str:
+    try:
+        text = json.dumps(value, ensure_ascii=False, default=str)
+    except Exception:
+        text = str(value)
+    return _truncate_for_log(text, limit)
+
+
+def _summarize_log_value(value, depth: int = 0):
+    """Return a compact, log-safe summary without leaking huge image payloads."""
+    if depth >= 4:
+        return f"<{type(value).__name__}>"
+    if isinstance(value, str):
+        if value.startswith("data:image/"):
+            media = value.split(";", 1)[0].replace("data:", "")
+            return f"<data-uri {media}, chars={len(value)}>"
+        if len(value) > 300:
+            return f"{value[:300]}...(chars={len(value)})"
+        return value
+    if isinstance(value, (int, float, bool)) or value is None:
+        return value
+    if isinstance(value, list):
+        items = [_summarize_log_value(item, depth + 1) for item in value[:20]]
+        if len(value) > 20:
+            items.append(f"...({len(value) - 20} more)")
+        return items
+    if isinstance(value, dict):
+        result = {}
+        for key, item in list(value.items())[:40]:
+            if key.lower() in ("authorization", "api_key", "apikey", "access_token", "token"):
+                result[key] = "<redacted>"
+            else:
+                result[key] = _summarize_log_value(item, depth + 1)
+        if len(value) > 40:
+            result["..."] = f"{len(value) - 40} more keys"
+        return result
+    return str(value)
+
+
+def _summarize_messages_for_log(messages: list) -> dict:
+    if not isinstance(messages, list):
+        return {"type": type(messages).__name__}
+
+    def summarize_part(part):
+        if isinstance(part, str):
+            return {
+                "type": "text",
+                "chars": len(part),
+                "preview": _truncate_for_log(part, 160),
+            }
+        if not isinstance(part, dict):
+            return {"type": type(part).__name__, "value": _summarize_log_value(part)}
+
+        part_type = part.get("type", "<missing>")
+        summary = {"type": part_type}
+        if part_type == "text":
+            text = part.get("text", "")
+            summary.update({"chars": len(text), "preview": _truncate_for_log(text, 160)})
+            return summary
+
+        image_url = _image_url_from_part(part)
+        if image_url:
+            summary.update({
+                "image": True,
+                "data_uri": image_url.startswith("data:"),
+                "chars": len(image_url),
+                "media": image_url.split(";", 1)[0].replace("data:", "") if image_url.startswith("data:") else "url",
+            })
+            return summary
+
+        for key, value in part.items():
+            if key != "type":
+                summary[key] = _summarize_log_value(value)
+        return summary
+
+    total = len(messages)
+    if total <= 12:
+        selected = list(enumerate(messages))
+    else:
+        selected = list(enumerate(messages[:6])) + list(enumerate(messages[-6:], start=total - 6))
+
+    summarized = []
+    for idx, msg in selected:
+        if not isinstance(msg, dict):
+            summarized.append({"index": idx, "type": type(msg).__name__})
+            continue
+        content = msg.get("content")
+        item = {
+            "index": idx,
+            "role": msg.get("role"),
+            "content_type": type(content).__name__,
+        }
+        if isinstance(content, str):
+            item.update({"chars": len(content), "preview": _truncate_for_log(content, 180)})
+        elif isinstance(content, list):
+            item["parts"] = [summarize_part(part) for part in content[:20]]
+            if len(content) > 20:
+                item["parts"].append({"type": "...", "more": len(content) - 20})
+        else:
+            item["content"] = _summarize_log_value(content)
+        summarized.append(item)
+
+    return {
+        "count": total,
+        "omitted_middle": max(0, total - len(selected)),
+        "items": summarized,
+    }
+
+
+def _summarize_request_for_error_log(request_data: dict, headers: dict, build_meta: dict) -> dict:
+    non_message_fields = {}
+    for key, value in request_data.items():
+        if key == "messages":
+            continue
+        if key == "tools" and isinstance(value, list):
+            names = []
+            for tool in value[:30]:
+                if isinstance(tool, dict):
+                    names.append(tool.get("function", {}).get("name") or tool.get("name") or "<unnamed>")
+            non_message_fields[key] = {
+                "count": len(value),
+                "names": names,
+                "omitted": max(0, len(value) - len(names)),
+            }
+            continue
+        non_message_fields[key] = _summarize_log_value(value)
+    header_summary = {}
+    for key, value in headers.items():
+        if key.lower() == "authorization":
+            header_summary[key] = f"Bearer ...{value[-8:]}" if isinstance(value, str) and len(value) > 15 else "<redacted>"
+        else:
+            header_summary[key] = value
+    return {
+        "headers": header_summary,
+        "body_fields": list(request_data.keys()),
+        "image_stats": _detect_multimodal_images(request_data),
+        "messages": _summarize_messages_for_log(request_data.get("messages", [])),
+        "non_message_fields": non_message_fields,
+        "relay_meta": build_meta,
+    }
+
+
+def _parse_upstream_error_for_log(status_code: int, resp_body: str, resp_headers=None) -> dict:
+    detail = {
+        "status": status_code,
+        "body_len": len(resp_body or ""),
+        "raw_body": _truncate_for_log(resp_body or "", 4000),
+    }
+    if resp_headers:
+        detail["content_type"] = resp_headers.get("Content-Type", "")
+        detail["request_id_header"] = (
+            resp_headers.get("X-Request-ID")
+            or resp_headers.get("X-Request-Id")
+            or resp_headers.get("Request-Id")
+        )
+    try:
+        parsed = json.loads(resp_body) if resp_body else None
+    except json.JSONDecodeError:
+        parsed = None
+    if isinstance(parsed, dict):
+        detail["json"] = _summarize_log_value(parsed)
+        detail["code"] = parsed.get("code") or parsed.get("error", {}).get("code")
+        detail["msg"] = parsed.get("msg") or parsed.get("message") or parsed.get("error", {}).get("message")
+        detail["requestId"] = parsed.get("requestId") or parsed.get("request_id")
+        detail["extError"] = parsed.get("extError") or parsed.get("error")
+    return detail
 
 
 # [v1.6.1-fix] 以下三个函数已无调用方（旧图片拦截逻辑移除后成为死代码）
@@ -275,18 +482,12 @@ def _normalize_messages_for_upstream(messages: list) -> int:
                 # 已经是标准 OpenAI 格式，保持不变
                 new_content.append(part)
             elif part_type in ("input_image", "image"):
-                image = part.get("image")
-                # image 是 blob_ref 对象（有 blob_id），保持原样透传
-                if isinstance(image, dict) and "blob_id" in image:
-                    new_content.append(part)
+                url = _image_url_from_part(part)
+                if url and (url.startswith("http://") or url.startswith("https://")):
+                    new_content.append({"type": "image_url", "image_url": {"url": url}})
+                    normalized_count += 1
                 else:
-                    # 尝试提取 data URI（复用已有的 _image_url_from_part）
-                    url = _image_url_from_part(part)
-                    if url:
-                        new_content.append({"type": "image_url", "image_url": {"url": url}})
-                        normalized_count += 1
-                    else:
-                        new_content.append(part)
+                    new_content.append(part)
             elif part_type == "image_blob_ref":
                 # 顶层 image_blob_ref，保持原样透传
                 new_content.append(part)
@@ -294,6 +495,56 @@ def _normalize_messages_for_upstream(messages: list) -> int:
                 new_content.append(part)
         msg["content"] = new_content
     return normalized_count
+
+
+def _remove_unsupported_inline_images(messages: list) -> int:
+    """Remove image payload formats that copilot.tencent.com/v2 rejects."""
+    if not isinstance(messages, list):
+        return 0
+
+    removed_count = 0
+    for msg in messages:
+        if not isinstance(msg, dict):
+            continue
+        content = msg.get("content")
+        if not isinstance(content, list):
+            continue
+
+        new_content = []
+        removed_in_message = 0
+        for part in content:
+            if not isinstance(part, dict) or not _part_is_image(part):
+                new_content.append(part)
+                continue
+
+            url = _image_url_from_part(part)
+            if (
+                part.get("type") == "image_url"
+                and isinstance(url, str)
+                and (url.startswith("http://") or url.startswith("https://"))
+            ):
+                new_content.append(part)
+                continue
+
+            removed_count += 1
+            removed_in_message += 1
+
+        if removed_in_message:
+            new_content.append({
+                "type": "text",
+                "text": (
+                    "[Image omitted by proxy: upstream chat API rejects inline/base64 "
+                    "image payloads. Please use a public http/https image URL.]"
+                ),
+            })
+        msg["content"] = new_content
+
+    if removed_count:
+        logger.warning(
+            "[image_sanitize] removed %s unsupported inline/base64 image part(s)",
+            removed_count,
+        )
+    return removed_count
 
 
 def _extract_message_text(content) -> str:
@@ -355,19 +606,34 @@ def _has_following_assistant(messages: list, msg_index: int) -> bool:
     return False
 
 
+def _message_has_image(msg: dict) -> bool:
+    """Return True when a message content contains any image part."""
+    if not isinstance(msg, dict):
+        return False
+    content = msg.get("content")
+    if not isinstance(content, list):
+        return False
+    return any(_part_is_image(part) for part in content)
+
+
 def _strip_history_images_with_description(messages: list) -> list:
     """
     [v1.6.1新增] 历史图片替换成文本描述。
 
     策略：
-    - 只有"后面还没有 assistant 回复"的 user 图片消息，才保留原图
-    - 一旦后面已有 assistant 回复，说明这张图已经被识别过，图片替换成描述
+    - 保留最后一条带图片的 user 消息，作为当前图片请求
+    - 更早的图片替换成描述，避免历史 base64 反复进入上下文
     - 描述来源：该图片所在 user 消息之后最近的一条 assistant 回复文本
 
     [ROLLBACK] 注释掉调用处（搜索 _strip_history_images_with_description）即可恢复。
     """
     if not isinstance(messages, list):
         return messages
+
+    latest_user_image_index = None
+    for idx, item in enumerate(messages):
+        if isinstance(item, dict) and item.get("role") == "user" and _message_has_image(item):
+            latest_user_image_index = idx
 
     new_messages = []
     stripped_total = 0
@@ -379,12 +645,9 @@ def _strip_history_images_with_description(messages: list) -> list:
 
         content = msg.get("content")
 
-        # 只有"后面还没有 assistant 回复"的 user 图片消息，才保留原图
-        # 一旦后面已有 assistant，说明这张图已经被识别过，后续替换成描述
-        allow_images = (
-            msg.get("role") == "user"
-            and not _has_following_assistant(messages, msg_index)
-        )
+        # WorkBuddy 可能在同一轮请求里把 assistant/tool 中间状态放在当前 user 图片之后。
+        # 所以不能用“后面有没有 assistant”判断历史图，只保留最后一条 user 图片消息。
+        allow_images = msg.get("role") == "user" and msg_index == latest_user_image_index
 
         if not isinstance(content, list):
             new_messages.append(msg)
@@ -419,6 +682,355 @@ def _strip_history_images_with_description(messages: list) -> list:
         logger.info(f"[历史图片描述] 替换 {stripped_total} 张历史图片为文本描述")
 
     return new_messages
+
+
+def _build_workbuddy_relay_headers(api_key: str) -> dict:
+    """Build the upstream headers for WorkBuddy API key relay."""
+    return {
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream",
+        "Authorization": f"Bearer {api_key}",
+    }
+
+
+_SYSTEM_PROMPT_REPLACEMENT_CACHE = {
+    "raw": "",
+    "pattern": None,
+    "values": {},
+}
+
+
+def _load_system_prompt_sensitive_replacements() -> list[dict]:
+    try:
+        enabled = load_setting("system_prompt_sensitive_enabled", "False")
+        raw_value = load_setting("system_prompt_sensitive_replacements", "[]")
+    except Exception as exc:
+        logger.warning(f"[系统提示词敏感信息] 读取配置失败，已跳过替换: {exc}")
+        return []
+
+    if enabled != "True":
+        return []
+
+    try:
+        pairs = json.loads(raw_value or "[]")
+    except json.JSONDecodeError:
+        logger.warning("[系统提示词敏感信息] 配置 JSON 解析失败，已跳过替换")
+        return []
+
+    if not isinstance(pairs, list):
+        return []
+
+    replacements = []
+    for pair in pairs:
+        if not isinstance(pair, dict):
+            continue
+        key = str(pair.get("key", "")).strip()
+        if not key:
+            continue
+        replacements.append({"key": key, "value": str(pair.get("value", ""))})
+    return replacements
+
+
+def _compile_system_prompt_replacement_pattern(replacements: list[dict]):
+    raw_key = json.dumps(replacements, ensure_ascii=False, sort_keys=True)
+    if _SYSTEM_PROMPT_REPLACEMENT_CACHE["raw"] == raw_key:
+        return (
+            _SYSTEM_PROMPT_REPLACEMENT_CACHE["pattern"],
+            _SYSTEM_PROMPT_REPLACEMENT_CACHE["values"],
+        )
+
+    values = {item["key"]: item["value"] for item in replacements}
+    pattern = None
+    if values:
+        escaped_keys = [re.escape(key) for key in sorted(values, key=len, reverse=True)]
+        pattern = re.compile("|".join(escaped_keys))
+
+    _SYSTEM_PROMPT_REPLACEMENT_CACHE["raw"] = raw_key
+    _SYSTEM_PROMPT_REPLACEMENT_CACHE["pattern"] = pattern
+    _SYSTEM_PROMPT_REPLACEMENT_CACHE["values"] = values
+    return pattern, values
+
+
+def _replace_system_prompt_sensitive_words(messages: list) -> int:
+    replacements = _load_system_prompt_sensitive_replacements()
+    if not replacements or not isinstance(messages, list):
+        return 0
+
+    pattern, values = _compile_system_prompt_replacement_pattern(replacements)
+    if not pattern:
+        return 0
+
+    replaced_count = 0
+
+    def _replace_text(text: str) -> tuple[str, int]:
+        count = 0
+
+        def _replace_match(match):
+            nonlocal count
+            count += 1
+            return values.get(match.group(0), "")
+
+        return pattern.sub(_replace_match, text), count
+
+    for msg in messages:
+        if not isinstance(msg, dict) or msg.get("role") != "system":
+            continue
+
+        content = msg.get("content")
+        if isinstance(content, str):
+            new_content, count = _replace_text(content)
+            if count:
+                msg["content"] = new_content
+                replaced_count += count
+        elif isinstance(content, list):
+            for part in content:
+                if not isinstance(part, dict) or part.get("type") != "text":
+                    continue
+                text = part.get("text")
+                if not isinstance(text, str):
+                    continue
+                new_text, count = _replace_text(text)
+                if count:
+                    part["text"] = new_text
+                    replaced_count += count
+
+    return replaced_count
+
+
+def _build_workbuddy_relay_body(client_body: dict) -> tuple[dict, dict]:
+    """
+    Build the upstream body for WorkBuddy key-pool relay.
+
+    This proxy is not an SDK/Agent adapter. WorkBuddy already speaks most of the
+    body shape its upstream expects, so the relay preserves normal generation and
+    tool fields by default. Only image payload formats proven rejected by the
+    upstream are removed from messages.
+    """
+    body = copy.deepcopy(client_body)
+    body["model"] = body.get("model") or "auto"
+    body["messages"] = copy.deepcopy(client_body.get("messages", []))
+    sensitive_replaced = _replace_system_prompt_sensitive_words(body["messages"])
+    body["stream"] = True
+
+    dropped_fields = []
+    image_stats = _detect_multimodal_images(body)
+
+    translated_fields = []
+    if "max_completion_tokens" in client_body and "max_tokens" not in client_body:
+        body["max_tokens"] = client_body.get("max_completion_tokens")
+        translated_fields.append("max_completion_tokens->max_tokens")
+
+    removed_null_fields = []
+    for field in list(body.keys()):
+        if body[field] is None:
+            removed_null_fields.append(field)
+            del body[field]
+
+    meta = {
+        "mode": "workbuddy_relay",
+        "dropped_fields": dropped_fields,
+        "removed_null_fields": removed_null_fields,
+        "translated_fields": translated_fields,
+        "history_images_replaced": 0,
+        "normalized_images": 0,
+        "unsupported_inline_images_removed": 0,
+        "system_prompt_sensitive_replaced": sensitive_replaced,
+        "image_stats_before": image_stats,
+        "image_stats_after": image_stats,
+        "has_stream_options": "stream_options" in body,
+    }
+    if sensitive_replaced:
+        logger.info(f"[系统提示词敏感信息] 已替换 {sensitive_replaced} 处敏感信息")
+    return body, meta
+
+
+RESPONSES_PASSTHROUGH_FIELDS = [
+    "temperature", "top_p", "max_tokens", "stop", "tools", "tool_choice",
+    "parallel_tool_calls", "stream_options", "reasoning_effort", "reasoning",
+    "metadata", "user", "seed", "presence_penalty", "frequency_penalty",
+]
+
+
+def _responses_part_to_chat_part(part):
+    if isinstance(part, str):
+        return {"type": "text", "text": part}
+    if not isinstance(part, dict):
+        return {"type": "text", "text": str(part)}
+    part_type = part.get("type")
+    if part_type in ("input_text", "output_text", "text"):
+        return {"type": "text", "text": part.get("text", "")}
+    if part_type in ("input_image", "image", "image_url"):
+        image_url = part.get("image_url") or part.get("url")
+        if isinstance(image_url, dict):
+            image_url = image_url.get("url")
+        if image_url:
+            return {"type": "image_url", "image_url": {"url": image_url}}
+        return {"type": "text", "text": "[Image omitted: missing image_url]"}
+    if "text" in part:
+        return {"type": "text", "text": str(part.get("text", ""))}
+    return {"type": "text", "text": json.dumps(part, ensure_ascii=False)}
+
+
+def _responses_content_to_chat_content(content):
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        converted = [_responses_part_to_chat_part(part) for part in content]
+        if all(p.get("type") == "text" for p in converted):
+            return "\n".join(p.get("text", "") for p in converted if p.get("text"))
+        return converted
+    return str(content)
+
+
+def _responses_input_item_to_chat_messages(item):
+    if isinstance(item, str):
+        return [{"role": "user", "content": item}]
+    if not isinstance(item, dict):
+        return [{"role": "user", "content": str(item)}]
+    item_type = item.get("type")
+    if item_type == "message" or "role" in item:
+        role = item.get("role", "user")
+        if role == "developer":
+            role = "system"
+        return [{"role": role, "content": _responses_content_to_chat_content(item.get("content", ""))}]
+    if item_type == "function_call_output":
+        msg = {"role": "tool", "content": item.get("output", "")}
+        call_id = item.get("call_id") or item.get("id")
+        if call_id:
+            msg["tool_call_id"] = call_id
+        return [msg]
+    if item_type == "function_call":
+        call_id = item.get("call_id") or item.get("id") or f"call_{secrets.token_hex(8)}"
+        return [{
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{
+                "id": call_id,
+                "type": "function",
+                "function": {"name": item.get("name", ""), "arguments": item.get("arguments", "{}")},
+            }],
+        }]
+    return [{"role": "user", "content": _responses_content_to_chat_content(item.get("content", item))}]
+
+
+def _responses_to_chat_request(client_body: dict) -> tuple[dict, dict]:
+    chat_body = {
+        "model": client_body.get("model") or "auto",
+        "stream": bool(client_body.get("stream", False)),
+    }
+    messages = []
+    if client_body.get("instructions"):
+        messages.append({"role": "system", "content": str(client_body.get("instructions"))})
+    response_input = client_body.get("input", "")
+    if isinstance(response_input, list):
+        for item in response_input:
+            messages.extend(_responses_input_item_to_chat_messages(item))
+    else:
+        messages.append({"role": "user", "content": str(response_input)})
+    chat_body["messages"] = messages
+    if "max_output_tokens" in client_body and "max_tokens" not in client_body:
+        chat_body["max_tokens"] = client_body.get("max_output_tokens")
+    for field_name in RESPONSES_PASSTHROUGH_FIELDS:
+        if field_name in client_body and field_name not in chat_body:
+            chat_body[field_name] = client_body[field_name]
+    return chat_body, {"input_type": type(response_input).__name__, "message_count": len(messages)}
+
+
+def _responses_usage_from_chat_usage(usage: dict) -> dict:
+    if not isinstance(usage, dict):
+        usage = {}
+    input_tokens = usage.get("input_tokens", usage.get("prompt_tokens", 0))
+    output_tokens = usage.get("output_tokens", usage.get("completion_tokens", 0))
+    total_tokens = usage.get("total_tokens", input_tokens + output_tokens)
+    result = dict(usage)
+    result.setdefault("input_tokens", input_tokens)
+    result.setdefault("output_tokens", output_tokens)
+    result.setdefault("total_tokens", total_tokens)
+    return result
+
+
+def _build_responses_object(content: str, model: str, response_id: str = "",
+                            usage: dict = None, reasoning: str = "") -> dict:
+    response_id = response_id or f"resp_{secrets.token_hex(16)}"
+    message_content = [{"type": "output_text", "text": content or "", "annotations": []}]
+    if reasoning:
+        message_content.insert(0, {"type": "reasoning_text", "text": reasoning})
+    return {
+        "id": response_id,
+        "object": "response",
+        "created_at": int(time.time()),
+        "status": "completed",
+        "background": False,
+        "error": None,
+        "incomplete_details": None,
+        "model": model,
+        "output": [{
+            "id": f"msg_{secrets.token_hex(12)}",
+            "type": "message",
+            "status": "completed",
+            "role": "assistant",
+            "content": message_content,
+        }],
+        "output_text": content or "",
+        "usage": _responses_usage_from_chat_usage(usage or {}),
+    }
+
+
+def _sse_event(event_name: str, data: dict) -> bytes:
+    return (
+        f"event: {event_name}\n"
+        f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+    ).encode("utf-8")
+
+
+def _responses_stream_events_from_chat_chunk(chunk_str: str, response_id: str,
+                                             text_parts: list = None) -> list[bytes]:
+    events = []
+    for raw_line in chunk_str.splitlines():
+        line = raw_line.strip()
+        if not line.startswith("data: "):
+            continue
+        data_str = line[6:].strip()
+        if data_str == "[DONE]":
+            continue
+        try:
+            chunk_data = json.loads(data_str)
+        except json.JSONDecodeError:
+            continue
+        usage = chunk_data.get("usage")
+        for choice in chunk_data.get("choices", []):
+            delta = choice.get("delta", {})
+            text_delta = delta.get("content")
+            if text_delta:
+                if text_parts is not None:
+                    text_parts.append(text_delta)
+                events.append(_sse_event("response.output_text.delta", {
+                    "type": "response.output_text.delta",
+                    "response_id": response_id,
+                    "item_id": "msg_0",
+                    "output_index": 0,
+                    "content_index": 0,
+                    "delta": text_delta,
+                }))
+            reasoning_delta = delta.get("reasoning_content")
+            if reasoning_delta:
+                events.append(_sse_event("response.reasoning_text.delta", {
+                    "type": "response.reasoning_text.delta",
+                    "response_id": response_id,
+                    "item_id": "msg_0",
+                    "output_index": 0,
+                    "content_index": 0,
+                    "delta": reasoning_delta,
+                }))
+        if usage:
+            events.append(_sse_event("response.usage.delta", {
+                "type": "response.usage.delta",
+                "response_id": response_id,
+                "usage": _responses_usage_from_chat_usage(usage),
+            }))
+    return events
 
 
 # 上游 API 路径（copilot.tencent.com/v2 使用 /chat/completions，不是 /v1/chat/completions）
@@ -488,19 +1100,11 @@ class RequestLog:
     main_key_id: str = ""
     main_key_label: str = ""
     model: str = ""
-    event: str = ""        # request / start / attempt / end / auth_fail / error
-    attempt: int = 1       # 第几次尝试（1=第一次，2=第二次换Key...）
-    key_mode: int = 1      # 使用的策略 1=专一 2=临期优先 3=轮询 4=会话亲和
-    status: str = ""       # success / failed / retrying
+    event: str = ""        # start / end
     prompt_tokens: int = 0
     completion_tokens: int = 0
-    total_tokens: int = 0
-    credit: float = 0.0    # 消耗的积分
     duration_ms: int = 0
-    first_token_ms: int = 0  # 首字时间
     error: str = ""
-    upstream_status: int = 0  # 上游HTTP状态码
-    request_path: str = ""    # 请求路径""
 
 
 class ProxyDatabase:
@@ -544,10 +1148,9 @@ class ProxyDatabase:
         self._dirty = False  # 是否有未保存的变更
         self._save_timer = None  # 延迟保存定时器
         self._key_status_version = 0  # Key 状态变更版本号，每次状态变化 +1，ProxyRouter 据此刷新缓存
-        # 日志存储和统计管理器（懒加载）
-        self._log_store = None
-        self._daily_stats = None
-
+        self._sub_key_version = 0  # 子 Key 变更版本号，每次增删改 +1，ProxyRouter 据此刷新认证缓存
+        self._log_store = None      # SQLite 日志存储（Web 仪表盘）
+        self._daily_stats = None    # 每日聚合统计管理器（Web 仪表盘）
 
     def _load(self) -> dict:
         """从文件加载数据（带重试，读取失败时重试而非返回空数据）"""
@@ -556,7 +1159,9 @@ class ProxyDatabase:
             return {
                 "upstream_keys": [],
                 "sub_api_keys": [],
-"settings": {"upstream_proxy": ""},
+                "request_logs": [],
+                "daily_stats": {},
+                "settings": {"upstream_proxy": ""},
             }
         # 最多重试 3 次，应对并发写入导致的短暂读取失败
         for attempt in range(3):
@@ -583,7 +1188,9 @@ class ProxyDatabase:
         return {
             "upstream_keys": [],
             "sub_api_keys": [],
-"settings": {"upstream_proxy": ""},
+            "request_logs": [],
+            "daily_stats": {},
+            "settings": {"upstream_proxy": ""},
         }
 
     def _save(self):
@@ -630,29 +1237,30 @@ class ProxyDatabase:
     def add_upstream_key(self, key_data: dict):
         with self._lock:
             self._data.setdefault("upstream_keys", []).append(key_data)
-            self._save()
-
-    def _find_key_index(self, key_id: str) -> int:
-        """Find a key by key_id or api_key, return its index. -1 if not found."""
-        keys = self._data.get("upstream_keys", [])
-        for i, k in enumerate(keys):
-            if k.get("key_id") == key_id or k.get("api_key") == key_id:
-                return i
-        return -1
+            self._key_status_version += 1
+            self._dirty = True
+            self._flush_to_disk()
 
     def update_upstream_key(self, key_id: str, updates: dict):
         with self._lock:
-            idx = self._find_key_index(key_id)
-            if idx >= 0:
-                self._data["upstream_keys"][idx].update(updates)
+            keys = self._data.setdefault("upstream_keys", [])
+            for k in keys:
+                if k.get("key_id") == key_id:
+                    k.update(updates)
+                    if "status" in updates:
+                        self._key_status_version += 1
+                    break
             self._save()
 
     def delete_upstream_key(self, key_id: str):
         with self._lock:
-            idx = self._find_key_index(key_id)
-            if idx >= 0:
-                self._data["upstream_keys"].pop(idx)
-            self._save()
+            self._data["upstream_keys"] = [
+                k for k in self._data.get("upstream_keys", [])
+                if k.get("key_id") != key_id
+            ]
+            self._key_status_version += 1
+            self._dirty = True
+            self._flush_to_disk()
 
     def sync_quota_to_key(self, api_key_or_token: str, remaining_credits: float, total_credits: float,
                            packages: list = None):
@@ -799,7 +1407,9 @@ class ProxyDatabase:
     def add_sub_api_key(self, key_data: dict):
         with self._lock:
             self._data.setdefault("sub_api_keys", []).append(key_data)
-            self._save()
+            self._sub_key_version += 1
+            self._dirty = True
+            self._flush_to_disk()
 
     def update_sub_api_key(self, key_id: str, updates: dict):
         with self._lock:
@@ -807,6 +1417,7 @@ class ProxyDatabase:
             for k in keys:
                 if k.get("key_id") == key_id:
                     k.update(updates)
+                    self._sub_key_version += 1
                     break
             self._save()
 
@@ -907,32 +1518,87 @@ class ProxyDatabase:
         today = datetime.now().strftime("%Y-%m-%d")
         with self._lock:
             return dict(self._data.get("daily_stats", {}).get(category, {}).get(key_id, {}).get(today, {}))
+
+    def get_usage_summary(self, days: int = None) -> dict:
+        """获取使用情况汇总统计
+
+        Args:
+            days: None=总计（从 upstream_keys 的累计字段汇总）
+                  1=今日
+                  N=近N天
+
+        Returns:
+            {
+                "prompt_tokens": int,       # 上行Token
+                "completion_tokens": int,   # 下行Token
+                "total_tokens": int,        # 总Token
+                "cached_tokens": int,       # 缓存命中Token
+                "credits": float,           # 消耗积分
+                "count": int,               # 请求数量
+                "cache_hit_rate": float,    # 缓存命中率(0~1)
+            }
+        """
+        result = {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+            "cached_tokens": 0,
+            "credits": 0.0,
+            "count": 0,
+            "cache_hit_rate": 0.0,
+        }
+
+        with self._lock:
+            if days is None:
+                # 总计：从 upstream_keys 累计字段汇总
+                for k in self._data.get("upstream_keys", []):
+                    result["prompt_tokens"] += k.get("total_prompt_tokens", 0)
+                    result["completion_tokens"] += k.get("total_completion_tokens", 0)
+                    result["total_tokens"] += k.get("total_tokens", 0)
+                    result["cached_tokens"] += k.get("total_cached_tokens", 0)
+                    result["credits"] += k.get("total_credits", 0.0)
+                    result["count"] += k.get("used_count", 0)
+            else:
+                # 今日或近N天：从 daily_stats 汇总
+                today = datetime.now()
+                if days == 1:
+                    date_list = [today.strftime("%Y-%m-%d")]
+                else:
+                    date_list = [
+                        (today - timedelta(days=i)).strftime("%Y-%m-%d")
+                        for i in range(days)
+                    ]
+
+                upstream_stats = self._data.get("daily_stats", {}).get("upstream", {})
+                for key_id, dates in upstream_stats.items():
+                    for date_str in date_list:
+                        day_data = dates.get(date_str)
+                        if day_data:
+                            result["prompt_tokens"] += day_data.get("prompt_tokens", 0)
+                            result["completion_tokens"] += day_data.get("completion_tokens", 0)
+                            result["total_tokens"] += day_data.get("total_tokens", 0)
+                            result["cached_tokens"] += day_data.get("cached_tokens", 0)
+                            result["credits"] += day_data.get("credits", 0.0)
+                            result["count"] += day_data.get("count", 0)
+
+        # 计算缓存命中率
+        if result["prompt_tokens"] > 0:
+            result["cache_hit_rate"] = result["cached_tokens"] / result["prompt_tokens"]
+
+        result["credits"] = round(result["credits"], 4)
+        return result
+
     _points_query_timestamps: dict = {}  # {key_id: last_query_epoch}
-    _points_query_locks: dict = {}       # {key_id: threading.Lock} 防并发重复查分
 
     def refresh_key_points_if_needed(self, key_id: str):
-        """请求完成后异步查分，限频 5 分钟/次，带 per-key 锁防并发重复查询。"""
+        """请求完成后异步查分，限频 1 分钟/次。查到后调用 sync_quota_to_key 更新积分。"""
         import time as _time
         now = _time.time()
         last = ProxyDatabase._points_query_timestamps.get(key_id, 0)
         if now - last < 300:
             return  # 5 分钟内已查过，跳过
 
-        # per-key 锁：防止同一 key 的多个并发请求同时触发查分
-        lock = ProxyDatabase._points_query_locks.setdefault(key_id, threading.Lock())
-        acquired = lock.acquire(blocking=False)
-        if not acquired:
-            logger.debug(f"[自动查分] Key {key_id} 已有查分任务进行中，跳过")
-            return
-
-        # 双重检查：拿到锁后再确认一次时间戳（可能上一个查分刚更新完）
-        try:
-            last2 = ProxyDatabase._points_query_timestamps.get(key_id, 0)
-            if now - last2 < 300:
-                return
-            ProxyDatabase._points_query_timestamps[key_id] = now
-        finally:
-            lock.release()
+        ProxyDatabase._points_query_timestamps[key_id] = now
 
         # 找到该 Key 的 api_key
         with self._lock:
@@ -955,12 +1621,18 @@ class ProxyDatabase:
                 }, timeout=10)
                 if resp.status_code == 200:
                     data = resp.json()
+                    # 兼容两种响应结构：
+                    # 旧格式: {"accounts": [...]} (顶层)
+                    # 新格式: {"data":{"Response":{"Data":{"Accounts": [...]}}}}
                     accounts = data.get("accounts", [])
                     if not accounts:
+                        # 尝试新格式
                         try:
                             accounts = data["data"]["Response"]["Data"]["Accounts"]
                         except (KeyError, TypeError):
                             accounts = []
+                    # 关键防护：accounts 为空说明上游返回了异常数据（维护/限流/格式变更），
+                    # 不能当成 0 分处理，否则会把所有 Key 全部误禁用
                     if not accounts:
                         logger.warning(f"[自动查分] Key {key_id} 查分返回空 accounts，跳过更新（不误禁用）")
                         return
@@ -968,6 +1640,7 @@ class ProxyDatabase:
                     total_credits = 0.0
                     pkgs = []
                     for acc in accounts:
+                        # 兼容新旧字段名
                         remain = float(acc.get("cycle_remain", acc.get("CycleCapacityRemain", acc.get("CapacityRemain", 0))))
                         total = float(acc.get("cycle_total", acc.get("CycleCapacitySize", acc.get("CapacitySize", 0))))
                         total_remain += remain
@@ -1013,11 +1686,15 @@ class ProxyDatabase:
 
     def delete_sub_api_key(self, key_id: str):
         with self._lock:
+            before = len(self._data.get("sub_api_keys", []))
             self._data["sub_api_keys"] = [
                 k for k in self._data.get("sub_api_keys", [])
                 if k.get("key_id") != key_id
             ]
-            self._save()
+            if len(self._data["sub_api_keys"]) != before:
+                self._sub_key_version += 1
+            self._dirty = True
+            self._flush_to_disk()
 
     # === 设置 ===
 
@@ -1045,8 +1722,6 @@ class ProxyDatabase:
         if self._daily_stats is None:
             self._daily_stats = DailyStatsManager(self.log_store)
         return self._daily_stats
-
-
 
     def add_request_log(self, log: dict):
         try:
@@ -1117,6 +1792,7 @@ class ProxyRouter:
         self._cache_lock = threading.Lock()  # 专门保护 select_key 缓存读写
         # 专一模式：记住每个子Key池当前专用的 Key（按 allowed_key_ids 的 hash 分组）
         self._dedicated_keys: dict[str, str] = {}  # {pool_hash: key_id}
+        self._expiring_dedicated_keys: dict[str, str] = {}  # {pool_hash: key_id} for key_mode=2 same-expiry group
         # 轮询模式：记住每个子Key池的轮询索引
         self._round_robin_index: dict[str, int] = {}  # {pool_hash: index}
         # 连接池：每个上游域名一个 Session，复用 TCP+TLS 连接
@@ -1135,6 +1811,7 @@ class ProxyRouter:
         self._cached_sub_keys: dict[str, dict] = {}
         self._sub_keys_cache_time: float = 0
         self._SUB_KEYS_CACHE_TTL = 10.0  # 10秒缓存
+        self._last_sub_key_version: int = -1
         # 粘性会话（优化项 #5/#7）：{session_hash: (key_id, expire_ts)} TTL 1h
         self._sticky_sessions: dict[str, tuple] = {}
         # 模型级冷却（优化项 #8/#10）：{key_id: {model: expire_ts}}
@@ -1257,50 +1934,65 @@ class ProxyRouter:
             return chosen
 
         elif key_mode == 2:
-            # Urgency priority: rank by "urgency score"
-            # urgency = sum(remaining_credits / days_left) for each package
-            # Keys with more credits expiring sooner get higher urgency
-            # Example: KeyA 150cr tomorrow + 5000cr next month -> urgency = 150/1 + 5000/31 = 311
-            #          KeyB 3000cr day after tomorrow -> urgency = 3000/2 = 1500 -> KeyB first
-            # Keys with no valid packages go last
-            # Load-aware: concurrent count as secondary sort key
-            from datetime import datetime as _dt
-            now_ts = _dt.now().timestamp()
-
-            def _parse_end_ts(cycle_end):
-                try:
-                    if "T" in cycle_end:
-                        return _dt.fromisoformat(cycle_end.replace("Z", "+00:00")).timestamp()
-                    return _dt.strptime(cycle_end, "%Y-%m-%d %H:%M:%S").timestamp()
-                except (ValueError, TypeError):
-                    try:
-                        return float(cycle_end)
-                    except (ValueError, TypeError):
-                        return float("inf")
-
-            def _urgency_score(k):
+            # 临期优先：找到所有 Key 中最快过期且有剩余积分的那组，优先用那个 Key
+            # 排序依据：每个 Key 的 packages 中最快到期的 cycle_end 时间
+            # 例如：KeyA 有 150分(明天过期) + 5000分(下月过期)，KeyB 有 3000分(后天过期)
+            #   → KeyA 排前面（150分明天过期最紧急）
+            # 负载感知：并发计数作为次级排序键（优化项 #6）
+            def _earliest_expiring_time(k: dict) -> float:
+                """返回该 Key 最快过期且有剩余积分的积分组的过期时间戳
+                越小越优先（越快过期），没有过期信息的排最后
+                """
                 packages = k.get("packages", [])
-                total_urgency = 0.0
-                has_valid = False
+                earliest = None
                 for pkg in packages:
-                    if not isinstance(pkg, dict):
+                    cycle_remain = 0
+                    cycle_end = ""
+                    if isinstance(pkg, dict):
+                        cycle_remain = float(pkg.get("cycle_remain", 0))
+                        cycle_end = str(pkg.get("cycle_end", ""))
+                    if cycle_remain <= 0:
+                        continue  # 跳过已耗尽的组
+                    if not cycle_end:
+                        continue  # 没有过期时间，跳过
+                    # 解析过期时间
+                    try:
+                        from datetime import datetime as _dt
+                        if "T" in cycle_end:
+                            # ISO 8601 格式: 2026-06-30T23:59:59Z
+                            dt = _dt.fromisoformat(cycle_end.replace("Z", "+00:00"))
+                            ts = dt.timestamp()
+                        else:
+                            try:
+                                ts = float(cycle_end)
+                            except ValueError:
+                                # 空格分隔格式: 2026-06-30 23:59:59
+                                dt = _dt.strptime(cycle_end, "%Y-%m-%d %H:%M:%S")
+                                ts = dt.timestamp()
+                        if earliest is None or ts < earliest:
+                            earliest = ts
+                    except (ValueError, TypeError):
                         continue
-                    cycle_remain = float(pkg.get("cycle_remain", 0))
-                    cycle_end = str(pkg.get("cycle_end", ""))
-                    if cycle_remain <= 0 or not cycle_end:
-                        continue
-                    end_ts = _parse_end_ts(cycle_end)
-                    if end_ts == float("inf") or end_ts <= now_ts:
-                        continue
-                    has_valid = True
-                    days_left = max(1, (end_ts - now_ts) / 86400.0)
-                    total_urgency += cycle_remain / days_left
-                if has_valid:
-                    return -total_urgency  # higher urgency = lower sort value
-                return float("inf")
+                # 有过期信息的返回最早时间，没有的排到最后
+                return earliest if earliest is not None else float('inf')
 
-            available.sort(key=lambda k: (_urgency_score(k), _concurrent_count(k)))
-            return available[0]
+            earliest_time = min(_earliest_expiring_time(k) for k in available)
+            earliest_group = [k for k in available if _earliest_expiring_time(k) == earliest_time]
+            binding_key = f"{pool_hash}:{earliest_time}"
+            dedicated_id = self._expiring_dedicated_keys.get(binding_key)
+            if dedicated_id:
+                for k in earliest_group:
+                    if k.get("key_id") == dedicated_id:
+                        return k
+
+            earliest_group.sort(key=_concurrent_count)
+            chosen = earliest_group[0]
+            self._expiring_dedicated_keys[binding_key] = chosen.get("key_id", "")
+            logger.info(
+                f"[临期优先] 池 {pool_hash[:8]} 最早过期组 {earliest_time} 绑定 Key -> "
+                f"{chosen.get('label', chosen.get('key_id', '')[:8])}"
+            )
+            return chosen
 
         elif key_mode == 3:
             # 轮询模式：round-robin，每次请求轮换到下一个 Key
@@ -1514,7 +2206,6 @@ class ProxyRouter:
                         test_data = {
                             "model": "auto",
                             "stream": True,
-                            "stream_options": {"include_usage": True},
                             "max_tokens": 1,
                             "messages": [
                                 {"role": "system", "content": "You are helpful."},
@@ -1524,7 +2215,7 @@ class ProxyRouter:
                         resp = requests.post(
                             f"{upstream_url}{UPSTREAM_CHAT_PATH}",
                             json=test_data,
-                            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                            headers=_build_workbuddy_relay_headers(api_key),
                             timeout=15,
                             proxies={"http": None, "https": None},
                         )
@@ -1623,6 +2314,17 @@ class ProxyRouter:
         t.start()
         logger.warning(f"Key {key_id} 被限流(429)，进入 10 秒冷却")
 
+    def mark_key_rate_limited(self, key_id: str):
+        """标记 Key 为系统限流（401/429 系统级限流，不自动恢复）
+
+        与 cooldown（429 临时限流，10秒自动恢复）不同，
+        rate_limited 需手动恢复或下次查分不限流才恢复。
+        """
+        self._db.update_upstream_key(key_id, {"status": "rate_limited"})
+        self._upstream_keys_cache_time = 0
+        self._sub_keys_cache_time = 0
+        logger.warning(f"Key {key_id} 标记为 rate_limited（系统限流，需手动或查分恢复）")
+
     def get_upstream_url(self, model: str = "") -> str:
         """获取上游 API base URL（带缓存）
         
@@ -1652,6 +2354,8 @@ class ProxyRouter:
         self._upstream_keys_cache_time = 0
         self._cached_sub_keys = {}
         self._sub_keys_cache_time = 0
+        self._last_sub_key_version = -1
+        self._expiring_dedicated_keys.clear()
 
     def authenticate_sub_key(self, token: str) -> Optional[dict]:
         """验证子 API Key（带缓存，避免每次请求遍历+加锁）
@@ -1659,13 +2363,18 @@ class ProxyRouter:
         缓存 token -> sub_key 映射 10 秒，认证从 O(n) + DB锁 变成 O(1) dict 查找。
         """
         now = time.time()
-        if not self._cached_sub_keys or (now - self._sub_keys_cache_time) > self._SUB_KEYS_CACHE_TTL:
-            sub_keys = self._db.get_sub_api_keys()
-            self._cached_sub_keys = {}
-            for sk in sub_keys:
-                if sk.get("api_key") and sk.get("is_active", True):
-                    self._cached_sub_keys[sk["api_key"]] = sk
-            self._sub_keys_cache_time = now
+        with self._cache_lock:
+            db_version = self._db._sub_key_version
+            cache_expired = (now - self._sub_keys_cache_time) > self._SUB_KEYS_CACHE_TTL
+            version_changed = db_version != self._last_sub_key_version
+            if not self._cached_sub_keys or cache_expired or version_changed:
+                sub_keys = self._db.get_sub_api_keys()
+                self._cached_sub_keys = {}
+                for sk in sub_keys:
+                    if sk.get("api_key") and sk.get("is_active", True):
+                        self._cached_sub_keys[sk["api_key"]] = sk
+                self._sub_keys_cache_time = now
+                self._last_sub_key_version = db_version
         
         return self._cached_sub_keys.get(token)
 
@@ -1694,6 +2403,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
     router: ProxyRouter = None
     db: ProxyDatabase = None
     server_mode: str = "local"  # "local" or "open"
+    default_key_mode: int = 1   # 默认 Key 策略：1=专一, 2=临期优先, 3=轮询, 4=会话亲和
 
     def _get_client_ip(self) -> str:
         """获取客户端真实 IP（支持 Nginx 反代）"""
@@ -1722,14 +2432,11 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
     def _add_log(self, event: str, sub_key: dict = None, upstream_key: dict = None,
                  model: str = "", duration_ms: int = 0, error: str = "",
                  prompt_tokens: int = 0, completion_tokens: int = 0,
-                 upstream_status: int = 0, request_path: str = "",
-                 attempt: int = 1, key_mode: int = 1, status: str = "",
-                 total_tokens: int = 0, credit: float = 0.0,
-                 first_token_ms: int = 0):
+                 upstream_status: int = 0, request_path: str = ""):
         """写入请求日志到 DB（统一入口）
 
         Args:
-            event: 事件类型（auth_fail / upstream_error / upstream_429 / start / end / error / request / attempt）
+            event: 事件类型（auth_fail / upstream_error / upstream_429 / start / end / error / request）
             sub_key: 子Key dict（可选）
             upstream_key: 上游Key dict（可选）
             model: 模型名
@@ -1739,12 +2446,6 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             completion_tokens: completion token数
             upstream_status: 上游返回的HTTP状态码
             request_path: 请求路径
-            attempt: 第几次尝试
-            key_mode: 调用策略
-            status: success / failed / retrying
-            total_tokens: 总 token 数
-            credit: 消耗积分
-            first_token_ms: 首字时间
         """
         self.db.add_request_log({
             "timestamp": time.time(),
@@ -1754,15 +2455,9 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             "main_key_label": upstream_key.get("label", "") if upstream_key else "",
             "model": model,
             "event": event,
-            "attempt": attempt,
-            "key_mode": key_mode,
-            "status": status,
             "duration_ms": duration_ms,
             "prompt_tokens": prompt_tokens,
             "completion_tokens": completion_tokens,
-            "total_tokens": total_tokens,
-            "credit": credit,
-            "first_token_ms": first_token_ms,
             "error": error,
             "upstream_status": upstream_status,
             "request_path": request_path,
@@ -1778,7 +2473,12 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             logger.info(f"📨 收到请求  {method} {path} auth={auth_hint} client={client_ip}")
         else:
             logger.info(f"📨 收到请求  {method} {path} auth={auth_hint}")
-        # 不在 DB 里写 request 日志了，最终只保留一条完整日志
+        # 同时写入 DB 日志，这样在 UI 的使用日志里也能看到每个请求
+        self._add_log(
+            event="request",
+            error=f"{method} {path} auth={auth_hint}",
+            request_path=path,
+        )
 
     def _send_json(self, status: int, data: dict, extra_headers: dict = None):
         """发送 JSON 响应
@@ -1828,6 +2528,15 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
         if result:
             return result
 
+        # Generated proxy keys are authoritative. If a sk-* key is not found,
+        # it was deleted/disabled or never existed, so local passthrough must
+        # not silently grant access.
+        if token.startswith("sk-"):
+            if not quiet:
+                client_ip = self._get_client_ip()
+                logger.warning(f"[认证] 子Key不存在或已删除, token=...{token[-6:] if len(token) > 6 else token}, client={client_ip}")
+            return None
+
         # 开放模式：不匹配子Key → 直接拒绝，不创建虚拟透传子Key
         if self.server_mode == "open":
             if not quiet:
@@ -1849,7 +2558,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             "max_usage": 0,
             "used_count": 0,
             "rate_limit_rpm": 1000,
-            # key_mode 不写死，走全局默认策略（由用户在前端选择）
+            "key_mode": 1,
         }
 
     def do_GET(self):
@@ -1864,7 +2573,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             self._send_json(200, {
                 "object": "api.index",
                 "message": "Antigravity Proxy is running",
-                "version": "1.6.1",
+                "version": "1.8.1",
             })
             return
 
@@ -1883,7 +2592,8 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                 logger.info(f"[透传] /v1/models 无Bearer token，返回全部模型")
                 sub_key = {"allowed_models": []}
             allowed_models = sub_key.get("allowed_models", [])
-            model_list = SUPPORTED_MODELS if not allowed_models else [m for m in SUPPORTED_MODELS if m in allowed_models]
+            normalized_allowed_models = [MODEL_ID_ALIASES.get(str(m).strip(), str(m).strip()) for m in allowed_models]
+            model_list = SUPPORTED_MODELS if not normalized_allowed_models else [m for m in SUPPORTED_MODELS if m in normalized_allowed_models]
             models_data = {
                 "object": "list",
                 "data": [
@@ -1892,20 +2602,10 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                         "object": "model",
                         "created": int(time.time()),
                         "owned_by": "antigravity-proxy",
-                        **_model_context_fields(m),
-                        "api": "openai-completions",
-                        "provider": "zai",
-                        "baseUrl": "https://copilot.tencent.com/v2",
-                        "input": ["text", "image"] if _model_supports_images(m) else ["text"],
-                        "compat": {
-                            "supportsDeveloperRole": False,
-                            "thinkingFormat": "zai",
-                            "zaiToolStream": True,
-                        },
+                        "supportsToolCall": True,
                         "supportsImages": _model_supports_images(m),
-                        "supports_images": _model_supports_images(m),
-                        "disabledMultimodal": not _model_supports_images(m),
-                        "disabled_multimodal": not _model_supports_images(m),
+                        "supportsReasoning": True,
+                        "reasoning": {"supportedEfforts": ["max"]},
                     }
                     for m in model_list
                 ]
@@ -1937,6 +2637,10 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             self._handle_chat_completions()
             return
 
+        if path == "/v1/responses":
+            self._handle_responses()
+            return
+
         # 未识别的 POST 端点：返回 404 但不是 401
         logger.warning(f"[未识别] POST {path}")
         self._send_json(404, {"error": {"message": f"Endpoint not found: {path}", "type": "not_found"}})
@@ -1958,7 +2662,35 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", "0")
         self.end_headers()
 
-    def _handle_chat_completions(self):
+    def _handle_responses(self):
+        """Handle /v1/responses by translating it to the chat pipeline."""
+        try:
+            content_length = int(self.headers.get("Content-Length", 0))
+            if content_length > 50 * 1024 * 1024:
+                self._send_json(413, {"error": {"message": "Request body too large (max 50MB)", "type": "invalid_request"}})
+                return
+            body = self.rfile.read(content_length)
+            request_data = json.loads(body)
+            chat_request, meta = _responses_to_chat_request(request_data)
+            logger.info(
+                "[responses] translated request input_type=%s messages=%s stream=%s",
+                meta.get("input_type"),
+                meta.get("message_count"),
+                chat_request.get("stream"),
+            )
+        except Exception as e:
+            self._send_json(400, {"error": {"message": f"Invalid request body: {e}", "type": "invalid_request"}})
+            return
+
+        self._handle_chat_completions(
+            request_data_override=chat_request,
+            response_mode="responses",
+            request_path="/v1/responses",
+        )
+
+    def _handle_chat_completions(self, request_data_override: dict = None,
+                                 response_mode: str = "chat",
+                                 request_path: str = "/v1/chat/completions"):
         """处理 /v1/chat/completions 请求
         
         自动重试：上游 Key 报错时自动换下一个 Key 重试，
@@ -1976,27 +2708,28 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                 client_ip = self._get_client_ip()
                 error_detail = "无效的 API Key"
                 logger.warning(f"[认证] {error_detail}, client={client_ip}")
-                self._add_log(event="auth_fail", error=error_detail, request_path="/v1/chat/completions", status="failed")
+                self._add_log(event="auth_fail", error=error_detail, request_path="/v1/chat/completions")
                 self._send_json(401, {"error": {"message": "Invalid API key", "type": "authentication_error"}})
                 return
             # 本地模式：不返回 401/403！WorkBuddy 客户端收到 401 会触发重新登录。
             # 用 503 (Service Unavailable) 代替，表示"服务暂时不可用"，不触发认证流程。
             error_detail = "请求缺少 Bearer token"
             logger.warning(f"[认证] {error_detail}，返回503")
-            self._add_log(event="auth_fail", error=error_detail, request_path="/v1/chat/completions", status="failed")
+            self._add_log(event="auth_fail", error=error_detail, request_path="/v1/chat/completions")
             self._send_json(503, {"error": {"message": "Service temporarily unavailable", "type": "server_error"}})
             return
 
         is_passthrough = sub_key.get("key_id") == "_passthrough_"
         if is_passthrough:
             logger.info(f"[透传] chat请求使用透传模式，自动选上游Key")
+            self._add_log(event="request", sub_key=sub_key, error="透传模式:自动选上游Key", request_path="/v1/chat/completions")
 
         # 2. 检查子 Key 状态（透传模式跳过）
         if not is_passthrough:
             if not sub_key.get("is_active", True):
                 error_detail = f"子Key已禁用, sub={sub_key.get('label', sub_key.get('key_id', ''))}"
                 logger.warning(f"[禁用] {error_detail}")
-                self._add_log(event="auth_fail", sub_key=sub_key, error=error_detail, request_path="/v1/chat/completions", status="failed")
+                self._add_log(event="auth_fail", sub_key=sub_key, error=error_detail, request_path="/v1/chat/completions")
                 self._send_json(503, {"error": {"message": "Service temporarily unavailable", "type": "server_error"}})
                 return
 
@@ -2005,29 +2738,43 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             if max_usage > 0 and used_count >= max_usage:
                 error_detail = f"子Key使用次数超限, sub={sub_key.get('label', '')} used={used_count}/{max_usage}"
                 logger.warning(f"[限流] {error_detail}")
-                self._add_log(event="auth_fail", sub_key=sub_key, error=error_detail, request_path="/v1/chat/completions", status="failed")
+                self._add_log(event="auth_fail", sub_key=sub_key, error=error_detail, request_path="/v1/chat/completions")
                 self._send_json(429, {"error": {"message": "Usage limit exceeded", "type": "rate_limit"}})
                 return
 
         # 3. 解析请求体（优化项 #14：请求体大小限制 50MB）
-        try:
-            content_length = int(self.headers.get("Content-Length", 0))
-            if content_length > 50 * 1024 * 1024:
-                logger.warning(f"[安全] 请求体过大: {content_length} bytes，拒绝")
-                self._add_log(event="error", sub_key=sub_key, error=f"请求体过大: {content_length} bytes",
-                              request_path="/v1/chat/completions", status="failed")
-                self._send_json(413, {"error": {"message": "Request body too large (max 50MB)", "type": "invalid_request"}})
+        if request_data_override is not None:
+            request_data = request_data_override
+        else:
+            try:
+                content_length = int(self.headers.get("Content-Length", 0))
+                if content_length > 50 * 1024 * 1024:
+                    logger.warning(f"[安全] 请求体过大: {content_length} bytes，拒绝")
+                    self._add_log(
+                        event="error",
+                        sub_key=sub_key,
+                        error=f"请求体过大: {content_length} bytes",
+                        request_path=request_path,
+                    )
+                    self._send_json(413, {"error": {"message": "Request body too large (max 50MB)", "type": "invalid_request"}})
+                    return
+                body = self.rfile.read(content_length)
+                request_data = json.loads(body)
+            except Exception as e:
+                self._send_json(400, {"error": {"message": f"Invalid request body: {e}", "type": "invalid_request"}})
                 return
-            body = self.rfile.read(content_length)
-            request_data = json.loads(body)
-        except Exception as e:
-            self._send_json(400, {"error": {"message": f"Invalid request body: {e}", "type": "invalid_request"}})
-            return
 
         model = request_data.get("model", "")
         if not model:
             model = "auto"  # 默认模型，让上游服务端路由
             request_data["model"] = model  # [v1.6.1-fix] 写回 request_data，否则白名单转发时上游收不到 model
+        else:
+            original_model = str(model).strip()
+            aliased_model = MODEL_ID_ALIASES.get(original_model, original_model)
+            if aliased_model != original_model:
+                logger.info(f"[模型别名] {original_model} -> {aliased_model}")
+                model = aliased_model
+                request_data["model"] = model
         # 与服务器端 chat.py 一致：messages 少于 2 条时补 system 消息
         # 上游 copilot.tencent.com 要求至少 2 条 message，否则返回 400
         messages = request_data.get("messages", [])
@@ -2070,18 +2817,15 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
         #     return
         # ── 旧逻辑结束 ──
 
-        # 图片统计仍保留（用于日志），但不做拦截
-        image_stats = _detect_multimodal_images(request_data)
-        history_strip_stats = {"stripped_images": 0}
-
         # 4. 检查模型是否允许（透传模式跳过）
         if not is_passthrough:
             allowed_models = sub_key.get("allowed_models", [])
-            if allowed_models and model not in allowed_models:
+            normalized_allowed_models = [MODEL_ID_ALIASES.get(str(m).strip(), str(m).strip()) for m in allowed_models]
+            if normalized_allowed_models and model not in normalized_allowed_models:
                 # 用 503 代替 403，避免触发 WorkBuddy 认证流程
                 error_detail = f"模型 {model} 不允许, 允许: {allowed_models}"
                 logger.warning(f"[模型] {error_detail}")
-                self._add_log(event="error", sub_key=sub_key, model=model, error=error_detail, request_path="/v1/chat/completions", status="failed")
+                self._add_log(event="error", sub_key=sub_key, model=model, error=error_detail, request_path="/v1/chat/completions")
                 self._send_json(503, {"error": {"message": f"Model {model} not available", "type": "server_error"}})
                 return
 
@@ -2090,21 +2834,20 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
         target_url = f"{upstream_url}{UPSTREAM_CHAT_PATH}"
 
         # ─── 自动重试循环：最多尝试 3 个不同 Key ───
-        MAX_RETRIES = 3
+        MAX_RETRY_KEYS = 3
+        total_attempts = 0
         tried_key_ids = set()       # 已尝试过的 key_id（换 Key 时加入）
         same_key_retried = set()    # 已同 Key 重试过的 key_id（优化项 #7：RETRY_SAME 每键只重试一次）
         last_error = None           # 最后一次的错误信息
         last_error_status = 503     # 最后一次的错误状态码
         last_cooldown_secs = 0      # 最后一次冷却秒数（用于 Retry-After 头，优化项 #9）
-        _skip_stream_options = False  # 某些模型不支持 stream_options，检测到 400 后去掉重试
+        last_upstream_error_log = None  # 最后一次上游原始错误详情（仅用于本地排查日志）
         _ctx_compressed = [False]    # 上下文是否已压缩过（用 list 包装以便在嵌套函数中修改）
         allowed_key_ids = sub_key.get("allowed_key_ids", [])
-        # 子 Key 未单独设置策略时，使用全局默认策略
-        global_default = getattr(ProxyRequestHandler, "default_key_mode", 1)
-        km = sub_key.get("key_mode")
-        key_mode = km if km is not None else global_default
+        key_mode = sub_key.get("key_mode", 1)
 
-        for attempt in range(1, MAX_RETRIES + 1):
+        while len(tried_key_ids) < MAX_RETRY_KEYS:
+            total_attempts += 1
             # 选择上游 Key（排除已尝试的），带等待队列（优化项 #3）
             upstream_key = self.router.select_key_with_wait(
                 model,
@@ -2127,7 +2870,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                         if kid and not self.router._is_key_schedulable_for_model(kid, model):
                             model_cooldown_count += 1
                 logger.warning(
-                    f"[重试] 第{attempt}次：无可用的上游 Key | "
+                    f"[重试] 第{total_attempts}次：无可用的上游 Key | "
                     f"总计={len(all_keys)} active={active_count} cooldown={cooldown_count} "
                     f"excluded={excluded_count} model_cooldown={model_cooldown_count} "
                     f"tried_key_ids={tried_key_ids}"
@@ -2136,91 +2879,71 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
 
             key_id = upstream_key.get("key_id", "")
             label = upstream_key.get("label", key_id[:8])
-            logger.info(f"[重试] 第{attempt}次尝试 Key: {label}")
+            logger.info(f"[重试] 第{total_attempts}次尝试 Key: {label}")
 
             # 更新并发计数
             self.router.increment_concurrent(key_id)
 
             try:
-                # ─── 构建请求头：纯 API 白名单制（v1.6.1 改动）───
-                # [v1.6.1-CHANGE] 请求头从「3件套(Content-Type+Authorization+X-Request-ID)」
-                #   改为白名单制(Content-Type+Accept+Authorization)，去掉 X-Request-ID(trace头)
-                # [ROLLBACK] 恢复方法：把 req_headers 改回
-                #   {"Content-Type": "application/json",
-                #    "Authorization": f"Bearer {upstream_api_key}",
-                #    "X-Request-ID": secrets.token_hex(16)}
+                # ─── v1.6.6 WorkBuddy Relay：保留客户端 body，只替换上游 Key ───
                 upstream_api_key = upstream_key.get("api_key", "")
-                req_headers = {
-                    "Content-Type": "application/json",
-                    "Accept": "application/json, text/event-stream",
-                    "Authorization": f"Bearer {upstream_api_key}",
-                }
-                logger.info(f"[代理] 使用白名单 API 协议头（Content-Type+Accept+Authorization）")
-
-                # 检查客户端是否要流式
+                req_headers = _build_workbuddy_relay_headers(upstream_api_key)
                 client_wants_stream = request_data.get("stream", False)
-                # copilot 上游只支持流式请求，强制开启 stream
-                request_data["stream"] = True
-                # 请求上游返回 usage 统计（最后一个 chunk 包含 token/credit/缓存信息）
-                if not _skip_stream_options:
-                    request_data.setdefault("stream_options", {})["include_usage"] = True
+                upstream_request_data, build_meta = _build_workbuddy_relay_body(request_data)
+                sensitive_replaced = build_meta.get("system_prompt_sensitive_replaced", 0)
+                if sensitive_replaced:
+                    self._add_log(
+                        event="sensitive_replace",
+                        sub_key=sub_key,
+                        upstream_key=upstream_key,
+                        model=model,
+                        error=f"系统提示词敏感信息替换 {sensitive_replaced} 处",
+                        request_path="/v1/chat/completions",
+                    )
 
-                # ─── [v1.6.1-CHANGE] 请求体白名单制：删除非白名单字段 ───
-                # 原样透传会把客户端的未知字段带到上游，可能导致 400。
-                # 白名单只保留上游已知接受的字段，其余删除并记日志。
-                # [ROLLBACK] 注释掉这段 _allowed_body_fields 过滤即可恢复原样透传
-                _allowed_body_fields = {
-                    "model", "messages", "stream", "stream_options",
-                    "temperature", "top_p", "max_tokens", "presence_penalty",
-                    "frequency_penalty", "stop", "tools", "tool_choice", "response_format",
-                    # [v1.6.1-fix] 补充 OpenAI 兼容常用字段
-                    "parallel_tool_calls", "seed", "user", "metadata",
-                    "logprobs", "top_logprobs", "n",
-                    # [v1.6.1-fix] 推理模式相关字段
-                    "reasoning_effort", "thinking",
-                }
-                _removed_fields = [k for k in list(request_data.keys()) if k not in _allowed_body_fields]
-                if _removed_fields:
-                    logger.info(f"[v1.6.1] 请求体白名单过滤，删除字段: {_removed_fields}")
-                    for _k in _removed_fields:
-                        del request_data[_k]
+                if (
+                    build_meta["removed_null_fields"]
+                    or build_meta["translated_fields"]
+                    or build_meta["dropped_fields"]
+                    or build_meta["history_images_replaced"]
+                    or build_meta["normalized_images"]
+                    or build_meta["unsupported_inline_images_removed"]
+                ):
+                    logger.info(
+                        f"[v1.6.6] WorkBuddy Relay 调整字段: "
+                        f"dropped={build_meta['dropped_fields']}; "
+                        f"removed_null={build_meta['removed_null_fields']}; "
+                        f"translated={build_meta['translated_fields']}; "
+                        f"history_images_replaced={build_meta['history_images_replaced']}; "
+                        f"normalized_images={build_meta['normalized_images']}; "
+                        f"unsupported_inline_images_removed={build_meta['unsupported_inline_images_removed']}"
+                    )
 
-                # ─── [v1.6.1-CHANGE] 历史图片替换为文本描述 ───
-                # 后面已有 assistant 回复的 user 图片消息 → 图片替换成描述
-                # 后面还没有 assistant 回复的 user 图片消息 → 保留原图（第一次发图/最新发图）
-                # [ROLLBACK] 注释掉下面两行即可恢复（只保留 _normalize_messages_for_upstream）
-                request_data["messages"] = _strip_history_images_with_description(
-                    request_data.get("messages", [])
-                )
-
-                # ─── [v1.6.1-CHANGE] messages 图片格式归一化：input_image → image_url ───
-                # 上游纯 API 模式只认 image_url 格式，input_image 会被丢弃导致"读不了图"。
-                # [ROLLBACK] 注释掉下面这行即可恢复原样透传
-                _img_normalized = _normalize_messages_for_upstream(request_data.get("messages", []))
-
-                # [v1.6.1-fix] 图片处理后重新统计，日志里显示真正发给上游的图片数
-                image_stats = _detect_multimodal_images(request_data)
+                image_stats = _detect_multimodal_images(upstream_request_data)
 
                 # 记录请求体大小和消息数（用于排查上下文超长问题）
-                msg_count = len(request_data.get("messages", []))
-                body_size = len(json.dumps(request_data, ensure_ascii=False))
+                msg_count = len(upstream_request_data.get("messages", []))
+                body_size = len(json.dumps(upstream_request_data, ensure_ascii=False))
 
                 # 检测请求是否包含图片内容（排查图片上下文超限问题）
                 has_image = image_stats["image_count"] > 0
 
-                logger.info(f"[代理] 请求准备耗时 {int((time.time()-t0)*1000)}ms, model={model}, key={label}, "
+                logger.info(f"[代理] v1.6.6 WorkBuddy Relay 请求 {int((time.time()-t0)*1000)}ms, model={model}, key={label}, "
                            f"messages={msg_count}, body={body_size}B ({body_size//1024}KB), "
                            f"stream={client_wants_stream}, image={has_image}, images={image_stats['image_count']}, "
-                           f"stripped_images={history_strip_stats['stripped_images']}, "
-                           f"stream_options={request_data.get('stream_options', 'N/A')}, "
-                           f"img_normalized={_img_normalized}")
+                           f"data_uri={image_stats['data_uri_count']}, max_image_chars={image_stats['max_image_chars']}, "
+                           f"dropped={build_meta['dropped_fields']}, "
+                           f"history_images_replaced={build_meta['history_images_replaced']}, "
+                           f"normalized_images={build_meta['normalized_images']}, "
+                           f"unsupported_inline_images_removed={build_meta['unsupported_inline_images_removed']}, "
+                           f"mode={build_meta['mode']}, stream_options={build_meta['has_stream_options']}")
 
                 # ─── 发送请求到上游 ───
                 session = self.router._get_session(upstream_url)
                 t_send = time.time()
                 resp = session.post(
                     target_url,
-                    json=request_data,
+                    json=upstream_request_data,
                     headers=req_headers,
                     timeout=120,
                     stream=True,
@@ -2234,6 +2957,23 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
 
                     # 故障转移分类（优化项 #7）
                     error_type = self.router._classify_error(resp.status_code, resp_body)
+                    upstream_error_log = _parse_upstream_error_for_log(resp.status_code, resp_body, resp.headers)
+                    request_error_log = _summarize_request_for_error_log(
+                        upstream_request_data, req_headers, build_meta
+                    )
+                    last_upstream_error_log = upstream_error_log
+                    logger.warning(
+                        "[上游错误详情] %s",
+                        _safe_json_for_log({
+                            "model": model,
+                            "key": label,
+                            "url": target_url,
+                            "attempt": total_attempts,
+                            "error_type": error_type,
+                            "upstream": upstream_error_log,
+                            "request": request_error_log,
+                        }, limit=16000),
+                    )
 
                     # 根据状态码标记 Key
                     if resp.status_code == 429:
@@ -2258,6 +2998,8 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                             last_cooldown_secs = cooldown_secs
                             error_detail = f"Key {label} 模型 {model} 被限流(429)，冷却 {cooldown_secs}s: {resp_body[:200]}"
                         logger.warning(f"[重试] {error_detail}")
+                        self._add_log(event="upstream_429", sub_key=sub_key, upstream_key=upstream_key,
+                                      model=model, error=error_detail, upstream_status=429)
                     elif resp.status_code == 401:
                         # 区分：401 返回 JSON（真正的认证失败） vs 返回 HTML（网关层拦截）
                         is_html_response = "<html>" in resp_body.lower() or "<!doctype" in resp_body.lower()
@@ -2267,8 +3009,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                             error_detail = f"Key {label} 401 返回 HTML（网关拦截）: {resp_body[:200]}"
                             logger.warning(f"[拒绝] {error_detail}")
                             self._add_log(event="upstream_error", sub_key=sub_key, upstream_key=upstream_key,
-                                          model=model, error=error_detail, upstream_status=401,
-                                          attempt=attempt, key_mode=key_mode, status="failed")
+                                          model=model, error=error_detail, upstream_status=401)
                             self._send_json(502, {
                                 "error": {
                                     "message": "请求被上游网关拦截，可能是上下文过长或请求格式异常。请尝试新开对话。",
@@ -2278,34 +3019,34 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                             return
                         # 401：纯 API 头不应该出现 invalid_format，如果有说明 Key 有问题
                         logger.info(f"[401] Key {label} 上游返回: status=401, body={resp_body[:500]}")
-                        # 401 不冷却 Key（可能是偶发网络问题），直接换 Key 重试
-                        # mark_key_cooldown 会导致正常 Key 被误冷却 10 秒
+                        # 401 认证失败 → 标记为 rate_limited（不自动恢复，需手动或下次查分恢复）
+                        self.router.mark_key_rate_limited(key_id)
                         error_detail = f"Key {label} 认证失败(401): {resp_body[:200]}"
                         logger.warning(f"[重试] {error_detail}")
+                        self._add_log(event="upstream_error", sub_key=sub_key, upstream_key=upstream_key,
+                                      model=model, error=error_detail, upstream_status=401)
                     elif resp.status_code == 400 and not resp_body.strip():
                         # 400 空 body：上游临时问题，不判定为上下文过长，直接换 Key 重试
                         logger.warning(f"[重试] Key {label} 上游返回 400 空 body，换 Key 重试")
+                        self._add_log(event="upstream_error", sub_key=sub_key, upstream_key=upstream_key,
+                                      model=model, error="上游返回400空body", upstream_status=400)
                         last_error = json.dumps({"error": {"message": "上游返回为空，请重试", "type": "upstream_empty_response"}})
                         last_error_status = 502
                     elif resp.status_code == 400 and ("input length too long" in resp_body or '"code":11115' in resp_body):
-                        # 400 + "input length too long"：上下文确实超限，尝试压缩后重试
-                        if not _ctx_compressed[0]:
-                            logger.warning(f"[压缩] Key {label} 400 input length too long，尝试压缩")
-                            result = self._handle_context_too_long(
-                                request_data, upstream_key, model, upstream_url, _ctx_compressed)
-                            if result != "failed":
-                                tried_key_ids.discard(key_id)  # 允许同Key重试
-                                continue
-                        # 已压缩过还超，返回友好提示
+                        # Let WorkBuddy handle context compaction itself. Returning the
+                        # recognizable 11115/input-length error avoids creating invalid
+                        # partial tool-message histories in the proxy.
                         error_detail = f"Key {label} 上游返回 400 input length too long"
                         logger.warning(f"[拒绝] {error_detail}")
                         self._add_log(event="end", sub_key=sub_key, upstream_key=upstream_key,
-                                      model=model, error="context_too_long",
-                                      attempt=attempt, key_mode=key_mode, status="failed")
+                                      model=model, error="context_too_long")
                         self._send_json(400, {
+                            "code": 11115,
+                            "msg": "input length too long",
                             "error": {
-                                "message": "当前对话上下文过长，超出模型限制。请新开一个对话继续。",
-                                "type": "context_too_long"
+                                "message": "input length too long",
+                                "type": "context_length_exceeded",
+                                "code": 11115,
                             }
                         })
                         return
@@ -2314,46 +3055,53 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                         if resp.status_code == 403 and '"code":11140' in resp_body:
                             error_detail = f"Key {label} 被风控(403/11140): {resp_body[:200]}"
                             logger.warning(f"[风控] {error_detail}")
-                            # 风控日志已移除，最终日志会包含
+                            self._add_log(event="upstream_error", sub_key=sub_key, upstream_key=upstream_key,
+                                          model=model, error=error_detail, upstream_status=403)
                             # 标记为 abnormal，不再参与轮询
                             self.router.mark_key_abnormal(key_id)
                         elif resp.status_code == 400:
-                            # 检测是否是 stream_options 不被支持导致的 400
-                            # 日志特征：code:11133 "invalid parameter value"
-                            if "stream_options" in request_data and not _skip_stream_options and (
-                                "11133" in resp_body or "invalid parameter" in resp_body.lower()
-                            ):
-                                logger.warning(
-                                    f"[400] 疑似 stream_options 不被支持, 去掉后同Key重试, "
-                                    f"model={model}, key={label}, resp={resp_body[:200]}"
-                                )
-                                request_data.pop("stream_options", None)
-                                _skip_stream_options = True
-                                continue  # 同 Key 重试（不加入 tried_key_ids）
-                            # 400 但不是空body也不是 input length too long — 记录请求参数用于排查
-                            # 常见原因：stream_options 不被某些模型支持、参数格式错误、上游节点偶发故障
-                            req_params = {k: v for k, v in request_data.items()
-                                         if k not in ("messages",)}
-                            # 检测消息中是否包含图片（排查图片相关 11133）
-                            msg_count = len(request_data.get("messages", []))
-                            has_image = any(
-                                isinstance(m.get("content"), list) and
-                                any(isinstance(p, dict) and p.get("type") == "image_url" for p in m["content"])
-                                for m in request_data.get("messages", [])
+                            # 400 但不是空body也不是 input length too long — 记录真正发给上游的参数用于排查
+                            code = upstream_error_log.get("code")
+                            msg = upstream_error_log.get("msg")
+                            request_id = upstream_error_log.get("requestId") or upstream_error_log.get("request_id_header")
+                            ext_error = upstream_error_log.get("extError")
+                            logger.warning(
+                                "[400排查] %s",
+                                _safe_json_for_log({
+                                    "model": model,
+                                    "key": label,
+                                    "code": code,
+                                    "msg": msg,
+                                    "requestId": request_id,
+                                    "extError": ext_error,
+                                    "raw_body": upstream_error_log.get("raw_body"),
+                                    "request": request_error_log,
+                                }, limit=16000),
                             )
-                            logger.warning(f"[400排查] model={model}, key={label}, "
-                                          f"resp={resp_body[:300]}, "
-                                          f"req_params(excl messages)={req_params}, "
-                                          f"messages={msg_count}, has_image={has_image}, "
-                                          f"stream_options_removed={_skip_stream_options}")
-                            error_detail = f"Key {label} 上游返回 400: {resp_body[:200]}"
-                            # 400 错误信息保留在最终日志中
+                            error_detail = _safe_json_for_log({
+                                "key": label,
+                                "status": 400,
+                                "code": code,
+                                "msg": msg,
+                                "requestId": request_id,
+                                "extError": ext_error,
+                                "raw_body": upstream_error_log.get("raw_body"),
+                                "request_fields": request_error_log.get("body_fields"),
+                                "non_message_fields": request_error_log.get("non_message_fields"),
+                                "messages": request_error_log.get("messages"),
+                                "image_stats": request_error_log.get("image_stats"),
+                                "relay_meta": build_meta,
+                            }, limit=6000)
+                            # 记录到 DB 日志面板，方便用户排查原始 400 错误
+                            self._add_log(event="upstream_error", sub_key=sub_key, upstream_key=upstream_key,
+                                          model=model, error=error_detail, upstream_status=400)
                             # 11133 可能是上游节点偶发故障（不是参数问题），换 Key 重试通常能解决
                             # 不冷却该 Key（避免误伤），只标记 tried 换下一个 Key
                         else:
                             error_detail = f"Key {label} 上游返回 {resp.status_code}: {resp_body[:200]}"
                             logger.warning(f"[重试] {error_detail}")
-                            # 上游错误信息保留在最终日志中
+                            self._add_log(event="upstream_error", sub_key=sub_key, upstream_key=upstream_key,
+                                          model=model, error=error_detail, upstream_status=resp.status_code)
 
                     # ─── 故障转移决策（优化项 #7）───
                     # FATAL 已在上面 return，此处只处理 RETRY_SAME 和 SWITCH_KEY
@@ -2390,8 +3138,8 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                 start_time = time.time()
                 should_retry, error_msg = self._forward_stream_response(
                     resp, upstream_key, sub_key, model, start_time,
-                    client_wants_stream, key_id, request_data,
-                    attempt=attempt, key_mode=key_mode
+                    client_wants_stream, key_id, upstream_request_data,
+                    response_mode=response_mode
                 )
                 self.router.decrement_concurrent(key_id)
 
@@ -2411,7 +3159,8 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                 self.router.decrement_concurrent(key_id)
                 error_detail = f"Key {label} 转发异常: {type(e).__name__}: {e}"
                 logger.error(f"[重试] {error_detail}")
-                # 异常信息保留在最终日志中
+                self._add_log(event="error", sub_key=sub_key, upstream_key=upstream_key,
+                              model=model, error=error_detail)
 
                 # 故障转移分类：超时/连接错误 → RETRY_SAME（优化项 #7）
                 if isinstance(e, (requests.Timeout, requests.ConnectionError, ConnectionError, socket.timeout, OSError)):
@@ -2433,18 +3182,14 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
 
         # ─── 所有重试都失败 ───
         if last_error:
-            # 收集尝试过的 Key 标签，方便排查
-            tried_labels = []
-            for kid in tried_key_ids:
-                for k in (self.router._cached_upstream_keys or []):
-                    if k.get("key_id") == kid:
-                        tried_labels.append(k.get("label", kid[:8]))
-                        break
-            tried_info = ", ".join(tried_labels) if tried_labels else "未知"
-            error_detail = f"尝试了{len(tried_key_ids)}个Key({tried_info})均失败"
-            logger.error(f"[失败] {error_detail}: {last_error[:300] if isinstance(last_error, str) else str(last_error)[:300]}")
-            self._add_log(event="error", sub_key=sub_key, model=model, error=error_detail,
-                          status="failed", attempt=len(tried_key_ids) or 1)
+            error_detail = f"所有重试失败(请求{total_attempts}次，尝试了{len(tried_key_ids)}个Key): {last_error[:300] if isinstance(last_error, str) else last_error[:300]}"
+            logger.error(f"[失败] {error_detail}")
+            if last_upstream_error_log:
+                logger.error(
+                    "[失败详情] last_upstream=%s",
+                    _safe_json_for_log(last_upstream_error_log, limit=8000),
+                )
+            self._add_log(event="error", sub_key=sub_key, model=model, error=error_detail)
             # 优化项 #9：429 附带 Retry-After 头
             if last_error_status == 429 and last_cooldown_secs > 0:
                 self.send_response(last_error_status)
@@ -2462,8 +3207,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
         else:
             error_detail = "无可用的上游 Key（Key池为空或全部耗尽/冷却中）"
             logger.error(f"[失败] {error_detail}")
-            self._add_log(event="error", sub_key=sub_key, model=model, error=error_detail,
-                          status="failed", attempt=len(tried_key_ids) or 1)
+            self._add_log(event="error", sub_key=sub_key, model=model, error=error_detail)
             self._send_json(503, {"error": {"message": "No available upstream keys", "type": "server_error"}})
 
     def _compress_context_with_ai(self, request_data: dict, upstream_key: dict,
@@ -2661,7 +3405,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
 
     def _forward_stream_response(self, resp, upstream_key, sub_key, model, start_time,
                                   client_wants_stream, key_id, request_data=None,
-                                  attempt=1, key_mode=1):
+                                  response_mode: str = "chat"):
         """处理上游 200 响应的流式/非流式转发
 
         优化项：
@@ -2681,6 +3425,8 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
         last_usage = {}
         first_token_ms = None
         client_disconnected = False
+        response_id = f"resp_{secrets.token_hex(16)}"
+        response_stream_text_parts = []
         _chunk_count = 0       # 接收的 chunk 总数
         _has_usage_chunk = False  # 是否收到包含 usage 的 chunk
         _last_chunk_preview = ""  # 最后一个 chunk 的预览（排查 usage 丢失）
@@ -2722,16 +3468,20 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             # 检测首 chunk 中的错误（优化项 #4/#11）
             error_type = self._detect_stream_error(first_chunk_str)
             if error_type == "context_too_long":
-                # 上下文超长，不重试，直接返回友好提示
+                # Return a WorkBuddy-recognizable prompt-too-long error so the client
+                # can run its own compact flow.
                 self._send_json(400, {
+                    "code": 11115,
+                    "msg": "input length too long",
                     "error": {
-                        "message": "当前对话上下文过长，超出模型限制。请新开一个对话继续。",
-                        "type": "context_too_long"
+                        "message": "input length too long",
+                        "type": "context_length_exceeded",
+                        "code": 11115,
                     }
                 })
                 self._add_log(event="end", sub_key=sub_key, upstream_key=upstream_key,
                               model=model, duration_ms=int((time.time() - start_time) * 1000),
-                              error="context_too_long", status="failed")
+                              error="context_too_long")
                 return (False, "")
             if error_type == "stream_error":
                 # 首 chunk 包含错误事件，换 Key 重试
@@ -2759,7 +3509,21 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
 
             # 发送首 chunk
             try:
-                self.request.sendall(first_chunk_data)
+                if response_mode == "responses":
+                    self.request.sendall(_sse_event("response.created", {
+                        "type": "response.created",
+                        "response": _build_responses_object("", model, response_id, {}),
+                    }))
+                    self.request.sendall(_sse_event("response.in_progress", {
+                        "type": "response.in_progress",
+                        "response_id": response_id,
+                    }))
+                    for event_data in _responses_stream_events_from_chat_chunk(
+                        first_chunk_str, response_id, response_stream_text_parts
+                    ):
+                        self.request.sendall(event_data)
+                else:
+                    self.request.sendall(first_chunk_data)
             except (BrokenPipeError, ConnectionResetError, OSError):
                 client_disconnected = True
                 logger.info("[代理] 客户端断开连接（首 chunk），继续 drain 上游")
@@ -2784,11 +3548,41 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                         _last_chunk_preview = chunk_str[-300:] if len(chunk_str) > 300 else chunk_str
                     if not client_disconnected:
                         try:
-                            self.request.sendall(chunk)
+                            if response_mode == "responses":
+                                for event_data in _responses_stream_events_from_chat_chunk(
+                                    chunk_str, response_id, response_stream_text_parts
+                                ):
+                                    self.request.sendall(event_data)
+                            else:
+                                self.request.sendall(chunk)
                         except (BrokenPipeError, ConnectionResetError, OSError):
                             client_disconnected = True
                             logger.info("[代理] 客户端断开连接，继续 drain 上游（优化项 #12）")
                     last_data_time = time.time()
+
+            if response_mode == "responses" and not client_disconnected:
+                try:
+                    completed = _build_responses_object(
+                        "".join(response_stream_text_parts),
+                        model,
+                        response_id,
+                        last_usage,
+                    )
+                    self.request.sendall(_sse_event("response.output_text.done", {
+                        "type": "response.output_text.done",
+                        "response_id": response_id,
+                        "item_id": "msg_0",
+                        "output_index": 0,
+                        "content_index": 0,
+                        "text": completed.get("output_text", ""),
+                    }))
+                    self.request.sendall(_sse_event("response.completed", {
+                        "type": "response.completed",
+                        "response": completed,
+                    }))
+                    self.request.sendall(b"data: [DONE]\n\n")
+                except (BrokenPipeError, ConnectionResetError, OSError):
+                    client_disconnected = True
 
             self.close_connection = True
 
@@ -2807,8 +3601,8 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                 if _last_chunk_preview:
                     logger.info(f"[代理] 最后含usage的chunk预览: {_last_chunk_preview}")
                 elif _chunk_count > 0:
-                    logger.warning(f"[代理] 所有 {_chunk_count} 个 chunk 中均未找到 usage 字段! "
-                                  f"上游可能不支持 stream_options.include_usage")
+                    logger.warning(f"[代理] 所有 {_chunk_count} 个 chunk 中均未找到 usage 字段；"
+                                  f"v1.6.6 WorkBuddy Relay 不主动添加 stream_options")
             # 流式转发到此结束，fall through 到下方的统计代码（else 块被跳过）
 
         else:
@@ -2887,6 +3681,18 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                     "total_tokens": 0,
                 },
             }
+            if response_mode == "responses":
+                result = _build_responses_object(
+                    full_content,
+                    model_name,
+                    response_id,
+                    last_usage if last_usage else {
+                        "prompt_tokens": 0,
+                        "completion_tokens": 0,
+                        "total_tokens": 0,
+                    },
+                    reasoning=full_reasoning,
+                )
 
             body = json.dumps(result, ensure_ascii=False).encode("utf-8")
             self.send_response(200)
@@ -2903,8 +3709,6 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
         duration_ms = int((time.time() - start_time) * 1000)
         logger.debug(f"[代理] 请求完成, 总耗时 {duration_ms}ms, 首字 {first_token_ms}ms")
 
-        attempt_val = attempt
-        key_mode_val = key_mode
         def _update_stats():
             try:
                 prompt_t = last_usage.get("prompt_tokens", 0)
@@ -2938,7 +3742,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                         credits=credit,
                     )
 
-                # 写最终请求日志（一条请求一条记录）
+                # 写请求日志（含首字时间，优化项 #13）
                 self.db.add_request_log({
                     "timestamp": time.time(),
                     "sub_key_id": sub_key_id,
@@ -2947,14 +3751,9 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                     "main_key_label": upstream_key.get("label", ""),
                     "model": model,
                     "event": "end",
-                    "status": "success",
-                    "attempt": attempt_val,
-                    "key_mode": key_mode_val,
                     "duration_ms": duration_ms,
                     "prompt_tokens": last_usage.get("prompt_tokens", 0),
                     "completion_tokens": last_usage.get("completion_tokens", 0),
-                    "total_tokens": last_usage.get("total_tokens", 0),
-                    "credit": last_usage.get("credit", 0.0),
                     "first_token_ms": first_token_ms or 0,
                 })
 
@@ -2977,11 +3776,10 @@ class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
 class ProxyServer:
     """本地 API 代理服务器"""
 
-    def __init__(self, host: str = "127.0.0.1", port: int = 8002, mode: str = "local", default_key_mode: int = 1):
+    def __init__(self, host: str = "127.0.0.1", port: int = 8002, mode: str = "local"):
         self.host = host
         self.port = port
         self.mode = mode  # "local" or "open"
-        self.default_key_mode = default_key_mode  # 全局默认调用策略
         self.db = ProxyDatabase.get_instance()
         self.router = ProxyRouter(self.db)
         self._server = None
@@ -2998,7 +3796,6 @@ class ProxyServer:
             ProxyRequestHandler.router = self.router
             ProxyRequestHandler.db = self.db
             ProxyRequestHandler.server_mode = self.mode  # "local" or "open"
-            ProxyRequestHandler.default_key_mode = self.default_key_mode  # 全局默认策略
 
             self._server = ThreadingHTTPServer((self.host, self.port), ProxyRequestHandler)
             self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
@@ -3007,7 +3804,6 @@ class ProxyServer:
             # 启动后台健康检测线程（优化项 #17）
             self.router.start_health_check()
             logger.info(f"API 代理服务已启动: http://{self.host}:{self.port}")
-
             return True
         except Exception as e:
             logger.error(f"启动代理服务失败: {e}")
@@ -3039,5 +3835,3 @@ class ProxyServer:
     @property
     def base_url(self) -> str:
         return f"http://{self.host}:{self.port}"
-
-

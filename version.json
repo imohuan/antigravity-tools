@@ -1,22 +1,22 @@
 {
-    "version": "1.6.2",
-    "changelog": "Antigravity Tools v1.6.2 更新公告\n\n修复了批量导入格式问题\n\n下载地址打不开的话去群里下载 1025605799",
-    "release_date": "2026-07-03",
-    "download_url": "https://github.com/qinchangxv/antigravity-tools/releases/tag/v1.6.2",
+    "version": "1.6.3",
+    "changelog": "1.增加导出功能\n2.新增卡密导入功能\n3.增加排序\n4.账号管理增加检测账号（支持高并发）\n5.修复账号管理删除账号后上游池不同步删除问题\n6.其他已知bug\n7.更新失败请至qq群下载1025605799",
+    "release_date": "2026-07-06",
+    "download_url": "https://github.com/qinchangxv/antigravity-tools/releases/tag/v1.6.3",
     "sha256": "",
     "platforms": {
         "windows": {
-            "version": "1.6.2",
-            "changelog": "Antigravity Tools v1.6.2 更新公告\n\n修复了批量导入格式问题\n\n下载地址打不开的话去群里下载 1025605799",
-            "download_url": "https://github.com/qinchangxv/antigravity-tools/releases/download/v1.6.2/Antigravity-Tools-Windows-x64.zip",
-            "src_download_url": "http://103.36.63.44:9680/Antigravity-Tools-v1.6.2-src.zip",
+            "version": "1.6.3",
+            "changelog": "1.增加导出功能\n2.新增卡密导入功能\n3.增加排序\n4.账号管理增加检测账号（支持高并发）\n5.修复账号管理删除账号后上游池不同步删除问题\n6.其他已知bug\n7.更新失败请至qq群下载1025605799",
+            "download_url": "https://github.com/qinchangxv/antigravity-tools/releases/download/v1.6.3/Antigravity-Tools-Windows-x64.zip",
+            "src_download_url": "http://103.36.63.44:9680/Antigravity-Tools-v1.6.3-src.zip",
             "sha256": ""
         },
         "mac": {
-            "version": "1.6.2",
-            "changelog": "Antigravity Tools v1.6.2 更新公告\n\n修复了批量导入格式问题\n\n下载地址打不开的话去群里下载 1025605799",
-            "download_url": "https://github.com/qinchangxv/antigravity-tools/releases/tag/v1.6.2",
-            "src_download_url": "http://103.36.63.44:9680/Antigravity-Tools-v1.6.2-src.zip",
+            "version": "1.6.3",
+            "changelog": "1.增加导出功能\n2.新增卡密导入功能\n3.增加排序\n4.账号管理增加检测账号（支持高并发）\n5.修复账号管理删除账号后上游池不同步删除问题\n6.其他已知bug\n7.更新失败请至qq群下载1025605799",
+            "download_url": "https://github.com/qinchangxv/antigravity-tools/releases/tag/v1.6.3",
+            "src_download_url": "http://103.36.63.44:9680/Antigravity-Tools-v1.6.3-src.zip",
             "sha256": ""
         }
     }

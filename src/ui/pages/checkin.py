@@ -1,5 +1,6 @@
 """签到页面"""
 
+import logging
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -12,7 +13,7 @@ from PySide6.QtCore import Qt, QThread, Signal, QTimer, QTime
 
 from ...i18n import t
 from ...models import Account, Platform, AccountStatus
-from ...utils.store import load_accounts, save_account
+from ...utils.store import load_accounts, save_account, save_setting, load_setting
 from ...modules import CheckinManager
 from ...modules.api_client import ApiClient
 
@@ -41,12 +42,18 @@ class StatusRefreshWorker(QThread):
 
     def _process_account(self, account):
         """处理单个账号，返回 (uid, checked_today, daily_credit, monthly_credits)"""
+        # 每次签到前重新获取代理 IP（一号一IP）
+        from ...utils.proxy import get_proxy_with_info
+        _current_proxy, _proxy_info = get_proxy_with_info()
+        uid_short = (account.uid or "?")[:10]
+        proxy_tag = f"代理[{_proxy_info}]" if _proxy_info else "直连"
+        logging.info(f"📡 {uid_short} 使用{proxy_tag}刷新签到状态")
         try:
             # 优先使用 API Key 模式
             if account.api_key and account.api_key.startswith("ck_"):
-                client = ApiClient.from_api_key(account.api_key, proxy=self.proxy)
+                client = ApiClient.from_api_key(account.api_key, proxy=_current_proxy)
             else:
-                client = ApiClient.from_account(account, proxy=self.proxy)
+                client = ApiClient.from_account(account, proxy=_current_proxy)
             result = client.daily_checkin()
             if result["success"]:
                 checked = True
@@ -134,9 +141,15 @@ class CheckinWorker(QThread):
         """签到单个账号，返回 (name, status, message)"""
         if self._stop_flag:
             return (account.display_name, "stopped", "已停止")
+        # 每次签到前重新获取代理 IP（一号一IP）
+        from ...utils.proxy import get_proxy_with_info
+        _current_proxy, _proxy_info = get_proxy_with_info()
+        uid_short = (account.uid or "?")[:10]
+        proxy_tag = f"代理[{_proxy_info}]" if _proxy_info else "直连"
+        logging.info(f"📡 {uid_short} 使用{proxy_tag}签到")
         try:
             manager = CheckinManager()
-            result = manager.checkin_account(account, proxy=self.proxy)
+            result = manager.checkin_account(account, proxy=_current_proxy)
             if result["success"]:
                 if result.get("already"):
                     return (account.display_name, "already",
@@ -183,6 +196,8 @@ class CheckinPage(QWidget):
         self._is_checking = False
         self._current_page = 0    # 当前页码（0-based）
         self._timer_active = False  # 定时签到是否开启
+        self._sort_column = None
+        self._sort_order = Qt.AscendingOrder
         self._setup_ui()
 
         # 定时签到计时器 — 每秒检查一次是否到达设定时间
@@ -248,14 +263,17 @@ class CheckinPage(QWidget):
         for p in Platform:
             self._filter_combo.addItem(p.value, p)
         self._filter_combo.currentIndexChanged.connect(self._on_filter_changed)
-        toolbar.addWidget(self._filter_combo)
+        self._filter_combo.setVisible(False)
 
         # 并发数设置
         toolbar.addWidget(QLabel("并发数:"))
         self._concurrency_spin = QSpinBox()
         self._concurrency_spin.setRange(1, 50)
-        self._concurrency_spin.setValue(5)
-        self._concurrency_spin.setToolTip("同时签到的线程数，建议5-10")
+        self._concurrency_spin.setValue(int(load_setting("checkin_concurrency", "5")))
+        self._concurrency_spin.setToolTip("同时请求线程数，范围 1-50")
+        self._concurrency_spin.valueChanged.connect(
+            lambda value: save_setting("checkin_concurrency", str(value))
+        )
         self._concurrency_spin.setFixedWidth(60)
         toolbar.addWidget(self._concurrency_spin)
 
@@ -315,7 +333,11 @@ class CheckinPage(QWidget):
         self._table.setHorizontalHeaderLabels([
             "账号", "平台", "签到状态", "今日积分", "本月积分"
         ])
-        self._table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        header = self._table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.Stretch)
+        header.setSectionsClickable(True)
+        header.setSortIndicatorShown(True)
+        header.sectionClicked.connect(self._on_header_sort)
         self._table.setAlternatingRowColors(True)
         self._table.setSelectionBehavior(QTableWidget.SelectRows)
         self._table.setEditTriggers(QTableWidget.NoEditTriggers)
@@ -405,12 +427,42 @@ class CheckinPage(QWidget):
     # === 数据加载 & 渲染 ===
 
     def _load_accounts(self):
-        """加载全量账号（含筛选）"""
-        accounts = load_accounts()
-        platform = self._filter_combo.currentData()
-        if platform:
-            accounts = [a for a in accounts if a.platform == platform]
-        self._accounts = accounts
+        """加载全量账号"""
+        self._accounts = load_accounts()
+        self._apply_sort()
+
+    def _account_sort_value(self, account: Account, column: int):
+        if column == 0:
+            return account.display_name.lower()
+        if column == 1:
+            return account.platform.value
+        if column == 2:
+            return 0 if account.checkin.checked_today else 1
+        if column == 3:
+            return account.checkin.daily_credit if account.checkin.checked_today else 0
+        if column == 4:
+            return account.checkin.total_credits
+        return ""
+
+    def _apply_sort(self):
+        if self._sort_column is None:
+            return
+        reverse = self._sort_order == Qt.DescendingOrder
+        self._accounts.sort(
+            key=lambda account: self._account_sort_value(account, self._sort_column),
+            reverse=reverse,
+        )
+
+    def _on_header_sort(self, section: int):
+        if self._sort_column == section:
+            self._sort_order = Qt.DescendingOrder if self._sort_order == Qt.AscendingOrder else Qt.AscendingOrder
+        else:
+            self._sort_column = section
+            self._sort_order = Qt.AscendingOrder
+        self._table.horizontalHeader().setSortIndicator(section, self._sort_order)
+        self._apply_sort()
+        self._current_page = 0
+        self._render_page()
 
     def _update_stats(self):
         """更新统计栏"""
@@ -500,7 +552,13 @@ class CheckinPage(QWidget):
         self._progress_bar.setRange(0, len(self._accounts))
         self._progress_bar.setValue(0)
 
-        self._status_worker = StatusRefreshWorker(self._accounts, max_workers=max_workers)
+        from ...utils.proxy import get_proxy_from_settings
+        # 预检代理配置（不缓存 IP，每账号单独提取）
+        try:
+            get_proxy_from_settings()
+        except Exception:
+            pass
+        self._status_worker = StatusRefreshWorker(self._accounts, proxy=None, max_workers=max_workers)
         self._status_worker.progress.connect(self._on_status_refresh)
         self._status_worker.finished_all.connect(self._on_status_refresh_done)
         self._status_worker.start()
@@ -549,7 +607,13 @@ class CheckinPage(QWidget):
         self._btn_stop.setVisible(True)
         self._is_checking = True
 
-        self._worker = CheckinWorker(unchecked, max_workers=max_workers)
+        from ...utils.proxy import get_proxy_from_settings
+        # 预检代理配置（不缓存 IP，每账号单独提取）
+        try:
+            get_proxy_from_settings()
+        except Exception:
+            pass
+        self._worker = CheckinWorker(unchecked, proxy=None, max_workers=max_workers)
         self._worker.progress.connect(self._on_checkin_progress)
         self._worker.finished_all.connect(self._on_checkin_finished)
         self._progress_bar.setVisible(True)

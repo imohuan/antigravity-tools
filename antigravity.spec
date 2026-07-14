@@ -72,25 +72,6 @@ datas = [
     (os.path.join(ROOT, 'assets', 'icons'), 'assets/icons'),
 ]
 
-# ─── Playwright driver（内置到软件包中，无需运行时下载）───
-# Python 模块由 hiddenimports 处理，这里只打包 driver（node.exe + playwright-core JS）
-playwright_dir = None
-_site_packages = os.path.join(os.path.dirname(os.path.dirname(pyside6_dir)), 'Lib', 'site-packages')
-if os.path.isdir(os.path.join(_site_packages, 'playwright')):
-    playwright_dir = os.path.join(_site_packages, 'playwright')
-else:
-    try:
-        import importlib
-        pw = importlib.import_module('playwright')
-        playwright_dir = os.path.dirname(pw.__file__)
-    except ImportError:
-        pass
-
-if playwright_dir and os.path.isdir(os.path.join(playwright_dir, 'driver')):
-    # 只打包 driver 目录（node.exe 88MB + package 15MB = ~103MB）
-    # Python API 模块由 hiddenimports 自动收集
-    datas.append((os.path.join(playwright_dir, 'driver'), 'playwright/driver'))
-
 # 只收集必要的 Qt 插子目录
 # 插件放到 PySide6/plugins/ 下，与 qt.conf 中的 Prefix 路径对应
 needed_plugin_dirs = ['platforms', 'imageformats', 'styles', 'tls']
@@ -146,28 +127,15 @@ hiddenimports = [
     'cryptography',
     'cffi',
     'pycparser',
-    # Playwright 全系列（已内置 driver，无需运行时安装）
-    'playwright',
-    'playwright.async_api',
-    'playwright.sync_api',
-    'playwright._impl',
-    'playwright._impl._api_structures',
-    'playwright._impl._api_types',
-    'playwright._impl._browser',
-    'playwright._impl._browser_context',
-    'playwright._impl._browser_type',
-    'playwright._impl._cdp_session',
-    'playwright._impl._connection',
-    'playwright._impl._element_handle',
-    'playwright._impl._frame',
-    'playwright._impl._helper',
-    'playwright._impl._network',
-    'playwright._impl._page',
-    'playwright._impl._playwright',
-    'playwright._impl._transport',
     'greenlet',
     'pyee',
     'pyee._base',
+    # [v1.8.1] app.py 用 importlib 动态加载 src，PyInstaller 静态分析跟踪不到 src/ 的 import
+    # 需要手动列出 src/ 依赖的标准库模块（C 扩展 + 子模块）
+    'sqlite3',
+    '_sqlite3',
+    'logging.handlers',
+    'socketserver',
 ]
 
 # ─── 二进制文件 ───

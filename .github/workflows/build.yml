@@ -7,9 +7,14 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: '版本号 (如 1.5.6)'
+        description: '版本号（默认读取 src/VERSION）'
+        required: false
+        default: ''
+      publish:
+        description: '显式发布 GitHub Release（测试构建请保持 false）'
         required: true
-        default: '1.5.6'
+        type: boolean
+        default: false
 
 jobs:
   build-windows:
@@ -18,6 +23,13 @@ jobs:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          clean: true
+
+      - name: Verify clean build source
+        shell: bash
+        run: |
+          test -z "$(git status --porcelain)" || { git status --short; exit 1; }
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -55,6 +67,12 @@ jobs:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          clean: true
+
+      - name: Verify clean build source
+        run: |
+          test -z "$(git status --porcelain)" || { git status --short; exit 1; }
 
       - name: Install Rosetta
         run: softwareupdate --install-rosetta --agree-to-license || true
@@ -82,13 +100,12 @@ jobs:
         run: |
           file "dist/Antigravity Tools.app/Contents/MacOS/"*
 
-      - name: Package as zip
+      - name: Package with ditto
         run: |
           cd dist
-          zip -r "Antigravity-Tools-macOS-Intel.zip" "Antigravity Tools.app"
-          # 增量包（只含 src/ 目录）
+          /usr/bin/ditto -c -k --sequesterRsrc --keepParent "Antigravity Tools.app" "Antigravity-Tools-macOS-Intel.zip"
           cd "Antigravity Tools.app/Contents/Resources"
-          zip -r "../../../Antigravity-Tools-macOS-Intel-src.zip" "src"
+          /usr/bin/ditto -c -k --sequesterRsrc --keepParent "src" "../../../Antigravity-Tools-macOS-Intel-src.zip"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -104,6 +121,13 @@ jobs:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          clean: true
+
+      - name: Verify clean build source
+        shell: bash
+        run: |
+          test -z "$(git status --porcelain)" || { git status --short; exit 1; }
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -115,17 +139,27 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Verify native ARM Python
+        run: |
+          test "$(python -c 'import platform; print(platform.machine())')" = "arm64"
+
       - name: Build with PyInstaller
         run: |
           python -m PyInstaller antigravity-mac.spec --noconfirm
 
-      - name: Package as zip
+      - name: Verify ARM app architecture
+        run: |
+          APP_EXE="dist/Antigravity Tools.app/Contents/MacOS/Antigravity Tools"
+          test -x "$APP_EXE"
+          file "$APP_EXE" | grep -q 'arm64'
+          lipo -archs "$APP_EXE" | tr ' ' '\n' | grep -qx 'arm64'
+
+      - name: Package with ditto
         run: |
           cd dist
-          zip -r "Antigravity-Tools-macOS-ARM.zip" "Antigravity Tools.app"
-          # 增量包（只含 src/ 目录）
+          /usr/bin/ditto -c -k --sequesterRsrc --keepParent "Antigravity Tools.app" "Antigravity-Tools-macOS-ARM.zip"
           cd "Antigravity Tools.app/Contents/Resources"
-          zip -r "../../../Antigravity-Tools-macOS-ARM-src.zip" "src"
+          /usr/bin/ditto -c -k --sequesterRsrc --keepParent "src" "../../../Antigravity-Tools-macOS-ARM-src.zip"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -136,6 +170,8 @@ jobs:
             dist/Antigravity-Tools-macOS-ARM-src.zip
 
   release:
+    # Tag push alone never publishes. Manual dispatch must explicitly set publish=true.
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish == true }}
     needs: [build-windows, build-macos-intel, build-macos-arm]
     runs-on: ubuntu-latest
     permissions:
@@ -148,11 +184,13 @@ jobs:
       - name: Determine version
         id: version
         run: |
-          if [[ "${{ github.event_name }}" == "push" ]]; then
-            VERSION=${GITHUB_REF#refs/tags/v}
-          else
-            VERSION="${{ github.event.inputs.version }}"
+          SOURCE_VERSION=$(tr -d '\r\n' < src/VERSION)
+          VERSION="${{ github.event.inputs.version }}"
+          if [[ -z "$VERSION" ]]; then
+            VERSION="$SOURCE_VERSION"
           fi
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Invalid version: $VERSION"; exit 1; }
+          [[ "$VERSION" == "$SOURCE_VERSION" ]] || { echo "Version mismatch: input=$VERSION, src/VERSION=$SOURCE_VERSION"; exit 1; }
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Building version $VERSION"
 

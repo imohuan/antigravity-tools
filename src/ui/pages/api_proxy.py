@@ -9,7 +9,9 @@
 """
 
 import json
+import os
 import secrets
+import copy
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QPushButton,
@@ -63,6 +65,13 @@ def _set_item(table, row, col, text, tooltip=None):
         item.setToolTip(text)
     table.setItem(row, col, item)
     return item
+
+
+def _get_account_concurrency_setting() -> int:
+    try:
+        return max(1, min(50, int(load_setting("account_concurrency", "5"))))
+    except Exception:
+        return 5
 
 
 def _current_theme_colors() -> dict:
@@ -123,16 +132,263 @@ def _apply_context_aliases(entry: dict, context_tokens: int):
 
 def _apply_model_protocol_fields(entry: dict, images: bool):
     """Add WorkBuddy catalog-style fields used by newer model capability checks."""
-    entry["api"] = "openai-completions"
-    entry["provider"] = "zai"
-    entry["baseUrl"] = entry.get("url", "https://copilot.tencent.com/v2")
-    entry["input"] = ["text", "image"] if images else ["text"]
-    entry["compat"] = {
-        "supportsDeveloperRole": False,
-        "thinkingFormat": "zai",
-        "zaiToolStream": True,
-    }
     return entry
+
+
+def _read_existing_models(target_path: str) -> list:
+    """读取 models.json 中已有的模型列表。
+
+    兼容两种格式：
+    - WorkBuddy：裸数组 ``[ {...}, {...} ]``
+    - CodeBuddy：包裹对象 ``{"models": [ {...} ]}``
+
+    文件不存在或解析失败时返回空列表（不抛异常）。
+    """
+    if not os.path.exists(target_path):
+        return []
+    try:
+        with open(target_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, OSError, ValueError):
+        return []
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict) and isinstance(data.get("models"), list):
+        return data["models"]
+    return []
+
+
+def _incremental_merge_models(existing: list, new_entries: list):
+    """增量合并模型列表。
+
+    匹配规则：当且仅当 ``id`` 与 ``name`` 都相同视为同一模型：
+    - 已存在：替换该条目，并做“保留字段合并”——以旧条目为底，新条目字段覆盖之，
+      旧条目中独有的字段（新条目未提供）予以保留。
+    - 不存在：追加到列表末尾。
+
+    Returns:
+        (merged_list, replaced_count, added_count)
+    """
+    merged = list(existing)
+    # 建立 (id, name) -> 索引 的查找表（仅记录首次出现位置，避免重复条目互相覆盖）
+    index = {}
+    for i, m in enumerate(merged):
+        if not isinstance(m, dict):
+            continue
+        key = (str(m.get("id", "")).strip(), str(m.get("name", "")).strip())
+        if key not in index:
+            index[key] = i
+
+    replaced = 0
+    added = 0
+    for entry in new_entries:
+        key = (str(entry.get("id", "")).strip(), str(entry.get("name", "")).strip())
+        if key in index:
+            idx = index[key]
+            base = dict(merged[idx]) if isinstance(merged[idx], dict) else {}
+            base.update(entry)  # 新字段覆盖旧字段，旧字段中独有的保留
+            merged[idx] = base
+            replaced += 1
+        else:
+            merged.append(entry)
+            index[key] = len(merged) - 1
+            added += 1
+    return merged, replaced, added
+
+
+def _write_models_json(target_path: str, merged: list, wrapper: str) -> None:
+    """将合并后的模型列表写回 models.json。
+
+    Args:
+        wrapper: ``"array"`` => WorkBuddy 裸数组；``"object"`` => CodeBuddy ``{"models": [...]}``
+    """
+    os.makedirs(os.path.dirname(target_path), exist_ok=True)
+    with open(target_path, "w", encoding="utf-8") as f:
+        if wrapper == "object":
+            json.dump({"models": merged}, f, ensure_ascii=False, indent=2)
+        else:
+            json.dump(merged, f, ensure_ascii=False, indent=2)
+
+
+LEGACY_MODEL_FIELDS = {
+    "api", "provider", "baseUrl", "input", "compat",
+    "disabledMultimodal", "disabled_multimodal", "supports_images",
+    "maxInputTokens", "max_input_tokens", "maxOutputTokens", "max_output_tokens",
+    "maxTokens", "contextWindow", "contextLength", "context_length",
+    "maxContextTokens", "maxAllowedSize", "max_allowed_size",
+}
+
+MODEL_ID_ALIASES = {
+    "kimi-k2.7-code": "kimi-k2.7",
+}
+
+MODEL_NAME_ALIASES = {
+    "kimi-k2.7": "Kimi-K2.7-Code",
+}
+
+
+def _normal_url(url: str) -> str:
+    return str(url or "").strip().rstrip("/")
+
+
+def _entry_matches_proxy(entry: dict, proxy_base_urls: set[str]) -> bool:
+    if not isinstance(entry, dict):
+        return False
+    url = _normal_url(entry.get("url", ""))
+    return bool(url and url in proxy_base_urls)
+
+
+def _has_legacy_model_fields(entry: dict) -> bool:
+    return isinstance(entry, dict) and any(field in entry for field in LEGACY_MODEL_FIELDS)
+
+
+def _official_model_entry(entry: dict, include_custom_protocol: bool) -> dict:
+    """Convert a legacy generated model entry to WorkBuddy's simple custom-model shape."""
+    model_id = str(entry.get("id", "")).strip()
+    model_id = MODEL_ID_ALIASES.get(model_id, model_id)
+    model_name = entry.get("name") or model_id
+    if str(entry.get("id", "")).strip() in MODEL_ID_ALIASES:
+        model_name = MODEL_NAME_ALIASES.get(model_id, model_name)
+
+    supports_images = entry.get("supportsImages")
+    if supports_images is None and "supports_images" in entry:
+        supports_images = entry.get("supports_images")
+    if supports_images is None and "disabledMultimodal" in entry:
+        supports_images = not bool(entry.get("disabledMultimodal"))
+    if supports_images is None and "disabled_multimodal" in entry:
+        supports_images = not bool(entry.get("disabled_multimodal"))
+
+    supports_reasoning = bool(entry.get("supportsReasoning", True))
+    new_entry = {
+        "id": model_id,
+        "name": model_name,
+        "vendor": entry.get("vendor") or "Custom",
+        "url": entry.get("url", ""),
+        "apiKey": entry.get("apiKey", ""),
+        "supportsToolCall": bool(entry.get("supportsToolCall", True)),
+        "supportsImages": bool(True if supports_images is None else supports_images),
+        "supportsReasoning": supports_reasoning,
+    }
+
+    if include_custom_protocol or "useCustomProtocol" in entry:
+        new_entry["useCustomProtocol"] = bool(entry.get("useCustomProtocol", False))
+
+    # Preserve the user's existing thinking/reasoning settings exactly when present.
+    if "reasoning" in entry:
+        new_entry["reasoning"] = copy.deepcopy(entry.get("reasoning"))
+    elif supports_reasoning:
+        new_entry["reasoning"] = {"supportedEfforts": ["max"]}
+
+    return new_entry
+
+
+def _cleanup_legacy_proxy_models(target_path: str, wrapper: str, proxy_base_urls: set[str]) -> int:
+    """Clean legacy generated model fields for entries that point at this proxy."""
+    models = _read_existing_models(target_path)
+    if not models:
+        return 0
+
+    changed = 0
+    cleaned = []
+    cleaned_index = {}
+    for entry in models:
+        new_entry = entry
+        if (
+            isinstance(entry, dict)
+            and _entry_matches_proxy(entry, proxy_base_urls)
+            and (
+                _has_legacy_model_fields(entry)
+                or str(entry.get("id", "")).strip() in MODEL_ID_ALIASES
+            )
+        ):
+            new_entry = _official_model_entry(entry, include_custom_protocol=(wrapper == "array"))
+            changed += 1
+
+        if isinstance(new_entry, dict) and _entry_matches_proxy(new_entry, proxy_base_urls):
+            key = (
+                str(new_entry.get("id", "")).strip(),
+                str(new_entry.get("name", "")).strip(),
+                _normal_url(new_entry.get("url", "")),
+            )
+            if key in cleaned_index:
+                cleaned[cleaned_index[key]].update(new_entry)
+                changed += 1
+                continue
+            cleaned_index[key] = len(cleaned)
+        cleaned.append(new_entry)
+
+    if changed:
+        _write_models_json(target_path, cleaned, wrapper=wrapper)
+    return changed
+
+
+class ModelSelectDialog(QDialog):
+    """模型多选对话框 —— 让用户勾选需要配置的模型。
+
+    采用增量写入策略：未勾选的模型在 models.json 中保持不变。
+    默认全部勾选，用户可按需取消。
+    """
+
+    def __init__(self, title: str, base_url: str, models: list, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setMinimumWidth(480)
+        self._model_ids = list(models)
+        self._setup_ui(base_url)
+
+    def _setup_ui(self, base_url: str):
+        from PySide6.QtWidgets import QListWidget, QListWidgetItem
+
+        layout = QVBoxLayout(self)
+
+        info = QLabel(
+            "请勾选要配置的模型（增量写入，未勾选的模型保留不变）。\n"
+            f"接口地址: {base_url}"
+        )
+        info.setWordWrap(True)
+        layout.addWidget(info)
+
+        # 全选 / 全不选
+        btn_row = QHBoxLayout()
+        btn_all = QPushButton("全选")
+        btn_none = QPushButton("全不选")
+        btn_all.clicked.connect(lambda: self._set_all(True))
+        btn_none.clicked.connect(lambda: self._set_all(False))
+        btn_row.addWidget(btn_all)
+        btn_row.addWidget(btn_none)
+        btn_row.addStretch()
+        layout.addLayout(btn_row)
+
+        self._list = QListWidget()
+        self._list.setMaximumHeight(320)
+        for mid in self._model_ids:
+            item = QListWidgetItem(mid)
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setCheckState(Qt.Checked)  # 默认全选
+            self._list.addItem(item)
+        layout.addWidget(self._list)
+
+        btn_box = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        btn_box.accepted.connect(self.accept)
+        btn_box.rejected.connect(self.reject)
+        layout.addWidget(btn_box)
+
+    def _set_all(self, checked: bool):
+        """勾选或取消全部模型。"""
+        state = Qt.Checked if checked else Qt.Unchecked
+        for i in range(self._list.count()):
+            self._list.item(i).setCheckState(state)
+
+    def selected_models(self) -> list:
+        """返回勾选的模型 id 列表（保持原始顺序）。"""
+        result = []
+        for i in range(self._list.count()):
+            item = self._list.item(i)
+            if item.checkState() == Qt.Checked:
+                result.append(self._model_ids[i])
+        return result
 
 
 class CreateSubKeyDialog(QDialog):
@@ -247,14 +503,14 @@ class CreateSubKeyDialog(QDialog):
             elif selected is not None and item_text in selected:
                 item.setCheckState(Qt.Checked)
                 item.setData(Qt.UserRole, item_text)
-            elif selected_indices is not None and i in selected_indices:
-                # 注意：selected_indices 是基于 self._upstream_keys 的索引
-                # "全部上游 Key" 占了第0个位置，实际 key 从第1个开始
-                item.setCheckState(Qt.Checked)
-                # 存储实际的 key_id
-                actual_key_idx = i - 1  # 减去 "全部" 选项
-                if 0 <= actual_key_idx < len(self._upstream_keys):
-                    item.setData(Qt.UserRole, self._upstream_keys[actual_key_idx].get("key_id", ""))
+            elif selected_indices is not None:
+                # selected_indices 基于 self._upstream_keys（0-based），
+                # 有 all_option 时 items[0] 是"全部"，key 从 i=1 开始，需 i-1 对齐
+                actual_idx = (i - 1) if all_option else i
+                if actual_idx in selected_indices:
+                    item.setCheckState(Qt.Checked)
+                    if 0 <= actual_idx < len(self._upstream_keys):
+                        item.setData(Qt.UserRole, self._upstream_keys[actual_idx].get("key_id", ""))
             else:
                 item.setCheckState(Qt.Unchecked)
                 if all_option and item_text != all_option:
@@ -265,6 +521,18 @@ class CreateSubKeyDialog(QDialog):
                             item.setData(Qt.UserRole, self._upstream_keys[actual_key_idx].get("key_id", ""))
                     else:
                         item.setData(Qt.UserRole, item_text)
+
+            if item.data(Qt.UserRole) is None and (not all_option or item_text != all_option):
+                if selected_indices is not None:
+                    actual_key_idx = (i - 1) if all_option else i
+                    if 0 <= actual_key_idx < len(self._upstream_keys):
+                        item.setData(Qt.UserRole, self._upstream_keys[actual_key_idx].get("key_id", ""))
+                    else:
+                        item.setData(Qt.UserRole, item_text)
+                    item.setCheckState(Qt.Unchecked)
+                else:
+                    item.setData(Qt.UserRole, item_text)
+                    item.setCheckState(Qt.Unchecked)
 
             list_widget.addItem(item)
 
@@ -293,7 +561,7 @@ class CreateSubKeyDialog(QDialog):
                     has_all = True
                 else:
                     models.append(item.text())
-        return [] if has_all else models
+        return [] if has_all and not models else models
 
     def _get_selected_key_ids(self) -> list:
         """获取选中的上游 Key ID 列表"""
@@ -306,7 +574,7 @@ class CreateSubKeyDialog(QDialog):
                     has_all = True
                 elif item.data(Qt.UserRole):
                     key_ids.append(item.data(Qt.UserRole))
-        return [] if has_all else key_ids
+        return [] if has_all and not key_ids else key_ids
 
     def get_data(self) -> dict:
         return {
@@ -481,12 +749,17 @@ class ApiProxyPage(QWidget):
         self.setObjectName("content_area")
         self._proxy_server: ProxyServer = None
         self._db = ProxyDatabase.get_instance()
+        self._keys_sort_column = None
+        self._keys_sort_order = Qt.AscendingOrder
+        self._subkeys_sort_column = None
+        self._subkeys_sort_order = Qt.AscendingOrder
         self._setup_ui()
 
         # 日志自动刷新定时器
         self._log_timer = QTimer(self)
         self._log_timer.timeout.connect(self._refresh_log)
         self._last_log_timestamp = 0.0  # 跟踪上次最新日志时间戳，避免无变化时重复刷新
+        self._log_cleared_since = 0.0   # 清空日志时间戳，只显示此时间之后的日志
 
         # 上游Key/子Key表格定时刷新（每10秒，用于实时积分变化）
         self._table_timer = QTimer(self)
@@ -531,26 +804,6 @@ class ApiProxyPage(QWidget):
         self._listen_mode_combo.setCurrentIndex(0)
         self._listen_mode_combo.currentIndexChanged.connect(self._on_listen_mode_changed)
         config_row.addWidget(self._listen_mode_combo)
-
-        config_row.addWidget(QLabel("  "))
-        config_row.addWidget(QLabel("默认策略:"))
-        self._default_mode_combo = QComboBox()
-        self._default_mode_combo.addItem("1 - 专一模式", 1)
-        self._default_mode_combo.addItem("2 - 临期优先", 2)
-        self._default_mode_combo.addItem("3 - 轮询模式", 3)
-        self._default_mode_combo.addItem("4 - 会话亲和", 4)
-        default_mode = int(load_setting("default_key_mode", "1"))
-        idx = {1: 0, 2: 1, 3: 2, 4: 3}.get(default_mode, 0)
-        self._default_mode_combo.setCurrentIndex(idx)
-        self._default_mode_combo.setToolTip(
-            "当子 Key 未单独设置策略时，使用此全局默认值\n"
-            "专一模式：粘住一个 Key 用到不可用才换\n"
-            "临期优先：优先调用积分最快过期的 Key\n"
-            "轮询模式：每次请求轮换到下一个 Key\n"
-            "会话亲和：同一会话绑定同一 Key"
-        )
-        self._default_mode_combo.currentIndexChanged.connect(self._on_default_mode_changed)
-        config_row.addWidget(self._default_mode_combo)
 
         config_row.addWidget(QLabel("  "))
         config_row.addWidget(QLabel("最低积分:"))
@@ -682,6 +935,11 @@ class ApiProxyPage(QWidget):
         self._chk_keys_today.clicked.connect(self._toggle_keys_today)
         keys_toolbar.addWidget(self._chk_keys_today)
 
+        self._keys_search_input = QLineEdit()
+        self._keys_search_input.setPlaceholderText("🔍 搜索上游 Key...")
+        self._keys_search_input.textChanged.connect(lambda _text: self._refresh_upstream_keys())
+        keys_toolbar.addWidget(self._keys_search_input)
+
         keys_toolbar.addStretch()
         keys_layout.addLayout(keys_toolbar)
 
@@ -691,7 +949,11 @@ class ApiProxyPage(QWidget):
         self._keys_table.setHorizontalHeaderLabels([
             "Key ID", "标签", "状态", "调用次数", "积分", "Token", "积分消耗", "缓存命中", "操作"
         ])
-        self._keys_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        keys_header = self._keys_table.horizontalHeader()
+        keys_header.setSectionResizeMode(QHeaderView.Stretch)
+        keys_header.setSectionsClickable(True)
+        keys_header.setSortIndicatorShown(True)
+        keys_header.sectionClicked.connect(self._on_keys_header_sort)
         self._keys_table.setAlternatingRowColors(True)
         self._keys_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self._keys_table.setSelectionBehavior(QTableWidget.SelectRows)
@@ -770,7 +1032,11 @@ class ApiProxyPage(QWidget):
         self._subkeys_table.setHorizontalHeaderLabels([
             "API Key", "标签", "状态", "模型限制", "已用/上限", "总积分", "调用模式", "RPM", "Token", "积分消耗", "缓存命中", "操作"
         ])
-        self._subkeys_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        subkeys_header = self._subkeys_table.horizontalHeader()
+        subkeys_header.setSectionResizeMode(QHeaderView.Stretch)
+        subkeys_header.setSectionsClickable(True)
+        subkeys_header.setSortIndicatorShown(True)
+        subkeys_header.sectionClicked.connect(self._on_subkeys_header_sort)
         self._subkeys_table.setAlternatingRowColors(True)
         self._subkeys_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self._subkeys_table.setSelectionBehavior(QTableWidget.SelectRows)
@@ -813,11 +1079,6 @@ class ApiProxyPage(QWidget):
         layout.addWidget(content)
 
     # === 服务控制 ===
-
-    def _on_default_mode_changed(self, index: int):
-        """全局默认策略切换时保存设置"""
-        mode = self._default_mode_combo.currentData()
-        save_setting("default_key_mode", str(mode))
 
     def _on_listen_mode_changed(self, index: int):
         """监听模式切换时更新提示和 URL"""
@@ -881,9 +1142,9 @@ class ApiProxyPage(QWidget):
             port = self._port_spin.value()
             mode = self._listen_mode_combo.currentData()  # "local" or "open"
             host = "127.0.0.1" if mode == "local" else "0.0.0.0"
+            self._cleanup_legacy_models_on_start(port, mode)
 
-            default_key_mode = int(load_setting("default_key_mode", "1"))
-            self._proxy_server = ProxyServer(host=host, port=port, mode=mode, default_key_mode=default_key_mode)
+            self._proxy_server = ProxyServer(host=host, port=port, mode=mode)
 
             if self._proxy_server.start():
                 # 关键：使用 ProxyServer 的 db 实例，确保日志读写共享同一内存
@@ -916,6 +1177,29 @@ class ApiProxyPage(QWidget):
                 self._port_spin.setEnabled(False)
             else:
                 QMessageBox.warning(self, "启动失败", f"无法在端口 {port} 启动代理服务，可能端口已被占用")
+
+    def _proxy_base_urls_for_port(self, port: int, mode: str) -> set[str]:
+        hosts = {"127.0.0.1", "localhost", "0.0.0.0"}
+        hosts.update(self._get_local_ips())
+        return {_normal_url(f"http://{host}:{port}/v1") for host in hosts if host}
+
+    def _cleanup_legacy_models_on_start(self, port: int, mode: str) -> int:
+        """Normalize old generated WorkBuddy/CodeBuddy model entries before starting."""
+        proxy_base_urls = self._proxy_base_urls_for_port(port, mode)
+        targets = [
+            (os.path.join(os.path.expanduser("~"), ".workbuddy", "models.json"), "array", "WorkBuddy"),
+            (os.path.join(os.path.expanduser("~"), ".codebuddy", "models.json"), "object", "CodeBuddy"),
+        ]
+        cleaned_total = 0
+        for target_path, wrapper, label in targets:
+            try:
+                cleaned = _cleanup_legacy_proxy_models(target_path, wrapper, proxy_base_urls)
+                cleaned_total += cleaned
+                if cleaned:
+                    print(f"[models.json] {label} cleaned {cleaned} legacy model(s): {target_path}")
+            except Exception as e:
+                print(f"[models.json] {label} cleanup failed: {e}")
+        return cleaned_total
 
     def _copy_url(self):
         """复制服务地址"""
@@ -975,6 +1259,7 @@ class ApiProxyPage(QWidget):
                                 dk["points"] = f"{remaining:.0f}/{total:.0f}"
                                 dk["points_updated_at"] = "synced_from_account"
                     self._db._dirty = True
+                    self._db._save()
             except Exception:
                 pass
 
@@ -1043,6 +1328,87 @@ class ApiProxyPage(QWidget):
 
         dlg.exec()
 
+    @staticmethod
+    def _points_remaining(points) -> float:
+        try:
+            text = str(points or "")
+            if "/" in text:
+                return float(text.split("/", 1)[0])
+            return float(text)
+        except (TypeError, ValueError):
+            return -1.0
+
+    def _key_sort_value(self, key: dict, column: int):
+        if column == 0:
+            return key.get("key_id", "").lower()
+        if column == 1:
+            return key.get("label", "").lower()
+        if column == 2:
+            return key.get("status", "active")
+        if column == 3:
+            return key.get("used_count", 0)
+        if column == 4:
+            return self._points_remaining(key.get("points", ""))
+        if column == 5:
+            return key.get("total_tokens", 0)
+        if column == 6:
+            return key.get("total_credits", 0.0)
+        if column == 7:
+            total_t = key.get("total_tokens", 0)
+            cached = key.get("total_cached_tokens", 0)
+            return cached / total_t if total_t else 0
+        return ""
+
+    def _subkey_sort_value(self, sub_key: dict, column: int):
+        allowed_key_ids = sub_key.get("allowed_key_ids", [])
+        if column == 0:
+            return sub_key.get("api_key", "").lower()
+        if column == 1:
+            return sub_key.get("label", "").lower()
+        if column == 2:
+            return 0 if sub_key.get("is_active", True) else 1
+        if column == 3:
+            return ",".join(sub_key.get("allowed_models", []))
+        if column == 4:
+            return sub_key.get("used_count", 0)
+        if column == 5:
+            return self._db.get_total_points_for_sub_key(allowed_key_ids if allowed_key_ids else None)
+        if column == 6:
+            return sub_key.get("key_mode", 1)
+        if column == 7:
+            return sub_key.get("rate_limit_rpm", 0)
+        if column == 8:
+            return sub_key.get("total_tokens", 0)
+        if column == 9:
+            return sub_key.get("total_credits", 0.0)
+        if column == 10:
+            total_t = sub_key.get("total_tokens", 0)
+            cached = sub_key.get("total_cached_tokens", 0)
+            return cached / total_t if total_t else 0
+        return ""
+
+    def _on_keys_header_sort(self, section: int):
+        if section >= self._keys_table.columnCount() - 1:
+            return
+        if self._keys_sort_column == section:
+            self._keys_sort_order = Qt.DescendingOrder if self._keys_sort_order == Qt.AscendingOrder else Qt.AscendingOrder
+        else:
+            self._keys_sort_column = section
+            self._keys_sort_order = Qt.AscendingOrder
+        self._keys_table.horizontalHeader().setSortIndicator(section, self._keys_sort_order)
+        self._refresh_upstream_keys()
+
+    def _on_subkeys_header_sort(self, section: int):
+        if section >= self._subkeys_table.columnCount() - 1:
+            return
+        if self._subkeys_sort_column == section:
+            self._subkeys_sort_order = Qt.DescendingOrder if self._subkeys_sort_order == Qt.AscendingOrder else Qt.AscendingOrder
+        else:
+            self._subkeys_sort_column = section
+            self._subkeys_sort_order = Qt.AscendingOrder
+        self._subkeys_table.horizontalHeader().setSortIndicator(section, self._subkeys_sort_order)
+        self._refresh_sub_keys()
+
     def _refresh_upstream_keys(self, reload_from_disk=False):
         """刷新上游 Key 列表
 
@@ -1054,6 +1420,8 @@ class ApiProxyPage(QWidget):
         if reload_from_disk:
             # 服务运行中时，使用服务的 db 实例（共享内存），需要从文件重载
             # 服务停止时，_db 是独立实例，也需要从文件重载
+            # 关键修复：reload 前先 flush，确保延迟写盘的数据落盘，避免被旧数据覆盖
+            self._db._flush_to_disk()
             self._db._data = self._db._load()
             self._db._dirty = False
             # 关键：刷新 router 缓存，让 select_key 立即用新数据
@@ -1073,15 +1441,27 @@ class ApiProxyPage(QWidget):
         # 自动回填：对 points 为空的上游 Key，从账号已保存的积分数据中填充
         self._sync_points_from_accounts(keys)
 
-        # 排序：使用中置顶 → 最近使用 → 其他按原顺序
-        keys.sort(key=lambda k: (
-            0 if k.get("key_id", "") in concurrent_keys else 1,  # 使用中排最前
-            -(k.get("last_used_at", "") > ""),                    # 有使用时间的排前面
-            k.get("last_used_at", ""),                             # 按最近使用时间降序需要取负，这里用字符串逆序
-        ), reverse=False)
-        # last_used_at 是 ISO 字符串，字符串排序天然升序，需要单独逆序
-        keys.sort(key=lambda k: k.get("last_used_at", ""), reverse=True)
-        # 使用中的重新置顶（上面的排序会打乱）
+        search = self._keys_search_input.text().strip().lower() if hasattr(self, "_keys_search_input") else ""
+        if search:
+            keys = [
+                k for k in keys
+                if search in k.get("key_id", "").lower()
+                or search in k.get("label", "").lower()
+                or search in k.get("status", "").lower()
+                or search in k.get("api_key", "").lower()
+                or search in str(k.get("points", "")).lower()
+            ]
+
+        if self._keys_sort_column is None:
+            # 默认排序：最近使用优先
+            keys.sort(key=lambda k: k.get("last_used_at", ""), reverse=True)
+        else:
+            keys.sort(
+                key=lambda k: self._key_sort_value(k, self._keys_sort_column),
+                reverse=self._keys_sort_order == Qt.DescendingOrder,
+            )
+
+        # 使用中的 Key 永远置顶；稳定排序会保留组内原有顺序。
         if concurrent_keys:
             keys.sort(key=lambda k: 0 if k.get("key_id", "") in concurrent_keys else 1)
 
@@ -1096,7 +1476,24 @@ class ApiProxyPage(QWidget):
             key_id = k.get("key_id", "")
             label = k.get("label", "")
             status = k.get("status", "active")
-            used = k.get("used_count", 0)
+
+            # 统计数据（当天或总计）— used 也必须跟随切换，否则"调用次数"列永远显示总计
+            if self._keys_today_only:
+                today = self._db.get_today_stats("upstream", key_id)
+                used = today.get("count", 0)
+                total_prompt = today.get("prompt_tokens", 0)
+                total_completion = today.get("completion_tokens", 0)
+                total_t = today.get("total_tokens", 0)
+                total_cached = today.get("cached_tokens", 0)
+                total_credits = today.get("credits", 0.0)
+            else:
+                used = k.get("used_count", 0)
+                total_prompt = k.get("total_prompt_tokens", 0)
+                total_completion = k.get("total_completion_tokens", 0)
+                total_t = k.get("total_tokens", 0)
+                total_cached = k.get("total_cached_tokens", 0)
+                total_credits = k.get("total_credits", 0.0)
+
             points = k.get("points", "-")
 
             if status == "active":
@@ -1157,19 +1554,6 @@ class ApiProxyPage(QWidget):
                     pass
 
             # Token 统计（智能单位转换）
-            if self._keys_today_only:
-                today = self._db.get_today_stats("upstream", key_id)
-                total_prompt = today.get("prompt_tokens", 0)
-                total_completion = today.get("completion_tokens", 0)
-                total_t = today.get("total_tokens", 0)
-                total_cached = today.get("cached_tokens", 0)
-                total_credits = today.get("credits", 0.0)
-            else:
-                total_prompt = k.get("total_prompt_tokens", 0)
-                total_completion = k.get("total_completion_tokens", 0)
-                total_t = k.get("total_tokens", 0)
-                total_cached = k.get("total_cached_tokens", 0)
-                total_credits = k.get("total_credits", 0.0)
             if total_t > 0:
                 token_display = f"{_fmt_tokens(total_prompt)}+{_fmt_tokens(total_completion)}"
                 token_tip = f"输入: {total_prompt:,}  输出: {total_completion:,}  总计: {total_t:,}"
@@ -1241,7 +1625,7 @@ class ApiProxyPage(QWidget):
         self._stat_active.setText(f"✅ 活跃: {active}")
         self._stat_exhausted.setText(f"❌ 耗尽: {exhausted}")
         self._stat_abnormal.setText(f"⚠️ 异常: {abnormal}")
-        self._stat_total_used.setText(f"📊 总调用: {total_used}")
+        self._stat_total_used.setText(f"📊 {'今日调用' if self._keys_today_only else '总调用'}: {total_used}")
 
     def _import_from_accounts(self):
         """从已获取账号导入到上游 Key 池"""
@@ -1290,6 +1674,7 @@ class ApiProxyPage(QWidget):
         """主动查询所有上游 Key 对应账号的积分并同步（优先用 API Key 直接查分）"""
         from ...modules.api_client import ApiClient
         from PySide6.QtCore import QThread, Signal as QSignal
+        from concurrent.futures import ThreadPoolExecutor, as_completed
 
         keys = self._db.get_upstream_keys()
         if not keys:
@@ -1308,78 +1693,96 @@ class ApiProxyPage(QWidget):
             return
 
         class PointsRefreshWorker(QThread):
-            """后台批量查询积分线程 — 优先用 API Key (ck_xxx) 直接查分"""
+            """Background worker for refreshing upstream key quota."""
             progress = QSignal(str)
-            done = QSignal(int, int)  # (成功数, 失败数)
+            done = QSignal(int, int)  # success, failed
 
-            def __init__(self, keys, db):
+            def __init__(self, keys, db, max_workers=5, proxy=None):
                 super().__init__()
                 self._keys = keys
                 self._db = db
+                self.max_workers = max_workers
+                self._proxy = proxy
+
+            def _query_one(self, k):
+                api_key = k.get("api_key", "")
+                label = k.get("label", api_key[:12])
+                # 每次查询前重新获取代理 IP（一号一IP）
+                from ...utils.proxy import get_proxy_with_info
+                _current_proxy, _proxy_info = get_proxy_with_info()
+                if _proxy_info:
+                    self.progress.emit(f"正在查询 {label}... 代理[{_proxy_info}]")
+                else:
+                    self.progress.emit(f"正在查询 {label}...")
+                if api_key.startswith("ck_"):
+                    client = ApiClient.from_api_key(api_key, proxy=_current_proxy)
+                else:
+                    from ...utils.store import load_accounts
+                    accounts = load_accounts()
+                    acc = None
+                    for a in accounts:
+                        if a.auth_token == api_key or a.api_key == api_key:
+                            acc = a
+                            break
+                    if acc and acc.api_key and acc.api_key.startswith("ck_"):
+                        client = ApiClient.from_api_key(acc.api_key, proxy=_current_proxy)
+                    elif acc:
+                        client = ApiClient(
+                            access_token=acc.auth_token,
+                            uid=acc.uid,
+                            domain=acc.domain or "www.codebuddy.cn",
+                            proxy=_current_proxy,
+                        )
+                    else:
+                        client = ApiClient.from_api_key(api_key, proxy=_current_proxy)
+                return k, client.get_user_resource()
 
             def run(self):
                 success = 0
                 failed = 0
-                for k in self._keys:
-                    api_key = k.get("api_key", "")
-                    label = k.get("label", api_key[:12])
-                    try:
-                        self.progress.emit(f"正在查询 {label}...")
-                        # 优先用 API Key 模式（ck_xxx 直接查分，无需 JWT）
-                        if api_key.startswith("ck_"):
-                            client = ApiClient.from_api_key(api_key)
-                        else:
-                            # 非 ck_ 开头的 token，尝试从账号找关联信息
-                            from ...utils.store import load_accounts
-                            accounts = load_accounts()
-                            acc = None
-                            for a in accounts:
-                                if a.auth_token == api_key or a.api_key == api_key:
-                                    acc = a
-                                    break
-                            if acc and acc.api_key and acc.api_key.startswith("ck_"):
-                                client = ApiClient.from_api_key(acc.api_key)
-                            elif acc:
-                                client = ApiClient(
-                                    access_token=acc.auth_token,
-                                    uid=acc.uid,
-                                    domain=acc.domain or "www.codebuddy.cn",
+                with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+                    futures = {executor.submit(self._query_one, k): k for k in self._keys}
+                    for future in as_completed(futures):
+                        try:
+                            k, result = future.result()
+                            api_key = k.get("api_key", "")
+                            if result.get("success"):
+                                remaining = result.get("remaining_credits", 0)
+                                total = result.get("total_credits", 0)
+                                packages = result.get("packages", [])
+                                self._db.sync_quota_to_key(
+                                    api_key_or_token=api_key,
+                                    remaining_credits=remaining,
+                                    total_credits=total,
+                                    packages=packages,
                                 )
+                                try:
+                                    from ...utils.store import load_accounts, save_account
+                                    accounts = load_accounts()
+                                    for acc in accounts:
+                                        if acc.auth_token == api_key or acc.api_key == api_key:
+                                            acc.quota.credits_remaining = remaining
+                                            acc.quota.credits_total = total
+                                            save_account(acc)
+                                            break
+                                except Exception:
+                                    pass
+                                success += 1
                             else:
-                                # 没有账号关联，直接用 api_key 试试
-                                client = ApiClient.from_api_key(api_key)
-
-                        result = client.get_user_resource()
-                        if result.get("success"):
-                            remaining = result.get("remaining_credits", 0)
-                            total = result.get("total_credits", 0)
-                            packages = result.get("packages", [])
-                            self._db.sync_quota_to_key(
-                                api_key_or_token=api_key,
-                                remaining_credits=remaining,
-                                total_credits=total,
-                                packages=packages,
-                            )
-                            # 同步保存到关联账号
-                            try:
-                                from ...utils.store import load_accounts, save_account
-                                accounts = load_accounts()
-                                for acc in accounts:
-                                    if acc.auth_token == api_key or acc.api_key == api_key:
-                                        acc.quota.credits_remaining = remaining
-                                        acc.quota.credits_total = total
-                                        save_account(acc)
-                                        break
-                            except Exception:
-                                pass
-                            success += 1
-                        else:
+                                failed += 1
+                        except Exception:
                             failed += 1
-                    except Exception:
-                        failed += 1
                 self.done.emit(success, failed)
 
-        self._points_worker = PointsRefreshWorker(keys_to_query, self._db)
+        max_workers = _get_account_concurrency_setting()
+        from ...utils.proxy import get_proxy_from_settings, ProxyConfigError
+        # 预检代理配置（不缓存 IP，每账号单独提取）
+        try:
+            get_proxy_from_settings()
+        except ProxyConfigError as e:
+            QMessageBox.warning(self, "代理配置错误", str(e))
+            return
+        self._points_worker = PointsRefreshWorker(keys_to_query, self._db, max_workers=max_workers, proxy=None)
         self._points_worker.progress.connect(
             lambda msg: self._stat_total.setText(f"⏳ {msg}")
         )
@@ -1399,7 +1802,8 @@ class ApiProxyPage(QWidget):
     def _check_all_key_status(self):
         """一键检测所有上游 Key 是否被风控（403 code:11140）"""
         from PySide6.QtCore import QThread, Signal as QSignal
-        import requests as _requests
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        from ...modules.api_client import check_api_key_chat_status
 
         keys = self._db.get_upstream_keys()
         if not keys:
@@ -1419,65 +1823,77 @@ class ApiProxyPage(QWidget):
             return
 
         class KeyStatusCheckWorker(QThread):
-            """后台批量检测 Key 风控状态线程"""
+            """Background worker for checking upstream Key status."""
             progress = QSignal(str)
-            done = QSignal(int, int, int)  # (正常数, 异常数, 失败数)
+            done = QSignal(int, int, int)  # normal, abnormal, failed
 
-            def __init__(self, keys, db):
+            def __init__(self, keys, db, max_workers=5, proxy=None):
                 super().__init__()
                 self._keys = keys
                 self._db = db
+                self._stop_flag = False
+                self.max_workers = max_workers
+                self._proxy = proxy
+
+            def stop(self):
+                self._stop_flag = True
+
+            def _check_one(self, k):
+                api_key = k.get("api_key", "")
+                label = k.get("label", api_key[:12])
+                # 每次检测前重新获取代理 IP（一号一IP）
+                from ...utils.proxy import get_proxy_with_info
+                _current_proxy, _proxy_info = get_proxy_with_info()
+                if _proxy_info:
+                    self.progress.emit(f"检测 {label}... 代理[{_proxy_info}]")
+                else:
+                    self.progress.emit(f"检测 {label}...")
+                result = check_api_key_chat_status(api_key, attempts=3, proxy=_current_proxy)
+                return k, label, result
 
             def run(self):
                 normal = 0
                 abnormal = 0
                 failed = 0
-                for k in self._keys:
-                    api_key = k.get("api_key", "")
-                    label = k.get("label", api_key[:12])
-                    key_id = k.get("key_id", "")
-                    try:
-                        self.progress.emit(f"检测 {label}...")
-                        # 发一个最简单的流式请求测试是否被风控
-                        resp = _requests.post(
-                            "https://copilot.tencent.com/v2/chat/completions",
-                            json={
-                                "model": "auto",
-                                "stream": True,
-                                "stream_options": {"include_usage": True},
-                                "messages": [
-                                    {"role": "system", "content": "You are a helpful assistant."},
-                                    {"role": "user", "content": "hi"},
-                                ],
-                            },
-                            headers={
-                                "Content-Type": "application/json",
-                                "Accept": "application/json, text/event-stream",
-                                "Authorization": f"Bearer {api_key}",
-                            },
-                            timeout=30,
-                            stream=True,
-                        )
-                        if resp.status_code == 200:
-                            # 正常，确保不是 abnormal 状态（可能之前误标）
-                            normal += 1
-                        elif resp.status_code == 403 and '"code":11140' in resp.text:
-                            # 被风控，标记为 abnormal
-                            self._db.update_upstream_key(key_id, {"status": "abnormal"})
-                            abnormal += 1
-                        elif resp.status_code == 401 and "invalid_secret" in resp.text:
-                            # Key 失效（非风控），不标记 abnormal，归为失败
+                with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+                    futures = {executor.submit(self._check_one, k): k for k in self._keys}
+                    for future in as_completed(futures):
+                        if self._stop_flag:
+                            executor.shutdown(wait=False, cancel_futures=True)
+                            break
+                        try:
+                            k, label, result = future.result()
+                            key_id = k.get("key_id", "")
+                            status_text = result.get("status_text", "check_failed")
+                            self.progress.emit(f"{label}: {status_text}")
+                            if result.get("flag") == "abnormal":
+                                self._db.update_upstream_key(key_id, {"status": "abnormal"})
+                                abnormal += 1
+                            elif result.get("flag") == "rate_limited":
+                                self._db.update_upstream_key(key_id, {"status": "rate_limited"})
+                                abnormal += 1
+                            elif result.get("success"):
+                                # 检测通过：如果之前是 abnormal/rate_limited，恢复为 active
+                                old_status = k.get("status", "active")
+                                if old_status in ("abnormal", "rate_limited"):
+                                    self._db.update_upstream_key(key_id, {"status": "active"})
+                                normal += 1
+                            else:
+                                failed += 1
+                        except Exception as e:
+                            self.progress.emit(f"检测失败: {e}")
                             failed += 1
-                        elif resp.status_code == 429:
-                            # 限流，不算异常
-                            normal += 1
-                        else:
-                            failed += 1
-                    except Exception:
-                        failed += 1
                 self.done.emit(normal, abnormal, failed)
 
-        self._status_check_worker = KeyStatusCheckWorker(keys_to_check, self._db)
+        max_workers = _get_account_concurrency_setting()
+        from ...utils.proxy import get_proxy_from_settings, ProxyConfigError
+        # 预检代理配置（不缓存 IP，每账号单独提取）
+        try:
+            get_proxy_from_settings()
+        except ProxyConfigError as e:
+            QMessageBox.warning(self, "代理配置错误", str(e))
+            return
+        self._status_check_worker = KeyStatusCheckWorker(keys_to_check, self._db, max_workers=max_workers, proxy=None)
         self._status_check_worker.progress.connect(
             lambda msg: self._stat_total.setText(f"🔍 {msg}")
         )
@@ -1622,6 +2038,11 @@ class ApiProxyPage(QWidget):
     def _refresh_sub_keys(self):
         """刷新子 API Key 列表"""
         sub_keys = self._db.get_sub_api_keys()
+        if self._subkeys_sort_column is not None:
+            sub_keys.sort(
+                key=lambda sk: self._subkey_sort_value(sk, self._subkeys_sort_column),
+                reverse=self._subkeys_sort_order == Qt.DescendingOrder,
+            )
         self._subkeys_table.setRowCount(len(sub_keys))
 
         # 预加载上游 Key 数据，用于汇总积分
@@ -1657,7 +2078,8 @@ class ApiProxyPage(QWidget):
 
             # Key 前缀显示
             key_display = api_key[:12] + "..." if len(api_key) > 12 else api_key
-            _set_item(self._subkeys_table, row, 0, key_display, tooltip=api_key)
+            key_item = _set_item(self._subkeys_table, row, 0, key_display, tooltip=api_key)
+            key_item.setData(Qt.UserRole, sk_id)
 
             _set_item(self._subkeys_table, row, 1, label or "-", tooltip=label or "无标签")
 
@@ -1784,6 +2206,7 @@ class ApiProxyPage(QWidget):
                 "created_at": __import__('datetime').datetime.now().isoformat(),
             }
             self._db.add_sub_api_key(sub_key_data)
+            self._invalidate_proxy_auth_cache()
             self._refresh_sub_keys()
 
             # 提示创建成功
@@ -1813,6 +2236,7 @@ class ApiProxyPage(QWidget):
                 "key_mode": data.get("key_mode", 1),
             }
             self._db.update_sub_api_key(key_id, updates)
+            self._invalidate_proxy_auth_cache()
             self._refresh_sub_keys()
 
     def _on_subkey_double_clicked(self, row: int, col: int):
@@ -1834,6 +2258,29 @@ class ApiProxyPage(QWidget):
         clipboard = QApplication.clipboard()
         clipboard.setText(api_key)
 
+    def _invalidate_proxy_auth_cache(self):
+        """Refresh the running proxy's auth cache after sub-key changes."""
+        try:
+            if self._proxy_server and self._proxy_server.router:
+                self._proxy_server.router.invalidate_upstream_cache()
+        except Exception:
+            pass
+
+    def _subkey_item_for_row(self, row: int):
+        return self._subkeys_table.item(row, 0)
+
+    def _subkey_id_for_row(self, row: int) -> str:
+        item = self._subkey_item_for_row(row)
+        if not item:
+            return ""
+        return str(item.data(Qt.UserRole) or "")
+
+    def _subkey_api_for_row(self, row: int) -> str:
+        item = self._subkey_item_for_row(row)
+        if not item:
+            return ""
+        return item.toolTip() or ""
+
     def _on_subkeys_context_menu(self, pos):
         """子API Key右键菜单"""
         selected_rows = set()
@@ -1853,6 +2300,7 @@ class ApiProxyPage(QWidget):
                 return
             # 从 tooltip 获取完整 api_key
             full_key = key_item.toolTip() or key_item.text()
+            sk_id = self._subkey_id_for_row(row)
 
             action_copy = menu.addAction("📋 复制 API Key")
             action_copy.triggered.connect(lambda: self._copy_sub_key(full_key))
@@ -1863,14 +2311,6 @@ class ApiProxyPage(QWidget):
             status_item = self._subkeys_table.item(row, 2)
             status_text = status_item.text() if status_item else ""
             # 获取 key_id
-            sub_keys = self._db.get_sub_api_keys()
-            sk_id = ""
-            for sk in sub_keys:
-                api_key = sk.get("api_key", "")
-                if api_key == full_key or api_key[:12] == key_item.text().replace("...", ""):
-                    sk_id = sk.get("key_id", "")
-                    break
-
             if "禁用" in status_text and sk_id:
                 action_enable = menu.addAction("✅ 启用")
                 action_enable.triggered.connect(lambda: self._toggle_sub_key(sk_id, True))
@@ -1908,13 +2348,11 @@ class ApiProxyPage(QWidget):
 
     def _batch_copy_subkeys(self, rows: set):
         """批量复制子Key"""
-        sub_keys = self._db.get_sub_api_keys()
         keys_to_copy = []
         for row in rows:
-            if row < len(sub_keys):
-                api_key = sub_keys[row].get("api_key", "")
-                if api_key:
-                    keys_to_copy.append(api_key)
+            api_key = self._subkey_api_for_row(row)
+            if api_key:
+                keys_to_copy.append(api_key)
         if keys_to_copy:
             QApplication.clipboard().setText("\n".join(keys_to_copy))
 
@@ -1927,29 +2365,39 @@ class ApiProxyPage(QWidget):
             QMessageBox.StandardButton.No,
         )
         if reply == QMessageBox.StandardButton.Yes:
-            sub_keys = self._db.get_sub_api_keys()
+            deleted = 0
             for row in rows:
-                if row < len(sub_keys):
-                    sk_id = sub_keys[row].get("key_id", "")
+                sk_id = self._subkey_id_for_row(row)
                 if sk_id:
                     self._db.delete_sub_api_key(sk_id)
+                    deleted += 1
+            if deleted:
+                self._invalidate_proxy_auth_cache()
             self._refresh_sub_keys()
 
     # ─── 一键配置 WorkBuddy / CodeBuddy ───
 
     SUPPORTED_CONFIG_MODELS = [
-        "hy3-preview", "hunyuan-chat", "hunyuan-2.0-thinking",
+        "hy3", "hy3-preview", "hunyuan-chat", "hunyuan-2.0-thinking",
         "deepseek-v4-pro", "deepseek-v4-flash",
         "deepseek-v3-2-volc", "deepseek-v3-1", "deepseek-v3-0324", "deepseek-r1",
         "glm-5.2", "glm-5.1", "glm-5.0", "glm-5.0-turbo", "glm-5v-turbo", "glm-4.7", "glm-4.6",
-        "kimi-k2.6", "kimi-k2.5",
+        "kimi-k2.6", "kimi-k2.5", "kimi-k2.7",
         "minimax-m3", "minimax-m2.7", "minimax-m2.5",
         "auto",
     ]
 
+    # 模型显示名（按截图大小写处理；未列出的模型显示名等于 id）
+    # 注意：图片文件名使用小写 id，与此处显示名解耦
+    MODEL_DISPLAY_NAMES = {
+        "hy3": "Hy3",
+        "kimi-k2.7": "Kimi-K2.7-Code",
+    }
+
     # 模型能力定义 (tool_call, images, reasoning)
-    # 不支持图片的模型 images=False，避免 WorkBuddy 发图片导致报错
+    # 全部模型均支持图片输入（vision: true），避免 WorkBuddy 误判禁图
     MODEL_CAPABILITIES = {
+        "hy3":                      (True,  True,  True),
         "hy3-preview":              (True,  True,  True),
         "hunyuan-chat":             (True,  True,  True),
         "hunyuan-2.0-thinking":     (True,  True,  True),
@@ -1959,23 +2407,55 @@ class ApiProxyPage(QWidget):
         "deepseek-v3-1":            (True,  True,  True),
         "deepseek-v3-0324":         (True,  True,  True),
         "deepseek-r1":              (True,  True,  True),
-        "glm-5.2":                  (True,  False, True),
-        "glm-5.1":                  (True,  False, True),
-        "glm-5.0":                  (True,  False, True),
-        "glm-5.0-turbo":            (True,  False, True),
+        "glm-5.2":                  (True,  True,  True),
+        "glm-5.1":                  (True,  True,  True),
+        "glm-5.0":                  (True,  True,  True),
+        "glm-5.0-turbo":            (True,  True,  True),
         "glm-5v-turbo":             (True,  True,  True),
-        "glm-4.7":                  (True,  False, True),
-        "glm-4.6":                  (True,  False, True),
+        "glm-4.7":                  (True,  True,  True),
+        "glm-4.6":                  (True,  True,  True),
         "kimi-k2.6":                (True,  True,  True),
         "kimi-k2.5":                (True,  True,  True),
+        "kimi-k2.7":                (True,  True,  True),
         "minimax-m3":               (True,  True,  True),
         "minimax-m2.7":             (True,  True,  True),
         "minimax-m2.5":             (True,  True,  True),
         "auto":                     (True,  True,  True),
     }
 
+    def _build_model_entries(self, selected_ids: list, base_url: str,
+                             api_key: str, include_custom_protocol: bool = True) -> list:
+        """根据选中的模型 id 列表构建 models.json 条目。
+
+        Args:
+            selected_ids: 用户勾选的模型 id 列表
+            base_url: 接口地址
+            api_key: 写入条目的 apiKey
+            include_custom_protocol: 是否写入 useCustomProtocol 字段（WorkBuddy 需要，CodeBuddy 不需要）
+        """
+        entries = []
+        for model_id in selected_ids:
+            tool_call, images, reasoning = self.MODEL_CAPABILITIES.get(model_id, (True, True, True))
+            display_name = self.MODEL_DISPLAY_NAMES.get(model_id, model_id)
+            entry = {
+                "id": model_id,
+                "name": display_name,
+                "vendor": "Custom",
+                "url": base_url,
+                "apiKey": api_key,
+                "supportsToolCall": tool_call,
+                "supportsImages": images,
+                "supportsReasoning": reasoning,
+            }
+            if include_custom_protocol:
+                entry["useCustomProtocol"] = False
+            if reasoning:
+                entry["reasoning"] = {"supportedEfforts": ["max"]}
+            entries.append(entry)
+        return entries
+
     def _config_workbuddy(self, api_key: str):
-        """一键配置 WorkBuddy 的 models.json"""
+        """一键配置 WorkBuddy 的 models.json（用户选择模型 + 增量写入）"""
         port = self._port_spin.value()
         mode = self._listen_mode_combo.currentData() if hasattr(self, '_listen_mode_combo') else "local"
         if mode == "open":
@@ -1984,54 +2464,33 @@ class ApiProxyPage(QWidget):
         else:
             host = "127.0.0.1"
         base_url = f"http://{host}:{port}/v1"
-        reply = QMessageBox.question(
-            self, "一键配置 WorkBuddy",
-            "此操作将覆盖 %USERPROFILE%\\.workbuddy\\models.json 的现有配置！\n\n"
-            f"将使用当前 Key 配置 {len(self.SUPPORTED_CONFIG_MODELS)} 个模型。\n"
-            f"接口地址: {base_url}\n\n"
-            "是否继续？",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if reply != QMessageBox.StandardButton.Yes:
+
+        dlg = ModelSelectDialog("一键配置 WorkBuddy", base_url, self.SUPPORTED_CONFIG_MODELS, self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        selected = dlg.selected_models()
+        if not selected:
+            QMessageBox.information(self, "提示", "未勾选任何模型，已取消配置。")
             return
 
-        import json, os
-
-        models = []
-        for model_id in self.SUPPORTED_CONFIG_MODELS:
-            tool_call, images, reasoning = self.MODEL_CAPABILITIES.get(model_id, (True, False, True))
-            entry = {
-                "id": model_id,
-                "name": model_id,
-                "vendor": "Custom",
-                "url": base_url,
-                "apiKey": api_key,
-                "supportsToolCall": tool_call,
-                "supportsImages": images,
-                "supportsReasoning": reasoning,
-                "disabledMultimodal": not images,
-                "useCustomProtocol": False,
-            }
-            _apply_model_protocol_fields(entry, images)
-            ctx = MODEL_CONTEXT_LENGTHS.get(model_id)
-            _apply_context_aliases(entry, ctx)
-            models.append(entry)
-
+        entries = self._build_model_entries(selected, base_url, api_key, include_custom_protocol=True)
         wb_dir = os.path.join(os.path.expanduser("~"), ".workbuddy")
-        os.makedirs(wb_dir, exist_ok=True)
         target_path = os.path.join(wb_dir, "models.json")
 
-        with open(target_path, "w", encoding="utf-8") as f:
-            json.dump(models, f, ensure_ascii=False, indent=2)
+        existing = _read_existing_models(target_path)
+        merged, replaced, added = _incremental_merge_models(existing, entries)
+        _write_models_json(target_path, merged, wrapper="array")
 
         QMessageBox.information(
             self, "✅ 配置完成",
-            f"WorkBuddy 已配置 {len(models)} 个模型！\n\n文件位置:\n{target_path}"
+            f"WorkBuddy 已配置 {len(entries)} 个模型！\n"
+            f"（新增 {added} 个，更新 {replaced} 个，当前共 {len(merged)} 个模型）\n"
+            f"接口地址: {base_url}\n\n"
+            f"文件位置:\n{target_path}"
         )
 
     def _config_codebuddy(self, api_key: str):
-        """一键配置 CodeBuddy 的 models.json"""
+        """一键配置 CodeBuddy 的 models.json（用户选择模型 + 增量写入）"""
         port = self._port_spin.value()
         mode = self._listen_mode_combo.currentData() if hasattr(self, '_listen_mode_combo') else "local"
         if mode == "open":
@@ -2040,55 +2499,33 @@ class ApiProxyPage(QWidget):
         else:
             host = "127.0.0.1"
         base_url = f"http://{host}:{port}/v1"
-        reply = QMessageBox.question(
-            self, "一键配置 CodeBuddy",
-            "此操作将覆盖 %USERPROFILE%\\.codebuddy\\models.json 的现有配置！\n\n"
-            f"将使用当前 Key 配置 {len(self.SUPPORTED_CONFIG_MODELS)} 个模型。\n"
-            f"接口地址: {base_url}\n\n"
-            "是否继续？",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if reply != QMessageBox.StandardButton.Yes:
+
+        dlg = ModelSelectDialog("一键配置 CodeBuddy", base_url, self.SUPPORTED_CONFIG_MODELS, self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        selected = dlg.selected_models()
+        if not selected:
+            QMessageBox.information(self, "提示", "未勾选任何模型，已取消配置。")
             return
 
-        import json, os
-
-        models = []
-        for model_id in self.SUPPORTED_CONFIG_MODELS:
-            tool_call, images, reasoning = self.MODEL_CAPABILITIES.get(model_id, (True, False, True))
-            entry = {
-                "id": model_id,
-                "name": model_id,
-                "vendor": "Custom",
-                "url": base_url,
-                "apiKey": api_key,
-                "supportsToolCall": tool_call,
-                "supportsImages": images,
-                "supportsReasoning": reasoning,
-                "disabledMultimodal": not images,
-            }
-            _apply_model_protocol_fields(entry, images)
-            ctx = MODEL_CONTEXT_LENGTHS.get(model_id)
-            _apply_context_aliases(entry, ctx)
-            models.append(entry)
-
+        entries = self._build_model_entries(selected, base_url, api_key, include_custom_protocol=False)
         cb_dir = os.path.join(os.path.expanduser("~"), ".codebuddy")
-        os.makedirs(cb_dir, exist_ok=True)
         target_path = os.path.join(cb_dir, "models.json")
 
-        config_data = {"models": models}
-
-        with open(target_path, "w", encoding="utf-8") as f:
-            json.dump(config_data, f, ensure_ascii=False, indent=2)
+        existing = _read_existing_models(target_path)
+        merged, replaced, added = _incremental_merge_models(existing, entries)
+        _write_models_json(target_path, merged, wrapper="object")
 
         QMessageBox.information(
             self, "✅ 配置完成",
-            f"CodeBuddy 已配置 {len(models)} 个模型！\n\n文件位置:\n{target_path}"
+            f"CodeBuddy 已配置 {len(entries)} 个模型！\n"
+            f"（新增 {added} 个，更新 {replaced} 个，当前共 {len(merged)} 个模型）\n"
+            f"接口地址: {base_url}\n\n"
+            f"文件位置:\n{target_path}"
         )
 
     def _config_workbuddy_upstream(self, key_id: str):
-        """一键配置 WorkBuddy（直连上游，不走代理）"""
+        """一键配置 WorkBuddy（直连上游，不走代理；用户选择模型 + 增量写入）"""
         # 查找上游 Key 的 api_key
         keys = self._db.get_upstream_keys()
         api_key = ""
@@ -2105,59 +2542,35 @@ class ApiProxyPage(QWidget):
         # 直连上游，不走本地代理
         base_url = "https://copilot.tencent.com/v2"
 
-        reply = QMessageBox.warning(
-            self, "⚠️ 一键配置 WorkBuddy（直连上游）",
-            "此操作将覆盖 %USERPROFILE%\\.workbuddy\\models.json 的现有配置！\n\n"
-            f"将使用上游 Key「{key_label or key_id}」配置 {len(self.SUPPORTED_CONFIG_MODELS)} 个模型。\n"
-            f"接口地址: {base_url}\n\n"
-            "⚠️ 注意：此配置直连上游，不经过本地代理，只使用当前账号的积分，不会自动切换！\n"
-            "如需自动切换多个账号，请到子 API Key 中配置。\n\n"
-            "是否继续？",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
+        dlg = ModelSelectDialog(
+            "一键配置 WorkBuddy（直连上游）", base_url, self.SUPPORTED_CONFIG_MODELS, self
         )
-        if reply != QMessageBox.StandardButton.Yes:
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        selected = dlg.selected_models()
+        if not selected:
+            QMessageBox.information(self, "提示", "未勾选任何模型，已取消配置。")
             return
 
-        import json, os
-
-        models = []
-        for model_id in self.SUPPORTED_CONFIG_MODELS:
-            tool_call, images, reasoning = self.MODEL_CAPABILITIES.get(model_id, (True, False, True))
-            entry = {
-                "id": model_id,
-                "name": model_id,
-                "vendor": "Custom",
-                "url": base_url,
-                "apiKey": api_key,
-                "supportsToolCall": tool_call,
-                "supportsImages": images,
-                "supportsReasoning": reasoning,
-                "disabledMultimodal": not images,
-                "useCustomProtocol": False,
-            }
-            _apply_model_protocol_fields(entry, images)
-            ctx = MODEL_CONTEXT_LENGTHS.get(model_id)
-            _apply_context_aliases(entry, ctx)
-            models.append(entry)
-
+        entries = self._build_model_entries(selected, base_url, api_key, include_custom_protocol=True)
         wb_dir = os.path.join(os.path.expanduser("~"), ".workbuddy")
-        os.makedirs(wb_dir, exist_ok=True)
         target_path = os.path.join(wb_dir, "models.json")
 
-        with open(target_path, "w", encoding="utf-8") as f:
-            json.dump(models, f, ensure_ascii=False, indent=2)
+        existing = _read_existing_models(target_path)
+        merged, replaced, added = _incremental_merge_models(existing, entries)
+        _write_models_json(target_path, merged, wrapper="array")
 
         QMessageBox.information(
             self, "✅ 配置完成",
-            f"WorkBuddy 已配置 {len(models)} 个模型！\n"
-            f"直连上游: https://copilot.tencent.com/v2\n"
+            f"WorkBuddy 已配置 {len(entries)} 个模型！\n"
+            f"（新增 {added} 个，更新 {replaced} 个，当前共 {len(merged)} 个模型）\n"
+            f"直连上游: {base_url}\n"
             f"使用上游 Key: {key_label or key_id}\n\n"
             f"文件位置:\n{target_path}"
         )
 
     def _config_codebuddy_upstream(self, key_id: str):
-        """一键配置 CodeBuddy（直连上游，不走代理）"""
+        """一键配置 CodeBuddy（直连上游，不走代理；用户选择模型 + 增量写入）"""
         # 查找上游 Key 的 api_key
         keys = self._db.get_upstream_keys()
         api_key = ""
@@ -2174,54 +2587,29 @@ class ApiProxyPage(QWidget):
         # 直连上游，不走本地代理
         base_url = "https://copilot.tencent.com/v2"
 
-        reply = QMessageBox.warning(
-            self, "⚠️ 一键配置 CodeBuddy（直连上游）",
-            "此操作将覆盖 %USERPROFILE%\\.codebuddy\\models.json 的现有配置！\n\n"
-            f"将使用上游 Key「{key_label or key_id}」配置 {len(self.SUPPORTED_CONFIG_MODELS)} 个模型。\n"
-            f"接口地址: {base_url}\n\n"
-            "⚠️ 注意：此配置直连上游，不经过本地代理，只使用当前账号的积分，不会自动切换！\n"
-            "如需自动切换多个账号，请到子 API Key 中配置。\n\n"
-            "是否继续？",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
+        dlg = ModelSelectDialog(
+            "一键配置 CodeBuddy（直连上游）", base_url, self.SUPPORTED_CONFIG_MODELS, self
         )
-        if reply != QMessageBox.StandardButton.Yes:
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        selected = dlg.selected_models()
+        if not selected:
+            QMessageBox.information(self, "提示", "未勾选任何模型，已取消配置。")
             return
 
-        import json, os
-
-        models = []
-        for model_id in self.SUPPORTED_CONFIG_MODELS:
-            tool_call, images, reasoning = self.MODEL_CAPABILITIES.get(model_id, (True, False, True))
-            entry = {
-                "id": model_id,
-                "name": model_id,
-                "vendor": "Custom",
-                "url": base_url,
-                "apiKey": api_key,
-                "supportsToolCall": tool_call,
-                "supportsImages": images,
-                "supportsReasoning": reasoning,
-                "disabledMultimodal": not images,
-            }
-            _apply_model_protocol_fields(entry, images)
-            ctx = MODEL_CONTEXT_LENGTHS.get(model_id)
-            _apply_context_aliases(entry, ctx)
-            models.append(entry)
-
+        entries = self._build_model_entries(selected, base_url, api_key, include_custom_protocol=False)
         cb_dir = os.path.join(os.path.expanduser("~"), ".codebuddy")
-        os.makedirs(cb_dir, exist_ok=True)
         target_path = os.path.join(cb_dir, "models.json")
 
-        config_data = {"models": models}
-
-        with open(target_path, "w", encoding="utf-8") as f:
-            json.dump(config_data, f, ensure_ascii=False, indent=2)
+        existing = _read_existing_models(target_path)
+        merged, replaced, added = _incremental_merge_models(existing, entries)
+        _write_models_json(target_path, merged, wrapper="object")
 
         QMessageBox.information(
             self, "✅ 配置完成",
-            f"CodeBuddy 已配置 {len(models)} 个模型！\n"
-            f"直连上游: https://copilot.tencent.com/v2\n"
+            f"CodeBuddy 已配置 {len(entries)} 个模型！\n"
+            f"（新增 {added} 个，更新 {replaced} 个，当前共 {len(merged)} 个模型）\n"
+            f"直连上游: {base_url}\n"
             f"使用上游 Key: {key_label or key_id}\n\n"
             f"文件位置:\n{target_path}"
         )
@@ -2269,6 +2657,7 @@ class ApiProxyPage(QWidget):
     def _toggle_sub_key(self, key_id: str, enable: bool):
         """启用/禁用子 Key"""
         self._db.update_sub_api_key(key_id, {"is_active": enable})
+        self._invalidate_proxy_auth_cache()
         self._refresh_sub_keys()
 
     def _delete_sub_key(self, key_id: str):
@@ -2279,13 +2668,15 @@ class ApiProxyPage(QWidget):
         )
         if reply == QMessageBox.StandardButton.Yes:
             self._db.delete_sub_api_key(key_id)
+            self._invalidate_proxy_auth_cache()
             self._refresh_sub_keys()
 
     # === 使用日志 ===
 
     def _refresh_log(self):
         """刷新请求日志（智能跳过无变化时）"""
-        logs = self._db.get_request_logs(limit=200)
+        # 只获取清空之后的日志（_log_cleared_since 为 0 时获取全部）
+        logs = self._db.get_request_logs(since=self._log_cleared_since, limit=200)
 
         # 无日志
         if not logs:
@@ -2334,6 +2725,9 @@ class ApiProxyPage(QWidget):
                 # 上游限流
                 icon = "🐌"
                 line = f"{icon} {time_str} 上游限流  key={main_label}  model={model}  ❌{error}"
+            elif event == "sensitive_replace":
+                icon = "🛡️"
+                line = f"{icon} {time_str} 敏感信息检测  sub={sub_label}  model={model}  {error}"
             elif event == "start":
                 icon = "🟢"
                 line = f"{icon} {time_str} START  sub={sub_label}  key={main_label}  model={model}"
@@ -2357,9 +2751,11 @@ class ApiProxyPage(QWidget):
         self._log_edit.setPlainText("\n".join(lines))
 
     def _clear_log(self):
-        """清空日志显示"""
-        self._log_edit.clear()
+        """清空日志显示 — 记录清空时间戳，之后只显示新产生的日志"""
+        import time
+        self._log_cleared_since = time.time()
         self._last_log_timestamp = 0.0
+        self._log_edit.clear()
 
     # === 页面生命周期 ===
 

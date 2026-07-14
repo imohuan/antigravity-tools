@@ -18,6 +18,11 @@ block_cipher = None
 
 # 项目根目录
 ROOT = os.path.abspath(SPECPATH)
+VERSION_PATH = os.path.join(ROOT, 'src', 'VERSION')
+with open(VERSION_PATH, 'r', encoding='utf-8') as version_file:
+    APP_VERSION = version_file.read().strip()
+if not APP_VERSION or any(not part.isdigit() for part in APP_VERSION.split('.')):
+    raise ValueError(f'Invalid application version in {VERSION_PATH}: {APP_VERSION!r}')
 
 # ─── PySide6 运行时路径 ───
 pyside6_dir = os.path.dirname(QtCore.__file__)
@@ -63,18 +68,6 @@ datas = [
     (os.path.join(ROOT, 'src', 'VERSION'), 'src'),
 ]
 
-# ─── Playwright driver ───
-playwright_dir = None
-try:
-    import importlib
-    pw = importlib.import_module('playwright')
-    playwright_dir = os.path.dirname(pw.__file__)
-except ImportError:
-    pass
-
-if playwright_dir and os.path.isdir(os.path.join(playwright_dir, 'driver')):
-    datas.append((os.path.join(playwright_dir, 'driver'), 'playwright/driver'))
-
 # 只收集必要的 Qt 插子目录
 needed_plugin_dirs = ['platforms', 'imageformats', 'styles', 'tls']
 if os.path.isdir(plugins_dir):
@@ -117,27 +110,14 @@ hiddenimports = [
     'cryptography',
     'cffi',
     'pycparser',
-    'playwright',
-    'playwright.async_api',
-    'playwright.sync_api',
-    'playwright._impl',
-    'playwright._impl._api_structures',
-    'playwright._impl._api_types',
-    'playwright._impl._browser',
-    'playwright._impl._browser_context',
-    'playwright._impl._browser_type',
-    'playwright._impl._cdp_session',
-    'playwright._impl._connection',
-    'playwright._impl._element_handle',
-    'playwright._impl._frame',
-    'playwright._impl._helper',
-    'playwright._impl._network',
-    'playwright._impl._page',
-    'playwright._impl._playwright',
-    'playwright._impl._transport',
     'greenlet',
     'pyee',
     'pyee._base',
+    # [v1.8.0] app.py 用 importlib 动态加载 src，PyInstaller 静态分析跟踪不到 src/ 的 import
+    'sqlite3',
+    '_sqlite3',
+    'logging.handlers',
+    'socketserver',
 ]
 
 # ─── 二进制文件 ───
@@ -217,8 +197,8 @@ app = BUNDLE(
         'CFBundleName': 'Antigravity Tools',
         'CFBundleDisplayName': 'Antigravity Tools',
         'CFBundleIdentifier': 'com.antigravity.tools',
-        'CFBundleVersion': '1.0.0',
-        'CFBundleShortVersionString': '1.0.0',
+        'CFBundleVersion': APP_VERSION,
+        'CFBundleShortVersionString': APP_VERSION,
         'NSHighResolutionCapable': True,
         'LSMinimumSystemVersion': '10.15',
         'NSRequiresAquaSystemAppearance': False,

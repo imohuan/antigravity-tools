@@ -6,7 +6,7 @@ from typing import Optional
 import threading
 import logging
 
-from src.modules.proxy_server import ProxyServer, ProxyDatabase
+from src.modules.proxy_server import ProxyServer, ProxyDatabase, ProxyRequestHandler
 from src.utils.store import load_accounts, load_setting, save_setting
 
 logger = logging.getLogger(__name__)
@@ -72,7 +72,8 @@ def proxy_start(req: StartProxyRequest = StartProxyRequest()):
         return {"success": True, "message": "Proxy already running"}
     try:
         port = int(load_setting("proxyPort", "8867"))
-        _proxy_server = ProxyServer(port=port, default_key_mode=req.strategy)
+        _proxy_server = ProxyServer(port=port)
+        ProxyRequestHandler.default_key_mode = req.strategy
         save_setting("proxyStrategy", str(req.strategy))
         _proxy_thread = threading.Thread(target=_proxy_server.start, daemon=True)
         _proxy_thread.start()
@@ -87,7 +88,6 @@ class SetStrategyRequest(BaseModel):
 @router.post("/proxy/strategy")
 def proxy_set_strategy(req: SetStrategyRequest):
     """实时更新全局默认策略，无需重启代理"""
-    from src.modules.proxy_server import ProxyRequestHandler
     ProxyRequestHandler.default_key_mode = req.strategy
     save_setting("proxyStrategy", str(req.strategy))
     return {"success": True, "strategy": req.strategy}

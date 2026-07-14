@@ -23,22 +23,24 @@ class QuotaQueryThread(QThread):
     result_ready = Signal(dict)  # 查询结果
     status_update = Signal(str)  # 状态更新
 
-    def __init__(self, access_token: str, uid: str, domain: str = "www.codebuddy.cn", api_key: str = ""):
+    def __init__(self, access_token: str, uid: str, domain: str = "www.codebuddy.cn", api_key: str = "", proxy=None):
         super().__init__()
         self.access_token = access_token
         self.uid = uid
         self.domain = domain
         self.api_key = api_key  # API Key (ck_xxx)，优先使用
+        self._proxy = proxy
 
     def run(self):
         # 优先使用 API Key 模式
         if self.api_key and self.api_key.startswith("ck_"):
-            client = ApiClient.from_api_key(self.api_key)
+            client = ApiClient.from_api_key(self.api_key, proxy=self._proxy)
         else:
             client = ApiClient(
                 access_token=self.access_token,
                 uid=self.uid,
                 domain=self.domain,
+                proxy=self._proxy,
             )
 
         # 查询积分
@@ -125,29 +127,10 @@ class ResourcePackageCard(QFrame):
             progress.setStyleSheet("QProgressBar::chunk { background-color: #38A169; border-radius: 4px; }")
         layout.addWidget(progress)
 
-        # 周期信息 + 剩余天数标签
+        # 周期信息
         if self._pkg.cycle_start and self._pkg.cycle_end:
-            from datetime import datetime as _dt
-            cycle_text = f"周期: {self._pkg.cycle_start[:10]} ~ {self._pkg.cycle_end[:10]}"
-            days_left = -1
-            label_color = "#9BA4B0"
-            try:
-                end_str = self._pkg.cycle_end.replace("Z", "+00:00")
-                if "T" in end_str:
-                    end_dt = _dt.fromisoformat(end_str)
-                else:
-                    end_dt = _dt.strptime(end_str[:19], "%Y-%m-%d %H:%M:%S")
-                days_left = (end_dt.replace(tzinfo=None) - _dt.now()).days
-                if days_left >= 0:
-                    if days_left <= 3:
-                        label_color = "#E53E3E"
-                    elif days_left <= 7:
-                        label_color = "#D69E2E"
-                    cycle_text += "  |  ⏳ 剩余 " + str(days_left) + " 天"
-            except (ValueError, TypeError):
-                pass
-            cycle_label = QLabel(cycle_text)
-            cycle_label.setStyleSheet(f"font-size: 10px; color: {label_color};")
+            cycle_label = QLabel(f"周期: {self._pkg.cycle_start[:10]} ~ {self._pkg.cycle_end[:10]}")
+            cycle_label.setStyleSheet("font-size: 10px; color: #9BA4B0;")
             layout.addWidget(cycle_label)
 
 
@@ -234,11 +217,18 @@ class AccountQuotaCard(QFrame):
         self._status_label.setText("⏳ 正在查询...")
         self._status_label.setStyleSheet("color: #D69E2E; font-size: 11px;")
 
+        from ...utils.proxy import get_proxy_from_settings
+        try:
+            _proxy = get_proxy_from_settings()
+        except Exception:
+            _proxy = None
+
         self._query_thread = QuotaQueryThread(
             access_token=self._account.auth_token,
             uid=self._account.uid,
             domain=self._account.domain or "www.codebuddy.cn",
             api_key=self._account.api_key or "",
+            proxy=_proxy,
         )
         self._query_thread.result_ready.connect(self._on_quota_result)
         self._query_thread.status_update.connect(self._on_status_update)
@@ -271,18 +261,12 @@ class AccountQuotaCard(QFrame):
                 if item.widget():
                     item.widget().deleteLater()
 
-            # 添加新的资源包卡片（过滤已耗尽的包）
-            active_packages = [p for p in packages if getattr(p, "cycle_remain", 1) > 0]
-            exhausted_count = len(packages) - len(active_packages)
-            for pkg in active_packages:
+            # 添加新的资源包卡片
+            for pkg in packages:
                 card = ResourcePackageCard(pkg)
                 self._packages_layout.addWidget(card)
 
-            status_text = f"✅ 已更新（{len(active_packages)} 个资源包"
-            if exhausted_count > 0:
-                status_text += f"，{exhausted_count} 个已耗尽已隐藏"
-            status_text += "）"
-            self._status_label.setText(status_text)
+            self._status_label.setText(f"✅ 已更新（{len(packages)} 个资源包）")
             self._status_label.setStyleSheet("color: #38A169; font-size: 11px;")
 
             # 更新 Account 的 QuotaInfo
@@ -347,14 +331,21 @@ class AccountQuotaCard(QFrame):
         self._checkin_btn.setText("签到中...")
         self._checkin_label.setText("⏳ 签到中...")
 
+        from ...utils.proxy import get_proxy_from_settings
+        try:
+            _proxy = get_proxy_from_settings()
+        except Exception:
+            _proxy = None
+
         # 优先使用 API Key 模式
         if self._account.api_key and self._account.api_key.startswith("ck_"):
-            client = ApiClient.from_api_key(self._account.api_key)
+            client = ApiClient.from_api_key(self._account.api_key, proxy=_proxy)
         else:
             client = ApiClient(
                 access_token=self._account.auth_token,
                 uid=self._account.uid,
                 domain=self._account.domain or "www.codebuddy.cn",
+                proxy=_proxy,
             )
         result = client.daily_checkin()
 
