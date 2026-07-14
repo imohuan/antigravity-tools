@@ -304,6 +304,9 @@ class ApiClient:
             self.session.proxies = {"http": proxy, "https": proxy}
             # HTTPS 代理的 TLS 证书通常是自签名/IP 证书，不验证
             self.session.verify = False
+
+    @classmethod
+    def from_api_key(cls, api_key: str, proxy: Optional[str] = None) -> "ApiClient":
         """从 API Key (ck_xxx) 创建客户端（推荐方式）
 
         API Key 模式优势：
