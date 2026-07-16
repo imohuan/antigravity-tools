@@ -1,4 +1,4 @@
-"""本地 API 中转代理服务
+﻿"""本地 API 中转代理服务
 
 功能：
 - 管理上游 Key 池（主 Key）
@@ -2488,13 +2488,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             logger.info(f"📨 收到请求  {method} {path} auth={auth_hint} client={client_ip}")
         else:
             logger.info(f"📨 收到请求  {method} {path} auth={auth_hint}")
-        # 同时写入 DB 日志，这样在 UI 的使用日志里也能看到每个请求
-        self._add_log(
-            event="request",
-            error=f"{method} {path} auth={auth_hint}",
-            request_path=path,
-        )
-
+        # 不写 DB：只有真正处理完成的 API 调用才记录 DB 日志
     def _send_json(self, status: int, data: dict, extra_headers: dict = None):
         """发送 JSON 响应
 
@@ -2737,8 +2731,6 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
         is_passthrough = sub_key.get("key_id") == "_passthrough_"
         if is_passthrough:
             logger.info(f"[透传] chat请求使用透传模式，自动选上游Key")
-            self._add_log(event="request", sub_key=sub_key, error="透传模式:自动选上游Key", request_path="/v1/chat/completions")
-
         # 2. 检查子 Key 状态（透传模式跳过）
         if not is_passthrough:
             if not sub_key.get("is_active", True):
@@ -2858,7 +2850,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
         last_cooldown_secs = 0      # 最后一次冷却秒数（用于 Retry-After 头，优化项 #9）
         last_upstream_error_log = None  # 最后一次上游原始错误详情（仅用于本地排查日志）
         _ctx_compressed = [False]    # 上下文是否已压缩过（用 list 包装以便在嵌套函数中修改）
-        allowed_key_ids = sub_key.get("allowed_key_ids", [])
+        key_mode = sub_key.get("key_mode", ProxyRequestHandler.default_key_mode)
         key_mode = sub_key.get("key_mode", 1)
 
         while len(tried_key_ids) < MAX_RETRY_KEYS:

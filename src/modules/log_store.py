@@ -1,4 +1,4 @@
-"""SQLite 请求日志存储 — 只追加写入，支持聚合查询和定期清理
+﻿"""SQLite 请求日志存储 — 只追加写入，支持聚合查询和定期清理
 
 替代旧的 JSON 全量日志方案：
 - 写入：INSERT 一行，几毫秒
@@ -108,6 +108,15 @@ class LogStore:
     def insert(self, log: dict):
         """插入一条日志"""
         ts = log.get("timestamp", time.time())
+        event = log.get("event", "")
+        # 根据 event 推导 status：只有 end 才是 success，其余（request/error/auth_fail/upstream_error 等）都是 failed
+        status = log.get("status", "")
+        if not status:
+            status = "success" if event == "end" else ("failed" if event else "success")
+        # 计算 total_tokens
+        prompt_tokens = log.get("prompt_tokens", 0)
+        completion_tokens = log.get("completion_tokens", 0)
+        total_tokens = log.get("total_tokens", 0) or (prompt_tokens + completion_tokens)
         try:
             self.conn.execute(
                 """INSERT INTO request_logs
@@ -123,10 +132,10 @@ class LogStore:
                     log.get("main_key_id", ""),
                     log.get("main_key_label", ""),
                     log.get("model", ""),
-                    log.get("status", "success"),
-                    log.get("prompt_tokens", 0),
-                    log.get("completion_tokens", 0),
-                    log.get("total_tokens", 0),
+                    status,
+                    prompt_tokens,
+                    completion_tokens,
+                    total_tokens,
                     log.get("credit", 0.0),
                     log.get("duration_ms", 0),
                     log.get("request_path", ""),
