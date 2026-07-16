@@ -2852,6 +2852,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
         _ctx_compressed = [False]    # 上下文是否已压缩过（用 list 包装以便在嵌套函数中修改）
         key_mode = sub_key.get("key_mode", ProxyRequestHandler.default_key_mode)
         key_mode = sub_key.get("key_mode", 1)
+        allowed_key_ids = sub_key.get("allowed_key_ids", [])
 
         while len(tried_key_ids) < MAX_RETRY_KEYS:
             total_attempts += 1
