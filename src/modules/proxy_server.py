@@ -2851,7 +2851,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
         last_upstream_error_log = None  # 最后一次上游原始错误详情（仅用于本地排查日志）
         _ctx_compressed = [False]    # 上下文是否已压缩过（用 list 包装以便在嵌套函数中修改）
         key_mode = sub_key.get("key_mode", ProxyRequestHandler.default_key_mode)
-        key_mode = sub_key.get("key_mode", 1)
+        key_mode = sub_key.get("key_mode", str(ProxyRequestHandler.default_key_mode))
         allowed_key_ids = sub_key.get("allowed_key_ids", [])
 
         while len(tried_key_ids) < MAX_RETRY_KEYS:
@@ -3147,7 +3147,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                 should_retry, error_msg = self._forward_stream_response(
                     resp, upstream_key, sub_key, model, start_time,
                     client_wants_stream, key_id, upstream_request_data,
-                    response_mode=response_mode
+                    response_mode=response_mode, key_mode=str(key_mode)
                 )
                 self.router.decrement_concurrent(key_id)
 
@@ -3413,7 +3413,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
 
     def _forward_stream_response(self, resp, upstream_key, sub_key, model, start_time,
                                   client_wants_stream, key_id, request_data=None,
-                                  response_mode: str = "chat"):
+                                  response_mode: str = "chat", key_mode: str = "1"):
         """处理上游 200 响应的流式/非流式转发
 
         优化项：
@@ -3751,6 +3751,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                     )
 
                 # 写请求日志（含首字时间，优化项 #13）
+                credit_val = last_usage.get("credit", 0.0)
                 self.db.add_request_log({
                     "timestamp": time.time(),
                     "sub_key_id": sub_key_id,
@@ -3763,6 +3764,9 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                     "prompt_tokens": last_usage.get("prompt_tokens", 0),
                     "completion_tokens": last_usage.get("completion_tokens", 0),
                     "first_token_ms": first_token_ms or 0,
+                    "key_mode": key_mode,
+                    "credit": credit_val,
+                    "attempt": 1,
                 })
 
                 # 请求完成后异步查分（限频 1 分钟/次）
