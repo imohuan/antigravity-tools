@@ -1066,7 +1066,7 @@ class UpstreamKey:
     last_health_check: float = 0.0
     # 自定义阈值
     min_credits_threshold: float = 0.0    # 最低积分阈值，低于此值自动禁用（0=不限制）
-    auto_enable_threshold: float = 100.0  # 自动启用阈值，查分高于此值自动恢复 active
+    auto_enable_threshold: float = 50.0  # 自动启用阈值，查分高于此值自动恢复 active
 
 
 @dataclass
@@ -1269,7 +1269,7 @@ class ProxyDatabase:
         规则：
         - 积分为 0 → 立即禁用（disabled，不再参与轮询）
         - 积分 > 100 且之前是 disabled/exhausted → 恢复为 active
-        - 0 < 积分 <= 100：保持当前状态
+        - 0 < 积分 <= auto_enable：保持当前状态
         - 同时更新 points 和 points_updated_at 字段
         - 如果提供了 packages，同时存储积分组信息（用于临期优先排序）
 
@@ -1332,10 +1332,13 @@ class ProxyDatabase:
                     min_threshold = float(k.get("min_credits_threshold", 0) or 0)
                     auto_enable = float(k.get("auto_enable_threshold", 100) or 100)
 
+                    # ⚠️ 防抽风：如果 packages 为空，说明查分失败返回了空数据，跳过所有状态变更
+                    pkg_summaries = k.get("packages", []) or []
+                    if not pkg_summaries:
+                        logger.warning(f"[积分同步] Key {k.get('label', k.get('key_id',''))} "
+                                      f"packages 为空，疑似查分失败，跳过状态变更（保持 {old_status}）")
                     # 积分低于阈值 → 禁用（但不覆盖 abnormal 和 permanent_disabled 状态）
-                    # ⚠️ 防御：如果 remaining=0 且 total=0，说明查分失败返回了空数据，
-                    # 不能当成"积分用完"处理，否则会把正常 Key 全部误禁用
-                    if remaining_credits <= 0 and total_credits <= 0:
+                    elif remaining_credits <= 0 and total_credits <= 0:
                         logger.warning(f"[积分同步] Key {k.get('label', k.get('key_id',''))} "
                                       f"查分返回 remaining=0 total=0，疑似查分失败，跳过禁用（保持 {old_status}）")
                     elif remaining_credits <= min_threshold and total_credits > 0:
@@ -1349,7 +1352,7 @@ class ProxyDatabase:
                             k["status"] = "active"
                             self._key_status_version += 1
                             logger.info(f"[积分同步] Key {k.get('label', k.get('key_id',''))} 积分{remaining_credits:.0f}>{auto_enable:.0f}，{old_status} -> ACTIVE")
-                    # 0 < 积分 <= 100：保持当前状态
+                    # 0 < 积分 <= auto_enable：保持当前状态
                     break
             if not matched:
                 logger.warning(f"[积分同步] 未找到匹配的上游 Key: api_key_or_token={api_key_or_token[:30]}...")
