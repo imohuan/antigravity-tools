@@ -1,4 +1,4 @@
-"""Proxy server control API routes"""
+﻿"""Proxy server control API routes"""
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -301,9 +301,13 @@ def proxy_quota(cache: str = "true"):
                 continue
             remain = float(pkg.get("cycle_remain", 0))
             total = float(pkg.get("cycle_size", 0))
-            if total <= 0:
+            if total <= 0 and remain <= 0:
                 continue
-            key_total += total
+            # 显示用的 total：如果 cycle_size 缺失，用 cycle_remain 代替（旧数据兼容）
+            display_total = total if total > 0 else remain
+            # 汇总用的 total：只有真实的 cycle_size 才参与汇总，否则用 points 兜底
+            if total > 0:
+                key_total += total
             key_remain += remain
 
             # 计算过期天数
@@ -325,8 +329,8 @@ def proxy_quota(cache: str = "true"):
                 "name": pkg.get("package_name", pkg.get("name", "未知套餐")),
                 "type": pkg.get("type", pkg.get("type_label", "?")),
                 "remain": remain,
-                "total": total,
-                "remainPercent": round(remain / total * 100, 1) if total > 0 else 0,
+                "total": display_total,
+                "remainPercent": round(remain / display_total * 100, 1) if display_total > 0 else 0,
                 "cycle": pkg.get("cycle_start", "")[:7] if pkg.get("cycle_start") else "--",
                 "daysLeft": days_left,
             })
