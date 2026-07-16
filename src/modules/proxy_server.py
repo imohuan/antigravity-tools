@@ -1299,20 +1299,30 @@ class ProxyDatabase:
                         pkg_summaries = []
                         for pkg in packages:
                             if isinstance(pkg, dict):
+                                package_type = pkg.get("package_type", "")
+                                type_label = pkg.get("type_label", "")
+                                if not type_label and package_type:
+                                    type_label = {"1": "免费", "2": "付费", "4": "体验"}.get(str(package_type), package_type)
                                 pkg_summaries.append({
                                     "cycle_remain": pkg.get("cycle_remain", 0),
+                                    "cycle_size": pkg.get("cycle_size", 0),
+                                    "cycle_start": pkg.get("cycle_start", ""),
                                     "cycle_end": pkg.get("cycle_end", ""),
                                     "package_name": pkg.get("package_name", ""),
-                                    "package_type": pkg.get("package_type", ""),
+                                    "package_type": package_type,
+                                    "type_label": type_label,
                                 })
                             else:
                                 # ResourcePackage 对象
                                 try:
                                     pkg_summaries.append({
                                         "cycle_remain": pkg.cycle_remain,
+                                        "cycle_size": pkg.cycle_size,
+                                        "cycle_start": pkg.cycle_start,
                                         "cycle_end": pkg.cycle_end,
                                         "package_name": pkg.package_name,
                                         "package_type": pkg.package_type,
+                                        "type_label": pkg.type_label,
                                     })
                                 except AttributeError:
                                     pass
@@ -1645,11 +1655,16 @@ class ProxyDatabase:
                         total = float(acc.get("cycle_total", acc.get("CycleCapacitySize", acc.get("CapacitySize", 0))))
                         total_remain += remain
                         total_credits += total
+                        package_type = acc.get("package_type", acc.get("PackageType", ""))
+                        type_label = {"1": "免费", "2": "付费", "4": "体验"}.get(str(package_type), package_type)
                         pkgs.append({
                             "cycle_remain": remain,
+                            "cycle_size": total,
+                            "cycle_start": acc.get("cycle_start", acc.get("CycleStartTime", "")),
                             "cycle_end": acc.get("cycle_end", acc.get("CycleEndTime", "")),
                             "package_name": acc.get("package_name", acc.get("PackageName", "")),
-                            "package_type": acc.get("package_type", acc.get("PackageType", "")),
+                            "package_type": package_type,
+                            "type_label": type_label,
                         })
                     self.sync_quota_to_key(api_key, total_remain, total_credits, packages=pkgs)
                     logger.info(f"[自动查分] Key {key_id} 积分更新: {total_remain:.0f}/{total_credits:.0f}")

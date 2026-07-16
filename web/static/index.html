@@ -1392,15 +1392,18 @@ async function downloadExport() { if (selectedAccounts.value.length === 0) retur
           try {
             const d = await api('/api/proxy/quota?cache=true');
             if (d && d.success && d.summary && d.accounts && d.accounts.length > 0) {
-              quotaSummary.totalRemain = d.summary.totalRemain || 0;
-              quotaSummary.totalCredits = d.summary.totalCredits || 0;
-              quotaSummary.accountCount = d.summary.accountCount || 0;
+              var hasPkgs = d.accounts.some(function(a) { return a.packages && a.packages.length > 0; });
+              if (hasPkgs) {
+                quotaSummary.totalRemain = d.summary.totalRemain || 0;
+                quotaSummary.totalCredits = d.summary.totalCredits || 0;
+                quotaSummary.accountCount = d.summary.accountCount || 0;
  quotaAccounts.value = d.accounts.map(a => ({ ...a, expanded: false, packages: (a.packages || []).map(p => ({ ...p, package: p.name, typeLabel: p.type || '?', typeClass: ({ '免费': 'bg-secondary-container text-on-secondary-container', '付费': 'bg-surface-container text-primary', '体验': 'bg-surface-container-low border border-outline-variant' })[p.type] || 'bg-surface-container text-secondary' })) }));
-              saveQuotaCache();
-              return;
+                saveQuotaCache();
+                return;
+              }
             }
           } catch (e) { }
-          // 第二步：服务器不可用，使用本地缓存
+          // 第二步：服务器缓存为空或不可用，使用本地缓存
           try { const raw = localStorage.getItem(QUOTA_CACHE_KEY); if (raw) { const cached = JSON.parse(raw); if (cached.summary) { quotaSummary.totalRemain = cached.summary.totalRemain || 0; quotaSummary.totalCredits = cached.summary.totalCredits || 0; quotaSummary.accountCount = cached.summary.accountCount || 0; } if (cached.accounts) { quotaAccounts.value = cached.accounts.map(a => ({ ...a, expanded: false })); } } } catch (e) { }
         }
         function saveQuotaCache() {
