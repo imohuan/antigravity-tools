@@ -2567,7 +2567,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             "max_usage": 0,
             "used_count": 0,
             "rate_limit_rpm": 1000,
-            "key_mode": 1,
+            "key_mode": ProxyRequestHandler.default_key_mode,
         }
 
     def do_GET(self):
@@ -2851,7 +2851,6 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
         last_upstream_error_log = None  # 最后一次上游原始错误详情（仅用于本地排查日志）
         _ctx_compressed = [False]    # 上下文是否已压缩过（用 list 包装以便在嵌套函数中修改）
         key_mode = sub_key.get("key_mode", ProxyRequestHandler.default_key_mode)
-        key_mode = sub_key.get("key_mode", str(ProxyRequestHandler.default_key_mode))
         allowed_key_ids = sub_key.get("allowed_key_ids", [])
 
         while len(tried_key_ids) < MAX_RETRY_KEYS:
