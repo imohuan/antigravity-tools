@@ -134,7 +134,7 @@ def proxy_toggle_key(key_id: str):
     if not key:
         raise HTTPException(status_code=404, detail="Key not found")
     current = key.get("status", "active")
-    new_status = "disabled" if current in ("active", "exhausted", "cooldown", "rate_limited") else "active"
+    new_status = "disabled" if current == "active" else "active"
     db.update_upstream_key(key_id, {"status": new_status})
     return {"success": True, "active": new_status == "active"}
 

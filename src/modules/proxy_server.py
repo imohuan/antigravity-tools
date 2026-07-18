@@ -1255,7 +1255,9 @@ class ProxyDatabase:
         with self._lock:
             keys = self._data.setdefault("upstream_keys", [])
             for k in keys:
-                if k.get("key_id") == key_id:
+                # 兼容 key_id 和 api_key 两种匹配方式
+                # toggle/delete 接口传入的可能是 api_key，而非内部的 key_id
+                if k.get("key_id") == key_id or k.get("api_key") == key_id:
                     k.update(updates)
                     if "status" in updates:
                         self._key_status_version += 1
@@ -1266,7 +1268,7 @@ class ProxyDatabase:
         with self._lock:
             self._data["upstream_keys"] = [
                 k for k in self._data.get("upstream_keys", [])
-                if k.get("key_id") != key_id
+                if k.get("key_id") != key_id and k.get("api_key") != key_id
             ]
             self._key_status_version += 1
             self._dirty = True
@@ -1378,7 +1380,7 @@ class ProxyDatabase:
         """
         with self._lock:
             for k in self._data.get("upstream_keys", []):
-                if k.get("key_id") != key_id:
+                if k.get("key_id") != key_id and k.get("api_key") != key_id:
                     continue
                 points_str = k.get("points", "")
                 if not points_str or "/" not in points_str:
@@ -1717,7 +1719,7 @@ class ProxyDatabase:
             before = len(self._data.get("sub_api_keys", []))
             self._data["sub_api_keys"] = [
                 k for k in self._data.get("sub_api_keys", [])
-                if k.get("key_id") != key_id
+                if k.get("key_id") != key_id and k.get("api_key") != key_id
             ]
             if len(self._data["sub_api_keys"]) != before:
                 self._sub_key_version += 1
@@ -3671,6 +3673,12 @@ class ProxyServer:
             ProxyRequestHandler.router = self.router
             ProxyRequestHandler.db = self.db
             ProxyRequestHandler.server_mode = self.mode  # "local" or "open"
+
+            # 从数据库读取保存的策略并应用（修复：之前只在 Web 端读了，桌面端没读）
+            saved_strategy = int(load_setting("proxyStrategy", "1"))
+            ProxyRequestHandler.default_key_mode = saved_strategy
+            mode_names = {1: "专一", 2: "临期优先", 3: "轮询", 4: "会话亲和"}
+            logger.info(f"代理策略: {saved_strategy} ({mode_names.get(saved_strategy, "未知")})")
 
             self._server = ThreadingHTTPServer((self.host, self.port), ProxyRequestHandler)
             self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
