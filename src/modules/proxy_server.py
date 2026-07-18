@@ -3678,7 +3678,7 @@ class ProxyServer:
             saved_strategy = int(load_setting("proxyStrategy", "1"))
             ProxyRequestHandler.default_key_mode = saved_strategy
             mode_names = {1: "专一", 2: "临期优先", 3: "轮询", 4: "会话亲和"}
-            logger.info(f"代理策略: {saved_strategy} ({mode_names.get(saved_strategy, "未知")})")
+            logger.info(f"代理策略: {saved_strategy} ({mode_names.get(saved_strategy, '未知')})")
 
             self._server = ThreadingHTTPServer((self.host, self.port), ProxyRequestHandler)
             self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
