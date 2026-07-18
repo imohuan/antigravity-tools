@@ -483,10 +483,13 @@ def _normalize_messages_for_upstream(messages: list) -> int:
                 new_content.append(part)
             elif part_type in ("input_image", "image"):
                 url = _image_url_from_part(part)
-                if url and (url.startswith("http://") or url.startswith("https://")):
+                # 统一转为 image_url 格式（上游只认标准 OpenAI 格式）
+                # http/https/data:base64 统统转，AI 工具发什么就转什么
+                if url:
                     new_content.append({"type": "image_url", "image_url": {"url": url}})
                     normalized_count += 1
                 else:
+                    # 无法提取 URL 的保持原样
                     new_content.append(part)
             elif part_type == "image_blob_ref":
                 # 顶层 image_blob_ref，保持原样透传
@@ -813,7 +816,12 @@ def _build_workbuddy_relay_body(client_body: dict) -> tuple[dict, dict]:
     body["stream"] = True
 
     dropped_fields = []
-    image_stats = _detect_multimodal_images(body)
+
+    # ─── 图片格式归一化 ───
+    # 代理只做一件事：input_image/image → image_url
+    # 上下文压缩、历史图片剥离都是 AI 工具的事，代理不碰
+    image_stats_before = _detect_multimodal_images(body)
+    normalized_images = _normalize_messages_for_upstream(body["messages"])
 
     translated_fields = []
     if "max_completion_tokens" in client_body and "max_tokens" not in client_body:
@@ -826,17 +834,19 @@ def _build_workbuddy_relay_body(client_body: dict) -> tuple[dict, dict]:
             removed_null_fields.append(field)
             del body[field]
 
+    image_stats_after = _detect_multimodal_images(body)
+
     meta = {
         "mode": "workbuddy_relay",
         "dropped_fields": dropped_fields,
         "removed_null_fields": removed_null_fields,
         "translated_fields": translated_fields,
         "history_images_replaced": 0,
-        "normalized_images": 0,
+        "normalized_images": normalized_images,
         "unsupported_inline_images_removed": 0,
         "system_prompt_sensitive_replaced": sensitive_replaced,
-        "image_stats_before": image_stats,
-        "image_stats_after": image_stats,
+        "image_stats_before": image_stats_before,
+        "image_stats_after": image_stats_after,
         "has_stream_options": "stream_options" in body,
     }
     if sensitive_replaced:
@@ -2852,7 +2862,6 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
         last_error_status = 503     # 最后一次的错误状态码
         last_cooldown_secs = 0      # 最后一次冷却秒数（用于 Retry-After 头，优化项 #9）
         last_upstream_error_log = None  # 最后一次上游原始错误详情（仅用于本地排查日志）
-        _ctx_compressed = [False]    # 上下文是否已压缩过（用 list 包装以便在嵌套函数中修改）
         key_mode = sub_key.get("key_mode", ProxyRequestHandler.default_key_mode)
         allowed_key_ids = sub_key.get("allowed_key_ids", [])
 
@@ -2915,18 +2924,14 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                     build_meta["removed_null_fields"]
                     or build_meta["translated_fields"]
                     or build_meta["dropped_fields"]
-                    or build_meta["history_images_replaced"]
                     or build_meta["normalized_images"]
-                    or build_meta["unsupported_inline_images_removed"]
                 ):
                     logger.info(
                         f"[v1.6.6] WorkBuddy Relay 调整字段: "
                         f"dropped={build_meta['dropped_fields']}; "
                         f"removed_null={build_meta['removed_null_fields']}; "
                         f"translated={build_meta['translated_fields']}; "
-                        f"history_images_replaced={build_meta['history_images_replaced']}; "
-                        f"normalized_images={build_meta['normalized_images']}; "
-                        f"unsupported_inline_images_removed={build_meta['unsupported_inline_images_removed']}"
+                        f"normalized_images={build_meta['normalized_images']}"
                     )
 
                 image_stats = _detect_multimodal_images(upstream_request_data)
@@ -2943,9 +2948,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                            f"stream={client_wants_stream}, image={has_image}, images={image_stats['image_count']}, "
                            f"data_uri={image_stats['data_uri_count']}, max_image_chars={image_stats['max_image_chars']}, "
                            f"dropped={build_meta['dropped_fields']}, "
-                           f"history_images_replaced={build_meta['history_images_replaced']}, "
                            f"normalized_images={build_meta['normalized_images']}, "
-                           f"unsupported_inline_images_removed={build_meta['unsupported_inline_images_removed']}, "
                            f"mode={build_meta['mode']}, stream_options={build_meta['has_stream_options']}")
 
                 # ─── 发送请求到上游 ───
@@ -3219,148 +3222,6 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             logger.error(f"[失败] {error_detail}")
             self._add_log(event="error", sub_key=sub_key, model=model, error=error_detail)
             self._send_json(503, {"error": {"message": "No available upstream keys", "type": "server_error"}})
-
-    def _compress_context_with_ai(self, request_data: dict, upstream_key: dict,
-                                     model: str, upstream_url: str) -> bool:
-        """用 AI 生成对话摘要，替换旧消息。
-
-        保留 system 消息 + 最近 5 条对话，旧消息发给上游 AI 生成摘要。
-        返回 True 表示压缩成功（request_data 已被修改）。
-        """
-        messages = request_data.get("messages", [])
-        if len(messages) <= 8:
-            return False
-
-        system_msgs = [m for m in messages if m.get("role") == "system"]
-        non_system = [m for m in messages if m.get("role") != "system"]
-        if len(non_system) <= 5:
-            return False
-
-        recent = non_system[-5:]
-        old = non_system[:-5]
-
-        # 旧消息转纯文本（去掉图片 base64）
-        old_text_parts = []
-        for msg in old:
-            role = msg.get("role", "user")
-            content = msg.get("content", "")
-            if isinstance(content, list):
-                text_parts = []
-                for part in content:
-                    if isinstance(part, dict):
-                        if part.get("type") == "text":
-                            text_parts.append(part.get("text", ""))
-                        elif part.get("type") in ("image_url", "image", "input_image"):
-                            text_parts.append("[图片]")
-                    elif isinstance(part, str):
-                        text_parts.append(part)
-                content = " ".join(text_parts)
-            if content:
-                old_text_parts.append(f"[{role}] {content}")
-
-        old_text = "\n".join(old_text_parts)
-        if not old_text.strip() or len(old_text) < 100:
-            return False
-
-        if len(old_text) > 12000:
-            old_text = old_text[:12000] + "\n...(已截断)"
-
-        summary_request = {
-            "model": model,
-            "messages": [
-                {"role": "system", "content": "你是一个对话摘要助手。请将用户提供的对话历史总结为简洁的要点，保留关键技术信息、用户意图和上下文。用中文输出，不超过500字。"},
-                {"role": "user", "content": f"请总结以下对话历史的要点：\n\n{old_text}"},
-            ],
-            "stream": True,
-            "max_tokens": 1000,
-        }
-
-        try:
-            api_key = upstream_key.get("api_key", "")
-            resp = self.router._get_session(upstream_url).post(
-                f"{upstream_url}{UPSTREAM_CHAT_PATH}",
-                json=summary_request,
-                headers={
-                    "Content-Type": "application/json",
-                    "Accept": "application/json, text/event-stream",
-                    "Authorization": f"Bearer {api_key}",
-                },
-                timeout=30,
-                stream=True,
-            )
-            if resp.status_code != 200:
-                logger.warning(f"[压缩] 摘要请求失败: status={resp.status_code}")
-                return False
-
-            content_parts = []
-            for line in resp.iter_lines():
-                if not line:
-                    continue
-                line_str = line.decode("utf-8", errors="replace")
-                if line_str.startswith("data: "):
-                    data_str = line_str[6:]
-                    if data_str.strip() == "[DONE]":
-                        break
-                    try:
-                        chunk = json.loads(data_str)
-                        for choice in chunk.get("choices", []):
-                            delta = choice.get("delta", {})
-                            if delta.get("content"):
-                                content_parts.append(delta["content"])
-                    except json.JSONDecodeError:
-                        pass
-
-            summary = "".join(content_parts).strip()
-            if not summary:
-                logger.warning("[压缩] AI摘要返回空内容")
-                return False
-
-            new_messages = system_msgs + [
-                {"role": "system", "content": f"[以下是之前对话的摘要]\n{summary}"}
-            ] + recent
-            old_count = len(messages)
-            request_data["messages"] = new_messages
-            logger.info(f"[压缩] AI摘要成功, 摘要长度={len(summary)}, 消息数 {old_count}→{len(new_messages)}")
-            return True
-
-        except Exception as e:
-            logger.warning(f"[压缩] AI摘要异常: {e}")
-            return False
-
-    def _truncate_context(self, request_data: dict, keep_recent: int = 6) -> int:
-        """粗暴截断：保留 system + 最近 N 条非system消息。返回截掉的消息数。"""
-        messages = request_data.get("messages", [])
-        system_msgs = [m for m in messages if m.get("role") == "system"]
-        non_system = [m for m in messages if m.get("role") != "system"]
-
-        old_count = len(messages)
-        keep = min(keep_recent, len(non_system))
-        new_messages = system_msgs + non_system[-keep:]
-        request_data["messages"] = new_messages
-        removed = old_count - len(new_messages)
-        logger.info(f"[截断] 粗暴截断: {old_count}→{len(new_messages)} 条消息, 截掉{removed}条")
-        return removed
-
-    def _handle_context_too_long(self, request_data: dict, upstream_key: dict,
-                                   model: str, upstream_url: str,
-                                   context_compressed: list) -> str:
-        """处理上下文超长：先尝试AI摘要，失败则粗暴截断。
-
-        Args:
-            context_compressed: [bool] 单元素列表，标记是否已压缩过
-        Returns:
-            "compressed" / "truncated" / "failed"（已压缩过，不能再压缩）
-        """
-        if context_compressed[0]:
-            return "failed"
-
-        if self._compress_context_with_ai(request_data, upstream_key, model, upstream_url):
-            context_compressed[0] = True
-            return "compressed"
-
-        self._truncate_context(request_data)
-        context_compressed[0] = True
-        return "truncated"
 
     def _detect_stream_error(self, chunk_str: str) -> Optional[str]:
         """扫描 SSE chunk 检测错误（优化项 #4）

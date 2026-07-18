@@ -692,6 +692,91 @@
           </div>
         </div>
 
+        <!-- ========== Playground ========== -->
+        <div v-else-if="currentPage==='playground'" class="max-w-3xl space-y-lg">
+          <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md space-y-md">
+            <div class="flex items-center justify-between">
+              <h2 class="font-headline-sm text-headline-sm text-primary">模型测试</h2>
+              <span class="font-label-md text-[11px] text-secondary">不走代理＝测试代理状态</span>
+            </div>
+
+            <!-- Model Selection -->
+            <div><label class="font-label-md text-label-md text-primary block mb-xs">模型</label>
+              <div class="relative">
+                <button @click="showPgModelDropdown=!showPgModelDropdown" @blur="hidePgModelDropdown"
+                  class="w-full flex items-center justify-between bg-surface-container-low border border-outline-variant hover:bg-surface-container hover:border-outline rounded-lg px-2.5 py-1.5 text-left transition-colors">
+                  <span class="text-primary font-medium text-label-md truncate">{{pgModel}}</span>
+                  <span class="material-symbols-outlined text-secondary transition-transform duration-200 shrink-0 text-[16px]" :class="showPgModelDropdown?'rotate-180':''">expand_more</span>
+                </button>
+                <div v-show="showPgModelDropdown" class="absolute top-full left-0 mt-1 w-full bg-surface-container-lowest border border-outline-variant rounded-lg pro-shadow z-50 py-1 max-h-64 overflow-y-auto">
+                  <button v-for="m in pgModels" :key="m" @mousedown.prevent="selectPgModel(m)"
+                    :class="['w-full flex items-center justify-between px-3 py-1.5 text-left font-label-md text-label-md rounded-lg transition-colors', pgModel===m?'bg-primary text-on-primary font-medium':'text-primary hover:bg-surface-container-low']">
+                    <span class="truncate">{{m}}</span>
+                    <span v-if="pgModel===m" class="material-symbols-outlined text-[16px] shrink-0 ml-1">check</span>
+                  </button>
+                </div>
+              </div></div>
+
+            <!-- Prompt -->
+            <div><label class="font-label-md text-label-md text-primary block mb-xs">提示词</label>
+              <textarea v-model="pgPrompt" rows="4"
+                class="w-full px-2.5 py-1.5 bg-surface-container-low border border-outline-variant rounded-lg text-body-sm text-primary font-label-md outline-none focus:ring-1 focus:ring-primary focus:border-primary resize-y"
+                placeholder="输入你的提示词..."></textarea></div>
+
+            <!-- Image Upload -->
+            <div><label class="font-label-md text-label-md text-primary block mb-xs">图片（可选）</label>
+              <div v-if="!pgImage"
+                class="border-2 border-dashed border-outline-variant rounded-xl p-lg text-center cursor-pointer hover:border-primary/40 hover:bg-surface-container-low transition-colors"
+                @click="$refs.pgFileInput.click()"
+                @dragover.prevent
+                @drop.prevent="onPgImageDrop"
+                >
+                <span class="material-symbols-outlined text-[32px] text-outline mb-sm block">add_photo_alternate</span>
+                <p class="font-body-sm text-body-sm text-secondary">点击选择图片</p>
+                <p class="font-body-sm text-[11px] text-outline mt-xs">或 Ctrl+V 粘贴 / 拖拽图片到此处</p>
+                <input type="file" accept="image/*" class="hidden" @change="onPgImageSelect" ref="pgFileInput">
+              </div>
+              <div v-else class="p-sm bg-surface-container-low rounded-lg flex items-start gap-md">
+                 <img :src="pgImage" class="w-20 h-20 object-cover rounded-lg border border-outline-variant">
+                 <div class="font-label-md text-[11px] text-secondary space-y-xs">
+                   <div>文件名: {{pgImageName}}</div>
+                   <div>大小: {{pgImageSize}}</div>
+                   <div>类型: {{pgImageType}}</div>
+                 </div>
+                <button @click="pgImage=null" class="ml-auto px-2 py-1 text-body-sm text-error hover:bg-error-container rounded-lg transition-colors shrink-0">清除</button>
+              </div></div>
+
+            <!-- Send Button -->
+            <div class="flex items-center gap-md">
+              <button @click="pgSend" :disabled="pgLoading || !pgPrompt.trim()"
+                class="inline-flex items-center gap-xs px-4 py-1.5 bg-primary text-on-primary rounded-lg text-body-sm font-medium hover:opacity-90 disabled:opacity-40 transition-opacity">
+                <span v-if="pgLoading" class="spinner material-symbols-outlined text-[16px]">progress_activity</span>
+                <span v-else class="material-symbols-outlined text-[16px]">send</span>
+                <span>{{ pgLoading ? '请求中...' : '发送' }}</span>
+              </button>
+              <span v-if="pgDuration" class="font-label-md text-[11px] text-secondary">{{pgDuration}}ms</span>
+            </div>
+
+            <!-- Result -->
+            <div v-if="pgResult" class="bg-surface-container-low border border-outline-variant rounded-lg p-md space-y-sm max-h-96 overflow-y-auto">
+              <div class="flex items-center justify-between">
+                <span class="font-label-md text-[12px] text-primary font-semibold">回复</span>
+                <span class="font-label-md text-[11px] text-secondary">模型: {{pgResult.model}} | tokens: {{pgResult.usage?.total_tokens || 0}}</span>
+              </div>
+              <div class="font-body-sm text-body-sm text-secondary whitespace-pre-wrap">{{pgResult.content}}</div>
+              <div v-if="pgResult.reasoning_content" class="mt-sm pt-sm border-t border-outline-variant">
+                <span class="font-label-md text-[11px] text-secondary">思考过程</span>
+                <div class="font-body-sm text-body-sm text-secondary/60 whitespace-pre-wrap mt-xs">{{pgResult.reasoning_content}}</div>
+              </div>
+            </div>
+
+            <!-- Error -->
+            <div v-if="pgError" class="bg-error-container border border-error rounded-lg p-md">
+              <span class="font-body-sm text-body-sm text-on-error-container">{{pgError}}</span>
+            </div>
+          </div>
+        </div>
+
         <div v-else-if="currentPage==='settings'" class="max-w-xl space-y-lg">
           <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md space-y-md">
             <div><label class="font-label-md text-label-md text-primary block mb-xs">网页端口</label><input
@@ -982,6 +1067,7 @@
           { id: 'quota', label: '配额', icon: 'account_balance_wallet' },
           { id: 'proxy', label: '代理', icon: 'router' },
           { id: 'logs', label: '日志', icon: 'receipt_long' },
+          { id: 'playground', label: '测试', icon: 'science' },
           { id: 'settings', label: '设置', icon: 'settings' },
         ];
         const stats = reactive({ accountCount: 0, activeCount: 0, checkedToday: 0, totalCredits: 0 });
@@ -1330,6 +1416,35 @@ function formatLogTime(ts) { if (!ts) return '-'; const d = new Date(ts*1000); r
 const quotaAccounts = ref([]);
 const showImportKeysModal = ref(false); const importKeysAccounts = ref([]); const importKeysLoading = ref(false); const importAllSelected = ref(false);
 const proxyKeyLoading = reactive({});
+        // --- 模型测试 (Playground) ---
+        const pgModels = ref([]); const pgModel = ref('auto');
+        const pgPrompt = ref(''); const pgLoading = ref(false);
+        const pgImage = ref(null); const pgImageName = ref(''); const pgImageSize = ref(''); const pgImageType = ref('');
+        const pgResult = ref(null); const pgError = ref(''); const pgDuration = ref(0); const pgFileInput = ref(null);
+        const showPgModelDropdown = ref(false);
+        function selectPgModel(m) { pgModel.value = m; showPgModelDropdown.value = false; }
+        function hidePgModelDropdown() { setTimeout(()=>{showPgModelDropdown.value=false},150); }
+        async function loadPgModels() { try { const d = await fetch('/api/playground/models').then(r=>r.json()); if (d && d.models) { pgModels.value = d.models; pgModel.value = d.models[0] || 'auto'; } } catch(e) {} }
+        function onPgImageSelect(e) { const f = e.target.files[0]; if (!f) return; pgImageName.value = f.name; pgImageType.value = f.type; const kb = (f.size/1024).toFixed(1); pgImageSize.value = kb > 1024 ? (f.size/(1024*1024)).toFixed(1)+' MB' : kb+' KB'; const r = new FileReader(); r.onload = () => { pgImage.value = r.result; }; r.readAsDataURL(f); }
+        function onPgImagePaste(e) { const items = (e.clipboardData||e.originalEvent?.clipboardData)?.items; if (!items) return; for (const item of items) { if (item.type.startsWith('image/')) { const f = item.getAsFile(); pgImageName.value = '粘贴图片.' + item.type.split('/')[1]; pgImageType.value = item.type; const kb = (f.size/1024).toFixed(1); pgImageSize.value = kb > 1024 ? (f.size/(1024*1024)).toFixed(1)+' MB' : kb+' KB'; const r = new FileReader(); r.onload = () => { pgImage.value = r.result; }; r.readAsDataURL(f); e.preventDefault(); return; } } }
+        function onPgImageDrop(e) { const f = e.dataTransfer?.files?.[0]; if (!f) return; pgImageName.value = f.name; pgImageType.value = f.type; const kb = (f.size/1024).toFixed(1); pgImageSize.value = kb > 1024 ? (f.size/(1024*1024)).toFixed(1)+' MB' : kb+' KB'; const r = new FileReader(); r.onload = () => { pgImage.value = r.result; }; r.readAsDataURL(f); }
+        async function pgSend() {
+          if (!pgPrompt.value.trim()) return;
+          pgLoading.value = true; pgError.value = ''; pgResult.value = null; pgDuration.value = 0;
+          const t0 = performance.now();
+          try {
+            const body = { model: pgModel.value, prompt: pgPrompt.value };
+            if (pgImage.value) body.image_base64 = pgImage.value;
+            const r = await fetch('/api/playground/chat', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+            const d = await r.json();
+            pgDuration.value = Math.round(performance.now() - t0);
+            if (r.ok && d.success) pgResult.value = d;
+            else pgError.value = d.detail || r.statusText || 'Unknown error';
+          } catch(e) { pgDuration.value = Math.round(performance.now() - t0); pgError.value = e.message; }
+          pgLoading.value = false;
+          if (pgFileInput.value) pgFileInput.value.value = '';
+        }
+        loadPgModels();
 const settings = reactive({ webPort: 8866, proxyPort: 8867, httpProxy: '', autoStartProxy: true, checkinConcurrency: 5 });
 const showImportModal = ref(false); const importMode = ref('file'); const importModes = [{ id: 'file', label: '文件' }, { id: 'paste', label: '粘贴' }]; const importFileName = ref(''); const importText = ref(''); const importPreview = ref([]); const importError = ref(''); const importResult = ref(''); const importLoading = ref(false);
 const showExportModal = ref(false);
@@ -1484,6 +1599,8 @@ async function downloadExport() { if (selectedAccounts.value.length === 0) retur
         async function saveSettings() { const r = await api('/api/settings', { method: 'POST', body: JSON.stringify({ webPort: settings.webPort, proxyPort: settings.proxyPort, httpProxy: settings.httpProxy, autoStartProxy: settings.autoStartProxy, checkinConcurrency: settings.checkinConcurrency }) }); if (r && r.success) { showToast('设置已保存（重启生效）'); } else { showToast('保存失败', 'error'); } }
         async function loadSettings() { const d = await api('/api/settings'); if (d) { settings.webPort = d.webPort || 8866; settings.proxyPort = d.proxyPort || 8867; settings.httpProxy = d.httpProxy || ''; settings.autoStartProxy = d.autoStartProxy !== undefined ? d.autoStartProxy : true; settings.checkinConcurrency = d.checkinConcurrency || 5; } }
         onMounted(async () => { loadQuotaCache(); await loadSettings(); await loadAccounts(); await loadProxyStatus(); loadDashboard();
+  // ── 全局粘贴监听：仅在测试页面时拦截图片粘贴 ──
+  document.addEventListener('paste', (e) => { if (currentPage.value === 'playground') onPgImagePaste(e); });
   // 趋势图重绘（窗口 resize + 数据变化）
   window.addEventListener('resize', () => { clearTimeout(trendDrawTimer); trendDrawTimer = setTimeout(drawTrendChart, 100); });
   watch(calendarData, () => { nextTick(() => drawTrendChart()); });
@@ -1500,10 +1617,18 @@ async function downloadExport() { if (selectedAccounts.value.length === 0) retur
     }
   });
 });
-        return { currentPage, activePageLabel, navItems, now, port, toast, showToast, fmtNum, stats, accounts, selectedAccounts, isAllSelected, toggleSelectAll, selectAllAccounts, invertSelection, showAddModal, addMethod, addMethods, addForm, addLoading, addError, addAccount, deleteAccount, quotaLoading, checkinLoading, querySingleQuota, checkinSingle, checkinAllLoading, lastCheckin, checkinLogs, checkinAll, quotaAllLoading, quotaSummary, quotaAccounts, queryAllQuota, refreshQuota, proxyInfo, proxyLoading, proxyStrategy, strategyOptions, strategyLabel, showStrategyDropdown, selectStrategy, hideStrategyDropdown, toggleProxy, showImportKeysModal, importKeysAccounts, importKeysLoading, importAllSelected, openImportKeysModal, toggleSelectAllImport, importSelectedKeys, deleteProxyKey, proxyKeyLoading, toggleProxyKey, settings, saveSettings, showImportModal, importMode, importModes, importFileName, importText, importPreview, importError, importResult, importLoading, openImportModal, closeImportModal, onImportFileChange, parseImportText, submitImport, showExportModal, exportLoading, exportContent, openExportModal, copyExportToClipboard, downloadExport, requestLogs, requestLogsLoading, logsSince, logsPage, logsTotal, logsTotalPages, logsPageSize, strategyLabelMap, formatLogTime, dashboardOverview, calendarData, calYear, calMonth, calMonthDisplay, nowYear, nowMonth, creditsMap, calCells, todayStr, modelDonutSegs, keyDonutSegs, donutColors, loadDashboard, drawTrendChart, trendZoom, trendPan, trendWindowSize, trendAllZero, onTrendWheel, onTrendMouseDown, resetTrendView, trendContainer, trendDrawTimer, loadRequestLogs, clearLogs, goToPage, onPageSizeChange, showPageSizeDropdown, pageSizeOptions, setPageSize, hidePageSizeDropdown, fmtCredit };
+        return { currentPage, activePageLabel, navItems, now, port, toast, showToast, fmtNum, stats, accounts, selectedAccounts, isAllSelected, toggleSelectAll, selectAllAccounts, invertSelection, showAddModal, addMethod, addMethods, addForm, addLoading, addError, addAccount, deleteAccount, quotaLoading, checkinLoading, querySingleQuota, checkinSingle, checkinAllLoading, lastCheckin, checkinLogs, checkinAll, quotaAllLoading, quotaSummary, quotaAccounts, queryAllQuota, refreshQuota, proxyInfo, proxyLoading, proxyStrategy, strategyOptions, strategyLabel, showStrategyDropdown, selectStrategy, hideStrategyDropdown, toggleProxy, showImportKeysModal, importKeysAccounts, importKeysLoading, importAllSelected, openImportKeysModal, toggleSelectAllImport, importSelectedKeys, deleteProxyKey, proxyKeyLoading, toggleProxyKey, pgModels, pgModel, showPgModelDropdown, selectPgModel, hidePgModelDropdown, pgPrompt, pgLoading, pgImage, pgImageName, pgImageSize, pgImageType, pgResult, pgError, pgDuration, pgFileInput, onPgImageSelect, onPgImagePaste, onPgImageDrop, pgSend, settings, saveSettings, showImportModal, importMode, importModes, importFileName, importText, importPreview, importError, importResult, importLoading, openImportModal, closeImportModal, onImportFileChange, parseImportText, submitImport, showExportModal, exportLoading, exportContent, openExportModal, copyExportToClipboard, downloadExport, requestLogs, requestLogsLoading, logsSince, logsPage, logsTotal, logsTotalPages, logsPageSize, strategyLabelMap, formatLogTime, dashboardOverview, calendarData, calYear, calMonth, calMonthDisplay, nowYear, nowMonth, creditsMap, calCells, todayStr, modelDonutSegs, keyDonutSegs, donutColors, loadDashboard, drawTrendChart, trendZoom, trendPan, trendWindowSize, trendAllZero, onTrendWheel, onTrendMouseDown, resetTrendView, trendContainer, trendDrawTimer, loadRequestLogs, clearLogs, goToPage, onPageSizeChange, showPageSizeDropdown, pageSizeOptions, setPageSize, hidePageSizeDropdown, fmtCredit };
       }
     }).mount('#app');
   </script>
 </body>
 
 </html>
+
+
+
+
+
+
+
+
