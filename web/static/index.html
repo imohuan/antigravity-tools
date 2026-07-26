@@ -401,8 +401,8 @@
                   <td class="px-md py-sm text-secondary">{{k.account}}</td>
                   <td class="px-md py-sm font-label-md text-[11px] text-primary">{{fmtNum(k.quota_remaining)}}</td>
                   <td class="px-md py-sm"><span
-                      :class="k.active?'bg-secondary-container text-on-secondary-container':k.status==='disabled'?'bg-surface-container text-secondary':'bg-error-container text-on-error-container'"
-                      class="font-label-md text-[10px] px-2 py-0.5 rounded">{{k.active?'活跃':k.status==='disabled'?'已禁用':'已耗尽'}}</span>
+                      :class="k.status==='active'?'bg-secondary-container text-on-secondary-container':k.status==='disabled'||k.status==='permanent_disabled'?'bg-surface-container text-secondary':k.status==='cooldown'||k.status==='rate_limited'?'bg-surface-container text-secondary':'bg-error-container text-on-error-container'"
+                      class="font-label-md text-[10px] px-2 py-0.5 rounded">{{k.status==='active'?'活跃':k.status==='disabled'?'已禁用':k.status==='exhausted'?'已耗尽':k.status==='cooldown'?'冷却中':k.status==='rate_limited'?'限流中':k.status==='abnormal'?'异常':k.status==='permanent_disabled'?'永久禁用':(k.status||'未知')}}</span>
                   </td>
                   <td class="px-md py-sm">
                     <div class="flex items-center gap-xs">
@@ -1595,7 +1595,35 @@ async function downloadExport() { if (selectedAccounts.value.length === 0) retur
           }
         }
         async function deleteProxyKey(kid) { if (!confirm('确认删除此密钥？')) return; await api('/api/proxy/keys/' + kid + '/delete', { method: 'POST' }); showToast('密钥已删除'); await loadProxyStatus(); }
-        async function toggleProxyKey(k) { proxyKeyLoading[k.id] = true; const d = await api('/api/proxy/keys/' + k.id + '/toggle', { method: 'POST' }); proxyKeyLoading[k.id] = false; if (d) { k.active = d.active; showToast(d.active ? '已启用' : '已禁用'); } }
+        async function toggleProxyKey(k) {
+          proxyKeyLoading[k.id] = true;
+          // 系统禁用状态（abnormal/exhausted/permanent_disabled/rate_limited/cooldown）走 activate
+          const systemDisabled = ['abnormal', 'exhausted', 'permanent_disabled', 'rate_limited', 'cooldown'];
+          let d;
+          if (systemDisabled.includes(k.status)) {
+            d = await api('/api/proxy/keys/' + k.id + '/activate', { method: 'POST' });
+          } else {
+            d = await api('/api/proxy/keys/' + k.id + '/toggle', { method: 'POST' });
+            // toggle 被拒绝（状态变成系统禁用了），fallback 到 activate
+            if (d && d.detail && !d.success) {
+              d = await api('/api/proxy/keys/' + k.id + '/activate', { method: 'POST' });
+            }
+          }
+          proxyKeyLoading[k.id] = false;
+          if (d && d.success) {
+            k.active = d.active;
+            if (d.status) k.status = d.status;
+            if (d.warning) {
+              showToast(d.warning, 'error');
+            } else {
+              showToast(d.active ? '已启用' : '已禁用');
+            }
+            // 1 秒后刷新一次状态，检测是否被系统立即反向覆盖（如 abnormal 被风控再次禁用）
+            setTimeout(() => loadProxyStatus(), 1000);
+          } else if (d && d.detail) {
+            showToast(d.detail, 'error');
+          }
+        }
         async function saveSettings() { const r = await api('/api/settings', { method: 'POST', body: JSON.stringify({ webPort: settings.webPort, proxyPort: settings.proxyPort, httpProxy: settings.httpProxy, autoStartProxy: settings.autoStartProxy, checkinConcurrency: settings.checkinConcurrency }) }); if (r && r.success) { showToast('设置已保存（重启生效）'); } else { showToast('保存失败', 'error'); } }
         async function loadSettings() { const d = await api('/api/settings'); if (d) { settings.webPort = d.webPort || 8866; settings.proxyPort = d.proxyPort || 8867; settings.httpProxy = d.httpProxy || ''; settings.autoStartProxy = d.autoStartProxy !== undefined ? d.autoStartProxy : true; settings.checkinConcurrency = d.checkinConcurrency || 5; } }
         onMounted(async () => { loadQuotaCache(); await loadSettings(); await loadAccounts(); await loadProxyStatus(); loadDashboard();

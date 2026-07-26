@@ -127,16 +127,54 @@ def proxy_delete_key(key_id: str):
 
 @router.post("/proxy/keys/{key_id}/toggle")
 def proxy_toggle_key(key_id: str):
-    """Toggle a key's active status (matches by key_id or api_key)"""
+    """Toggle a key's active status (matches by key_id or api_key)
+
+    只允许 active <-> disabled 之间切换。
+    对于系统禁用状态（abnormal/exhausted/permanent_disabled/rate_limited/cooldown），
+    需调用 /proxy/keys/{id}/activate 显式恢复，避免绕过状态机。
+    """
     db = _get_db()
     keys = db.get_upstream_keys()
     key = next((k for k in keys if k.get("key_id") == key_id or k.get("api_key") == key_id), None)
     if not key:
         raise HTTPException(status_code=404, detail="Key not found")
     current = key.get("status", "active")
+    # 系统禁用状态不允许 toggle，需调用 activate 接口显式恢复
+    system_disabled = {"abnormal", "exhausted", "permanent_disabled", "rate_limited", "cooldown"}
+    if current in system_disabled:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Key 处于「{current}」状态（系统禁用），不能 toggle。如需强制恢复，请调用 /api/proxy/keys/{key_id}/activate"
+        )
     new_status = "disabled" if current == "active" else "active"
     db.update_upstream_key(key_id, {"status": new_status})
-    return {"success": True, "active": new_status == "active"}
+    return {"success": True, "active": new_status == "active", "status": new_status}
+
+
+@router.post("/proxy/keys/{key_id}/activate")
+def proxy_activate_key(key_id: str):
+    """强制恢复 Key 为 active（用于恢复 abnormal/exhausted/permanent_disabled/rate_limited 状态）
+
+    与 toggle 不同：activate 是单向的（只能改成 active），且不拒绝任何状态。
+    用于用户明确知道风险（如 abnormal 可能立即被风控再次禁用）时手动恢复。
+    """
+    db = _get_db()
+    keys = db.get_upstream_keys()
+    key = next((k for k in keys if k.get("key_id") == key_id or k.get("api_key") == key_id), None)
+    if not key:
+        raise HTTPException(status_code=404, detail="Key not found")
+    current = key.get("status", "active")
+    if current == "active":
+        return {"success": True, "active": True, "status": "active", "message": "Key 已是 active 状态"}
+    db.update_upstream_key(key_id, {"status": "active"})
+    logger.info(f"[activate] Key {key_id} 从 {current} 强制恢复为 active（用户手动操作）")
+    return {
+        "success": True,
+        "active": True,
+        "status": "active",
+        "previous_status": current,
+        "warning": f"Key 之前处于「{current}」状态，恢复后可能立即被系统再次禁用" if current in ("abnormal", "exhausted") else None,
+    }
 
 
 class ImportFromAccountsRequest(BaseModel):
