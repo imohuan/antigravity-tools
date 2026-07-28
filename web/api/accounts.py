@@ -3,13 +3,14 @@
 from typing import List, Optional
 from datetime import datetime
 import logging
+import time
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from src.models import Account, Platform, AccountStatus, PlanType
 from src.utils.store import load_accounts, save_account, delete_account
-from src.modules.api_client import ApiClient
+from src.modules.api_client import ApiClient, check_api_key_chat_status
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["accounts"])
@@ -40,6 +41,11 @@ class ImportRequest(BaseModel):
 
 class ExportRequest(BaseModel):
     uids: List[str]
+
+
+class AccountTestRequest(BaseModel):
+    uid: str
+    model: str = "auto"
 
 
 @router.get("/accounts")
@@ -246,3 +252,28 @@ def export_accounts(req: ExportRequest):
         })
 
     return {"success": True, "accounts": result, "not_found": not_found}
+
+
+@router.post("/accounts/test")
+def test_account(req: AccountTestRequest):
+    """测试账号连通性：直接用 api_key 发最小请求到上游模型"""
+    accounts = load_accounts()
+    target = next((a for a in accounts if a.uid == req.uid), None)
+    if not target:
+        raise HTTPException(status_code=404, detail="Account not found")
+
+    api_key = target.api_key or target.auth_token
+    if not api_key:
+        raise HTTPException(status_code=400, detail="No API Key or auth token for this account")
+
+    t0 = time.time()
+    result = check_api_key_chat_status(api_key, attempts=1)
+    duration_ms = int((time.time() - t0) * 1000)
+
+    if result.get("success"):
+        return {"success": True, "duration_ms": duration_ms}
+
+    error = result.get("status_text", "Unknown error")
+    if result.get("http_status"):
+        error = f"HTTP {result['http_status']}: {error}"
+    return {"success": False, "duration_ms": duration_ms, "error": error}
