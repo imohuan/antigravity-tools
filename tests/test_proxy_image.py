@@ -19,6 +19,7 @@ import json
 import os
 import sys
 import unittest
+from unittest.mock import patch
 
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PROJECT_ROOT not in sys.path:
@@ -286,6 +287,130 @@ class TestBuildWorkbuddyRelayBody(unittest.TestCase):
         self.assertEqual(upstream_body["stream"], True)
         self.assertEqual(meta["mode"], "workbuddy_relay")
         self.assertEqual(meta["normalized_images"], 0)
+
+    def test_developer_role_is_normalized_to_system(self):
+        body = {
+            "model": "auto",
+            "messages": [
+                {"role": "developer", "content": "Keep this instruction."},
+                {"role": "user", "content": "hello"},
+            ],
+        }
+
+        upstream_body, meta = _build_workbuddy_relay_body(body)
+
+        self.assertEqual(upstream_body["messages"][0]["role"], "system")
+        self.assertEqual(upstream_body["messages"][0]["content"], "Keep this instruction.")
+        self.assertEqual(upstream_body["messages"][1]["role"], "user")
+        self.assertEqual(meta["developer_roles_normalized"], 1)
+        self.assertEqual(body["messages"][0]["role"], "developer")
+
+    def test_developer_role_normalization_preserves_other_message_shapes(self):
+        body = {
+            "model": "auto",
+            "messages": [
+                {"role": "developer", "content": "First instruction.", "name": "primary"},
+                "non-dict message",
+                {"role": "assistant", "content": "Previous answer.", "tool_calls": []},
+                {"role": "developer", "content": "Second instruction.", "extra": {"keep": True}},
+                {"role": "tool", "content": "Tool result.", "tool_call_id": "call_123"},
+            ],
+        }
+        original_body = copy.deepcopy(body)
+
+        upstream_body, meta = _build_workbuddy_relay_body(body)
+
+        messages = upstream_body["messages"]
+        self.assertEqual(messages[0], {
+            "role": "system", "content": "First instruction.", "name": "primary",
+        })
+        self.assertEqual(messages[1], "non-dict message")
+        self.assertEqual(messages[2], {
+            "role": "assistant", "content": "Previous answer.", "tool_calls": [],
+        })
+        self.assertEqual(messages[3], {
+            "role": "system", "content": "Second instruction.", "extra": {"keep": True},
+        })
+        self.assertEqual(messages[4], {
+            "role": "tool", "content": "Tool result.", "tool_call_id": "call_123",
+        })
+        self.assertEqual(meta["developer_roles_normalized"], 2)
+        self.assertEqual(body, original_body)
+
+    @patch("src.modules.proxy_server.load_setting")
+    def test_default_sensitive_replacements_apply_to_normalized_developer_only(self, mock_load_setting):
+        mock_load_setting.side_effect = lambda key, default: {
+            "system_prompt_sensitive_enabled": "True",
+            "system_prompt_sensitive_replacements": "",
+        }.get(key, default)
+        body = {
+            "model": "auto",
+            "messages": [
+                {
+                    "role": "developer",
+                    "content": (
+                        "You are Claude Code, Anthropic's official CLI for Claude. "
+                        "Review PRs at github.com/anthropics/claude-code/issues"
+                    ),
+                },
+                {"role": "user", "content": "Please review these PRs."},
+                {"role": "assistant", "content": "PRs are pending."},
+                {"role": "tool", "content": "PRs found.", "tool_call_id": "call_123"},
+            ],
+        }
+
+        upstream_body, meta = _build_workbuddy_relay_body(body)
+
+        self.assertEqual(upstream_body["messages"][0]["role"], "system")
+        self.assertEqual(
+            upstream_body["messages"][0]["content"],
+            "You are a Claude agent, built on Anthropic's Claude Agent SDK. "
+            "Review pull requests at github.com/anthropics/claude-code",
+        )
+        self.assertEqual(upstream_body["messages"][1]["content"], "Please review these PRs.")
+        self.assertEqual(upstream_body["messages"][2]["content"], "PRs are pending.")
+        self.assertEqual(upstream_body["messages"][3]["content"], "PRs found.")
+        self.assertEqual(meta["system_prompt_sensitive_replaced"], 3)
+
+    @patch("src.modules.proxy_server.load_setting")
+    def test_sensitive_replacements_stay_disabled_when_setting_is_false(self, mock_load_setting):
+        mock_load_setting.side_effect = lambda key, default: {
+            "system_prompt_sensitive_enabled": "False",
+            "system_prompt_sensitive_replacements": "",
+        }.get(key, default)
+        body = {
+            "model": "auto",
+            "messages": [{"role": "system", "content": "Review PRs."}],
+        }
+
+        upstream_body, meta = _build_workbuddy_relay_body(body)
+
+        self.assertEqual(upstream_body["messages"][0]["content"], "Review PRs.")
+        self.assertEqual(meta["system_prompt_sensitive_replaced"], 0)
+
+    @patch("src.modules.proxy_server.load_setting")
+    def test_valid_sensitive_replacement_json_overrides_defaults(self, mock_load_setting):
+        mock_load_setting.side_effect = lambda key, default: {
+            "system_prompt_sensitive_enabled": "True",
+            "system_prompt_sensitive_replacements": json.dumps([
+                {"key": "PRs", "value": "change requests"},
+            ]),
+        }.get(key, default)
+        body = {
+            "model": "auto",
+            "messages": [{
+                "role": "system",
+                "content": "PRs at github.com/anthropics/claude-code/issues",
+            }],
+        }
+
+        upstream_body, meta = _build_workbuddy_relay_body(body)
+
+        self.assertEqual(
+            upstream_body["messages"][0]["content"],
+            "change requests at github.com/anthropics/claude-code/issues",
+        )
+        self.assertEqual(meta["system_prompt_sensitive_replaced"], 1)
 
     def test_input_image_converted_to_image_url(self):
         body = {

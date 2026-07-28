@@ -212,6 +212,8 @@ def _detect_multimodal_images(request_data: dict) -> dict:
     data_uri_count = 0
     max_image_chars = 0
     for msg in request_data.get("messages", []):
+        if not isinstance(msg, dict):
+            continue
         content = msg.get("content")
         if not isinstance(content, list):
             continue
@@ -696,6 +698,18 @@ def _build_workbuddy_relay_headers(api_key: str) -> dict:
     }
 
 
+DEFAULT_SYSTEM_PROMPT_COMPATIBILITY_REPLACEMENTS = [
+    {
+        "key": "You are Claude Code, Anthropic's official CLI for Claude.",
+        "value": "You are a Claude agent, built on Anthropic's Claude Agent SDK.",
+    },
+    {"key": "PRs", "value": "pull requests"},
+    {
+        "key": "github.com/anthropics/claude-code/issues",
+        "value": "github.com/anthropics/claude-code",
+    },
+]
+
 _SYSTEM_PROMPT_REPLACEMENT_CACHE = {
     "raw": "",
     "pattern": None,
@@ -706,7 +720,7 @@ _SYSTEM_PROMPT_REPLACEMENT_CACHE = {
 def _load_system_prompt_sensitive_replacements() -> list[dict]:
     try:
         enabled = load_setting("system_prompt_sensitive_enabled", "False")
-        raw_value = load_setting("system_prompt_sensitive_replacements", "[]")
+        raw_value = load_setting("system_prompt_sensitive_replacements", "")
     except Exception as exc:
         logger.warning(f"[系统提示词敏感信息] 读取配置失败，已跳过替换: {exc}")
         return []
@@ -714,15 +728,20 @@ def _load_system_prompt_sensitive_replacements() -> list[dict]:
     if enabled != "True":
         return []
 
+    # 空配置 → 使用默认替换规则
+    if not raw_value or not raw_value.strip():
+        return copy.deepcopy(DEFAULT_SYSTEM_PROMPT_COMPATIBILITY_REPLACEMENTS)
+
     try:
-        pairs = json.loads(raw_value or "[]")
+        pairs = json.loads(raw_value)
     except json.JSONDecodeError:
-        logger.warning("[系统提示词敏感信息] 配置 JSON 解析失败，已跳过替换")
-        return []
+        logger.info("[系统提示词敏感信息] 配置 JSON 解析失败，将使用默认替换规则")
+        return copy.deepcopy(DEFAULT_SYSTEM_PROMPT_COMPATIBILITY_REPLACEMENTS)
 
-    if not isinstance(pairs, list):
-        return []
+    if not isinstance(pairs, list) or not pairs:
+        return copy.deepcopy(DEFAULT_SYSTEM_PROMPT_COMPATIBILITY_REPLACEMENTS)
 
+    # 有效用户配置完全覆盖默认规则
     replacements = []
     for pair in pairs:
         if not isinstance(pair, dict):
@@ -800,6 +819,15 @@ def _replace_system_prompt_sensitive_words(messages: list) -> int:
     return replaced_count
 
 
+def _normalize_developer_messages_to_system(messages: list) -> int:
+    normalized_count = 0
+    for message in messages:
+        if isinstance(message, dict) and message.get("role") == "developer":
+            message["role"] = "system"
+            normalized_count += 1
+    return normalized_count
+
+
 def _build_workbuddy_relay_body(client_body: dict) -> tuple[dict, dict]:
     """
     Build the upstream body for WorkBuddy key-pool relay.
@@ -812,6 +840,7 @@ def _build_workbuddy_relay_body(client_body: dict) -> tuple[dict, dict]:
     body = copy.deepcopy(client_body)
     body["model"] = body.get("model") or "auto"
     body["messages"] = copy.deepcopy(client_body.get("messages", []))
+    developer_roles_normalized = _normalize_developer_messages_to_system(body["messages"])
     sensitive_replaced = _replace_system_prompt_sensitive_words(body["messages"])
     body["stream"] = True
 
@@ -844,6 +873,7 @@ def _build_workbuddy_relay_body(client_body: dict) -> tuple[dict, dict]:
         "history_images_replaced": 0,
         "normalized_images": normalized_images,
         "unsupported_inline_images_removed": 0,
+        "developer_roles_normalized": developer_roles_normalized,
         "system_prompt_sensitive_replaced": sensitive_replaced,
         "image_stats_before": image_stats_before,
         "image_stats_after": image_stats_after,
@@ -851,6 +881,8 @@ def _build_workbuddy_relay_body(client_body: dict) -> tuple[dict, dict]:
     }
     if sensitive_replaced:
         logger.info(f"[系统提示词敏感信息] 已替换 {sensitive_replaced} 处敏感信息")
+    if developer_roles_normalized:
+        logger.info(f"[消息角色兼容] 已将 {developer_roles_normalized} 条 developer 消息改为 system")
     return body, meta
 
 
