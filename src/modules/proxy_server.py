@@ -1,4 +1,4 @@
-﻿"""本地 API 中转代理服务
+"""本地 API 中转代理服务
 
 功能：
 - 管理上游 Key 池（主 Key）
@@ -15,7 +15,6 @@ import hashlib
 import json
 import logging
 import random
-import re
 import secrets
 import select
 import socket
@@ -710,16 +709,9 @@ DEFAULT_SYSTEM_PROMPT_COMPATIBILITY_REPLACEMENTS = [
     },
 ]
 
-_SYSTEM_PROMPT_REPLACEMENT_CACHE = {
-    "raw": "",
-    "pattern": None,
-    "values": {},
-}
-
-
 def _load_system_prompt_sensitive_replacements() -> list[dict]:
     try:
-        enabled = load_setting("system_prompt_sensitive_enabled", "False")
+        enabled = load_setting("system_prompt_sensitive_enabled", "True")
         raw_value = load_setting("system_prompt_sensitive_replacements", "")
     except Exception as exc:
         logger.warning(f"[系统提示词敏感信息] 读取配置失败，已跳过替换: {exc}")
@@ -753,68 +745,45 @@ def _load_system_prompt_sensitive_replacements() -> list[dict]:
     return replacements
 
 
-def _compile_system_prompt_replacement_pattern(replacements: list[dict]):
-    raw_key = json.dumps(replacements, ensure_ascii=False, sort_keys=True)
-    if _SYSTEM_PROMPT_REPLACEMENT_CACHE["raw"] == raw_key:
-        return (
-            _SYSTEM_PROMPT_REPLACEMENT_CACHE["pattern"],
-            _SYSTEM_PROMPT_REPLACEMENT_CACHE["values"],
-        )
-
-    values = {item["key"]: item["value"] for item in replacements}
-    pattern = None
-    if values:
-        escaped_keys = [re.escape(key) for key in sorted(values, key=len, reverse=True)]
-        pattern = re.compile("|".join(escaped_keys))
-
-    _SYSTEM_PROMPT_REPLACEMENT_CACHE["raw"] = raw_key
-    _SYSTEM_PROMPT_REPLACEMENT_CACHE["pattern"] = pattern
-    _SYSTEM_PROMPT_REPLACEMENT_CACHE["values"] = values
-    return pattern, values
-
-
 def _replace_system_prompt_sensitive_words(messages: list) -> int:
     replacements = _load_system_prompt_sensitive_replacements()
     if not replacements or not isinstance(messages, list):
         return 0
 
-    pattern, values = _compile_system_prompt_replacement_pattern(replacements)
-    if not pattern:
-        return 0
+    def _replace_text(text: str) -> tuple[str, int]:
+        replaced = text
+        count = 0
+        for replacement in replacements:
+            key = replacement["key"]
+            occurrences = replaced.count(key)
+            if occurrences:
+                replaced = replaced.replace(key, replacement["value"])
+                count += occurrences
+        return replaced, count
+
+    def _replace_content(content) -> tuple[object, int]:
+        if isinstance(content, str):
+            return _replace_text(content)
+        if not isinstance(content, list):
+            return content, 0
+
+        count = 0
+        for part in content:
+            if not isinstance(part, dict) or part.get("type") != "text":
+                continue
+            text = part.get("text")
+            if not isinstance(text, str):
+                continue
+            part["text"], occurrences = _replace_text(text)
+            count += occurrences
+        return content, count
 
     replaced_count = 0
-
-    def _replace_text(text: str) -> tuple[str, int]:
-        count = 0
-
-        def _replace_match(match):
-            nonlocal count
-            count += 1
-            return values.get(match.group(0), "")
-
-        return pattern.sub(_replace_match, text), count
-
     for msg in messages:
-        if not isinstance(msg, dict) or msg.get("role") != "system":
+        if msg["role"] != "system":
             continue
-
-        content = msg.get("content")
-        if isinstance(content, str):
-            new_content, count = _replace_text(content)
-            if count:
-                msg["content"] = new_content
-                replaced_count += count
-        elif isinstance(content, list):
-            for part in content:
-                if not isinstance(part, dict) or part.get("type") != "text":
-                    continue
-                text = part.get("text")
-                if not isinstance(text, str):
-                    continue
-                new_text, count = _replace_text(text)
-                if count:
-                    part["text"] = new_text
-                    replaced_count += count
+        msg["content"], count = _replace_content(msg["content"])
+        replaced_count += count
 
     return replaced_count
 

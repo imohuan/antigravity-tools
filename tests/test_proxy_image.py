@@ -1,4 +1,4 @@
-﻿"""图片处理单元测试 —— 验证代理中转时的图片格式归一化、历史图片剥离、inline图片过滤
+"""图片处理单元测试 —— 验证代理中转时的图片格式归一化、历史图片剥离、inline图片过滤
 
 覆盖场景：
 1. input_image → image_url 格式转换（Codex/WorkBuddy 发图的真实格式）
@@ -33,6 +33,7 @@ from src.modules.proxy_server import (
     _build_workbuddy_relay_body,
     _part_is_image,
     _detect_multimodal_images,
+    _replace_system_prompt_sensitive_words,
 )
 
 _TEST_IMAGE_PATH = r"D:\Code\Git\web2api\images\test.png"
@@ -516,6 +517,36 @@ class TestDetectMultimodalImages(unittest.TestCase):
         self.assertEqual(stats["image_count"], 1)
         self.assertEqual(stats["data_uri_count"], 1)
         self.assertGreater(stats["max_image_chars"], 1000)
+
+
+
+
+class TestSystemPromptCompatibilityReplacements(unittest.TestCase):
+
+    @patch("src.modules.proxy_server.load_setting")
+    def test_matches_safe_system_rules(self, load_setting):
+        load_setting.side_effect = lambda key, default="": {
+            "system_prompt_sensitive_enabled": "True",
+            "system_prompt_sensitive_replacements": "",
+        }.get(key, default)
+        messages = [{
+            "role": "system",
+            "content": (
+                "you are claude code, anthropic's official CLI for claude. "
+                "See GitHub.com/Anthropics/Claude-Code/Issues and PRs. "
+                "PRsValue must remain unchanged."
+            ),
+        }]
+
+        replaced = _replace_system_prompt_sensitive_words(messages)
+
+        self.assertEqual(replaced, 3)
+        self.assertEqual(
+            messages[0]["content"],
+            "You are a Claude agent, built on Anthropic's Claude Agent SDK. "
+            "See github.com/anthropics/claude-code and pull requests. "
+            "PRsValue must remain unchanged.",
+        )
 
 
 class TestFullPipelineWithRealImage(unittest.TestCase):

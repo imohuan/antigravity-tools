@@ -1,4 +1,4 @@
-﻿"""SQLite 请求日志存储 — 只追加写入，支持聚合查询和定期清理
+"""SQLite 请求日志存储 — 只追加写入，支持聚合查询和定期清理
 
 替代旧的 JSON 全量日志方案：
 - 写入：INSERT 一行，几毫秒
@@ -10,6 +10,7 @@
 import logging
 import os
 import sqlite3
+import threading
 import time
 from datetime import datetime
 
@@ -24,10 +25,17 @@ class LogStore:
     def __init__(self, db_path: str):
         self._db_path = db_path
         self._conn: sqlite3.Connection | None = None
+        self._conn_lock = threading.Lock()
 
     @property
     def conn(self) -> sqlite3.Connection:
-        if self._conn is None:
+        if self._conn is not None:
+            return self._conn
+
+        with self._conn_lock:
+            if self._conn is not None:
+                return self._conn
+
             os.makedirs(os.path.dirname(self._db_path), exist_ok=True)
             self._conn = sqlite3.connect(self._db_path, check_same_thread=False)
             self._conn.execute("PRAGMA journal_mode=WAL")
@@ -90,17 +98,25 @@ class LogStore:
                 )
             """)
 
-            # 补全前端需要的字段（兼容旧数据库）
+            # 补全前端需要的字段（兼容旧数据库）。先查表结构，避免重复 ALTER。
+            existing_columns = {
+                row[1]
+                for row in self._conn.execute("PRAGMA table_info(request_logs)")
+            }
             for col, col_type in [
                 ("key_mode", "TEXT DEFAULT ''"),
                 ("error", "TEXT DEFAULT ''"),
                 ("first_token_ms", "INTEGER DEFAULT 0"),
                 ("attempt", "INTEGER DEFAULT 1"),
             ]:
+                if col in existing_columns:
+                    continue
                 try:
                     self._conn.execute(f"ALTER TABLE request_logs ADD COLUMN {col} {col_type}")
-                except sqlite3.OperationalError:
-                    pass
+                except sqlite3.DatabaseError as exc:
+                    # 其他进程可能刚完成同一列迁移；只有明确的重复列错误可忽略。
+                    if "duplicate column name" not in str(exc).lower():
+                        raise
 
             self._conn.commit()
         return self._conn
