@@ -1,0 +1,954 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>提示词修复工具</title>
+  <script src="https://cdn.jsdelivr.net/npm/vue@3/dist/vue.global.prod.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>tailwind.config = { theme: { extend: { colors: { primary: "#000000", "on-primary": "#ffffff", secondary: "#5f5e61", "on-secondary": "#ffffff", tertiary: "#000000", error: "#ba1a1a", "on-error": "#ffffff", background: "#f9f9fa", surface: "#f9f9fa", "surface-container-lowest": "#ffffff", "surface-container-low": "#f3f3f4", "surface-container": "#eeeeef", "surface-container-high": "#e8e8e9", "surface-container-highest": "#e2e2e3", "surface-variant": "#e2e2e3", "on-surface": "#1a1c1d", "on-surface-variant": "#47464a", "on-background": "#1a1c1d", outline: "#78767b", "outline-variant": "#c8c5ca", "secondary-container": "#e4e1e5", "on-secondary-container": "#656467", "error-container": "#ffdad6", "on-error-container": "#93000a" }, borderRadius: { DEFAULT: "0.125rem", lg: "0.25rem", xl: "0.5rem", full: "0.75rem" }, spacing: { xs: "0.25rem", sm: "0.5rem", md: "1rem", lg: "1.5rem", xl: "2rem", gutter: "16px", margin: "24px" }, fontFamily: { display: ["Geist"], "headline-lg": ["Geist"], "headline-lg-mobile": ["Geist"], "headline-md": ["Geist"], "headline-sm": ["Geist"], "body-lg": ["Geist"], "body-sm": ["Geist"], "body-md": ["Geist"], "label-md": ["JetBrains Mono"] }, fontSize: { display: ["36px", { lineHeight: "40px", letterSpacing: "-0.02em", fontWeight: "600" }], "headline-lg": ["24px", { lineHeight: "32px", letterSpacing: "-0.02em", fontWeight: "600" }], "headline-lg-mobile": ["20px", { lineHeight: "28px", fontWeight: "600" }], "headline-md": ["20px", { lineHeight: "28px", letterSpacing: "-0.01em", fontWeight: "600" }], "headline-sm": ["16px", { lineHeight: "24px", fontWeight: "600" }], "body-lg": ["16px", { lineHeight: "24px", fontWeight: "400" }], "body-sm": ["12px", { lineHeight: "16px", fontWeight: "400" }], "body-md": ["14px", { lineHeight: "20px", fontWeight: "400" }], "label-md": ["12px", { lineHeight: "16px", letterSpacing: "0.02em", fontWeight: "500" }] } } } }</script>
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap"
+    rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/@fontsource/geist@5.2.9/400.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/@fontsource/geist@5.2.9/600.css" rel="stylesheet">
+  <style>
+    [v-cloak] {
+      display: none;
+    }
+
+    html,
+    body {
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      font-family: 'Geist', sans-serif;
+    }
+
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: #c8c5ca;
+      border-radius: 3px;
+    }
+
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    textarea {
+      font-family: 'JetBrains Mono', 'Consolas', 'Monaco', monospace;
+    }
+
+    .placeholder-tag {
+      background: #f3f3f4;
+      color: #1a1c1d;
+      border: 1px dashed #c8c5ca;
+      border-radius: 3px;
+      padding: 0 4px;
+      font-weight: 500;
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    .material-symbols-outlined {
+      font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+      font-size: 18px;
+      display: inline-block;
+      vertical-align: middle;
+    }
+
+    .icon-filled {
+      font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24 !important;
+    }
+
+    .pro-shadow {
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.04);
+    }
+
+    .scrollbar-hide::-webkit-scrollbar {
+      display: none;
+    }
+
+    .scrollbar-hide {
+      -ms-overflow-style: none;
+      scrollbar-width: none;
+    }
+
+    .spinner {
+      animation: spin .8s linear infinite;
+    }
+
+    @keyframes spin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+  </style>
+</head>
+
+<body class="bg-surface-container-low">
+
+  <div id="app" v-cloak class="h-screen flex flex-col overflow-hidden">
+
+    <header
+      class="flex-shrink-0 bg-surface-container-lowest border-b border-outline-variant px-6 py-3 flex items-center justify-between">
+      <div class="flex items-center gap-2">
+        <span class="material-symbols-outlined text-primary">auto_fix_high</span>
+        <h1 class="text-body-md font-semibold text-primary">提示词修复工具</h1>
+        <span class="text-body-sm text-on-surface-variant ml-2">输入原始提示词 + 替换指令 → 生成修复后的内容</span>
+      </div>
+      <div class="flex items-center gap-3">
+        <button @click="openTestDialog"
+          class="h-8 px-3 rounded-md border border-outline-variant bg-surface-container-lowest text-primary hover:bg-surface-container-low transition-colors flex items-center gap-1.5 text-label-md"
+          title="测试接口连通性 / 获取模型列表">
+          <span class="material-symbols-outlined !text-[16px]">science</span>
+          <span>测试</span>
+        </button>
+        <span v-if="replaceCount > 0"
+          class="inline-flex items-center gap-1 px-2.5 py-1 bg-secondary-container text-on-secondary-container text-label-md rounded-full">
+          <span class="material-symbols-outlined !text-[14px]">check_circle</span>
+          替换了 {{ replaceCount }} 处
+        </span>
+      </div>
+    </header>
+
+    <div class="flex-shrink-0 bg-surface-container-low border-b border-outline-variant">
+      <div class="px-6 py-2 flex items-center justify-between">
+        <div class="flex items-center gap-2 min-w-0">
+          <button @click="showPromptBar = !showPromptBar"
+            class="flex items-center gap-2 text-label-md text-on-surface-variant hover:text-primary transition-colors">
+            <span class="material-symbols-outlined !text-[14px] transition-transform"
+              :style="{ transform: showPromptBar ? 'rotate(90deg)' : 'rotate(0deg)' }">chevron_right</span>
+            <span class="w-2 h-2 rounded-full bg-secondary"></span>
+            系统提示词模板
+          </button>
+          <span class="text-body-sm text-on-surface-variant">含占位符 <code
+              class="placeholder-tag">{{待修复的提示词}}</code></span>
+        </div>
+        <button @click="copySystemPrompt"
+          class="text-label-md text-on-surface-variant hover:text-primary flex items-center gap-1 transition-colors flex-shrink-0">
+          <span class="material-symbols-outlined !text-[14px]">content_copy</span>
+          {{ promptCopied ? '已复制' : '复制提示词' }}
+        </button>
+      </div>
+      <div v-if="showPromptBar" class="px-6 pb-3 max-h-40 overflow-auto">
+        <pre
+          class="text-body-sm text-on-surface-variant leading-relaxed whitespace-pre-wrap break-words">{{ systemPromptPreview }}</pre>
+      </div>
+    </div>
+
+    <main class="flex-1 flex overflow-hidden min-h-0">
+
+      <div
+        class="w-1/2 flex flex-col overflow-hidden border-r border-outline-variant bg-surface-container-lowest min-h-0">
+
+        <div class="flex-1 flex flex-col p-4 border-b border-outline-variant min-h-0 overflow-hidden">
+          <div class="flex items-center justify-between mb-2 flex-shrink-0">
+            <label class="text-label-md text-on-surface-variant flex items-center gap-1.5">
+              <span class="w-2 h-2 rounded-full bg-primary"></span>
+              原始提示词
+            </label>
+            <span class="text-body-sm text-on-surface-variant">{{ originalText.length }} 字符</span>
+          </div>
+          <textarea v-model="originalText"
+            class="flex-1 w-full resize-none rounded-lg border border-outline-variant bg-surface-container-low p-3 text-body-md text-primary focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary transition-all min-h-0 overflow-auto"
+            placeholder="粘贴被拦截的原始提示词..."></textarea>
+        </div>
+
+        <div class="flex-1 flex flex-col p-4 border-b border-outline-variant min-h-0 overflow-hidden">
+          <div class="flex items-center justify-between mb-2 flex-shrink-0">
+            <label class="text-label-md text-on-surface-variant flex items-center gap-1.5">
+              <span class="w-2 h-2 rounded-full bg-secondary"></span>
+              替换指令（JSON 数组）
+            </label>
+            <div class="flex items-center gap-3">
+              <button @click="loadExample"
+                class="text-label-md text-on-surface-variant hover:text-primary transition-colors">加载示例</button>
+              <span class="text-body-sm text-on-surface-variant">{{ replaceText.length }} 字符</span>
+            </div>
+          </div>
+          <textarea v-model="replaceText"
+            class="flex-1 w-full resize-none rounded-lg border border-outline-variant bg-surface-container-low p-3 text-body-md text-primary focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary transition-all min-h-0 overflow-auto"
+            placeholder='[&#10;  {&#10;    "key": "DoS",&#10;    "value": "拒绝服务场景"&#10;  }&#10;]'></textarea>
+        </div>
+
+        <div class="flex-shrink-0 px-4 py-3">
+          <button @click="generate"
+            class="w-full h-8 px-3.5 py-2 bg-primary hover:opacity-90 text-on-primary text-label-md rounded-md transition-opacity flex items-center justify-center gap-1.5"
+            :class="{ 'opacity-50 cursor-not-allowed': !canGenerate }" :disabled="!canGenerate">
+            <span class="material-symbols-outlined !text-[16px]">bolt</span>
+            生成修复内容
+          </button>
+          <p v-if="errorMsg" class="text-body-sm text-error mt-2">{{ errorMsg }}</p>
+        </div>
+      </div>
+
+      <div class="w-1/2 flex flex-col overflow-hidden bg-surface-container-low min-h-0">
+        <div class="flex-shrink-0 flex items-center justify-between px-4 py-3 border-b border-outline-variant">
+          <label class="text-label-md text-on-surface-variant flex items-center gap-1.5">
+            <span class="w-2 h-2 rounded-full bg-primary"></span>
+            修复后内容
+          </label>
+          <div class="flex items-center gap-3">
+            <span v-if="replaceCount > 0" class="text-label-md text-primary">已替换 {{ replaceCount }} 处</span>
+            <button v-if="resultText" @click="copyResult"
+              class="text-label-md text-on-surface-variant hover:text-primary flex items-center gap-1 transition-colors">
+              <span class="material-symbols-outlined !text-[14px]">content_copy</span>
+              {{ copied ? '已复制' : '复制' }}
+            </button>
+          </div>
+        </div>
+
+        <div class="flex-1 p-4 overflow-auto min-h-0">
+          <div v-if="!resultText && !errorMsg"
+            class="h-full flex items-center justify-center text-on-surface-variant text-body-md">
+            <div class="text-center">
+              <span class="material-symbols-outlined !text-[48px] text-outline block mb-3">description</span>
+              <p>点击「生成修复内容」查看结果</p>
+            </div>
+          </div>
+          <pre v-if="resultText"
+            class="whitespace-pre-wrap break-words text-body-md text-primary leading-relaxed">{{ resultText }}</pre>
+        </div>
+
+        <div v-if="replaceDetails.length > 0"
+          class="flex-shrink-0 border-t border-outline-variant p-4 h-36 overflow-auto bg-surface-container-lowest">
+          <p class="text-label-md text-on-surface-variant mb-2">替换详情</p>
+          <div class="space-y-1.5">
+            <div v-for="(item, i) in replaceDetails" :key="i" class="flex items-start gap-2 text-body-sm">
+              <span
+                class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-surface-container text-on-surface-variant text-label-md flex-shrink-0">{{
+                i + 1 }}</span>
+              <div class="flex-1 min-w-0">
+                <span class="text-on-surface-variant line-through bg-surface-container px-1 rounded">{{ item.key
+                  }}</span>
+                <span class="text-outline mx-1">→</span>
+                <span class="text-primary bg-secondary-container px-1 rounded">{{ item.value }}</span>
+                <span class="text-on-surface-variant ml-1">×{{ item.occurrences }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </main>
+    <transition enter-active-class="transition duration-300 ease-out" enter-from-class="opacity-0"
+      enter-to-class="opacity-100" leave-active-class="transition duration-200 ease-in" leave-from-class="opacity-100"
+      leave-to-class="opacity-0">
+      <div v-show="testDialogOpen"
+        class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-md"
+        @click.self="closeTestDialog" @keydown.tab="trapTab">
+        <transition enter-active-class="transition duration-300 ease-out transform"
+          enter-from-class="scale-95 translate-y-4" enter-to-class="scale-100 translate-y-0"
+          leave-active-class="transition duration-200 ease-in transform" leave-from-class="scale-100 translate-y-0"
+          leave-to-class="scale-95 translate-y-4">
+          <div v-show="testDialogOpen" ref="dialogRef"
+            class="bg-surface-container-lowest border border-outline-variant rounded-xl w-full max-w-[80vw] overflow-hidden flex flex-col pro-shadow h-[75vh]"
+            role="dialog" aria-modal="true" aria-labelledby="testDialogTitle" tabindex="-1">
+            <div class="h-12 border-b border-outline-variant flex items-center justify-between px-md shrink-0">
+              <div class="flex items-center gap-2 min-w-0">
+                <span class="material-symbols-outlined text-primary shrink-0">science</span>
+                <h3 id="testDialogTitle" class="text-body-md font-semibold text-primary truncate">接口测试</h3>
+              </div>
+              <button ref="closeBtnRef"
+                class="w-8 h-8 flex items-center justify-center text-secondary hover:bg-surface-container-low rounded-lg transition-colors shrink-0"
+                aria-label="关闭弹窗" @click="closeTestDialog">
+                <span class="material-symbols-outlined">close</span>
+              </button>
+            </div>
+
+            <div class="flex-1 flex overflow-hidden min-h-0">
+              <!-- 左栏：接口测试组件 -->
+              <div class="w-80 border-r border-outline-variant overflow-y-auto scrollbar-hide p-lg space-y-lg shrink-0 bg-surface-container-lowest">
+                <section class="space-y-2">
+                  <label class="text-label-md font-medium text-primary flex items-center gap-1.5">
+                    <span class="material-symbols-outlined !text-[14px]">link</span>
+                    Base URL
+                  </label>
+                  <div class="relative flex items-center w-full">
+                    <div class="absolute left-2.5 flex items-center text-secondary pointer-events-none z-10">
+                      <span class="material-symbols-outlined !text-[16px]">public</span>
+                    </div>
+                    <input ref="baseUrlInputRef" v-model="testConfig.baseUrl" type="text"
+                      class="w-full h-8 px-2.5 py-1 pl-8 text-label-md bg-surface-container-low border border-outline-variant rounded-md focus:ring-1 focus:ring-primary focus:border-primary placeholder:text-outline transition-all font-label-md"
+                      placeholder="https://api.openai.com/v1" spellcheck="false" @keydown.enter="fetchModels" />
+                  </div>
+                  <p class="text-body-sm text-on-surface-variant">默认使用当前页面 origin + <code
+                      class="font-label-md text-primary bg-surface-container px-1 rounded">/v1</code>，可手动修改</p>
+                </section>
+
+                <section class="space-y-2">
+                  <label class="text-label-md font-medium text-primary flex items-center gap-1.5">
+                    <span class="material-symbols-outlined !text-[14px]">key</span>
+                    API Key
+                  </label>
+                  <div class="relative flex items-center w-full">
+                    <div class="absolute left-2.5 flex items-center text-secondary pointer-events-none z-10">
+                      <span class="material-symbols-outlined !text-[16px]">vpn_key</span>
+                    </div>
+                    <input v-model="testConfig.apiKey" :type="showKey ? 'text' : 'password'"
+                      class="w-full h-8 px-2.5 py-1 pl-8 pr-8 text-label-md bg-surface-container-low border border-outline-variant rounded-md focus:ring-1 focus:ring-primary focus:border-primary placeholder:text-outline transition-all font-label-md"
+                      placeholder="留空使用匿名访问（部分服务允许）" autocomplete="off" @keydown.enter="fetchModels" />
+                    <button type="button"
+                      class="absolute right-2.5 flex items-center text-secondary hover:text-primary z-10 cursor-pointer transition-colors"
+                      :title="showKey ? '隐藏' : '显示'" tabindex="-1" @click="showKey = !showKey">
+                      <span class="material-symbols-outlined !text-[16px]">{{ showKey ? 'visibility' : 'visibility_off' }}</span>
+                    </button>
+                  </div>
+                  <p class="text-body-sm text-on-surface-variant">仅在当前浏览器内存中使用，不会上传或保存</p>
+                </section>
+
+                <section class="flex items-center gap-2 flex-wrap">
+                  <button @click="fetchModels" :disabled="fetching"
+                    class="h-8 px-3 py-1.5 bg-primary hover:opacity-90 text-on-primary text-label-md rounded-md transition-opacity flex items-center gap-1.5"
+                    :class="{ 'opacity-50 cursor-not-allowed': fetching }">
+                    <span v-if="!fetching" class="material-symbols-outlined !text-[16px]">cloud_download</span>
+                    <svg v-else class="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none">
+                      <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3"></circle>
+                      <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v3a5 5 0 00-5 5H4z"></path>
+                    </svg>
+                    {{ fetching ? '请求中...' : '获取模型列表' }}
+                  </button>
+                  <button v-if="models.length > 0" @click="copyModels"
+                    class="h-8 px-3 py-1.5 border border-outline-variant bg-surface-container-lowest text-primary hover:bg-surface-container-low text-label-md rounded-md transition-colors flex items-center gap-1.5">
+                    <span class="material-symbols-outlined !text-[16px]">content_copy</span>
+                    {{ modelsCopied ? '已复制' : '复制全部' }}
+                  </button>
+                  <span v-if="models.length > 0" class="text-label-md text-on-surface-variant">共 {{ models.length }} 个模型</span>
+                </section>
+
+                <transition name="fade">
+                  <section v-if="testError"
+                    class="bg-error-container border border-outline-variant rounded-lg p-3 flex items-start gap-2">
+                    <span class="material-symbols-outlined !text-[18px] text-on-error-container shrink-0 mt-px">error</span>
+                    <div class="flex-1 min-w-0">
+                      <p class="text-label-md text-on-error-container">请求失败</p>
+                      <p class="text-body-sm text-on-error-container mt-1 break-words">{{ testError }}</p>
+                    </div>
+                  </section>
+                </transition>
+
+                <section v-if="models.length > 0" class="space-y-2">
+                  <label class="text-label-md font-medium text-primary flex items-center gap-1.5">
+                    <span class="material-symbols-outlined !text-[14px]">list</span>
+                    模型列表
+                  </label>
+                  <div class="border border-outline-variant rounded-lg overflow-hidden bg-surface-container-lowest">
+                    <div class="max-h-72 overflow-y-auto scrollbar-hide divide-y divide-outline-variant">
+                      <button v-for="(m, i) in models" :key="m.id + i" type="button"
+                        class="w-full px-3 py-2 flex items-center gap-2 text-left hover:bg-surface-container-low transition-colors group"
+                        :class="{ 'bg-secondary-container': selectedModel === m.id }"
+                        @click="selectedModel = m.id">
+                        <span
+                          class="material-symbols-outlined !text-[18px] shrink-0"
+                          :class="selectedModel === m.id ? 'text-primary icon-filled' : 'text-outline'">{{ selectedModel === m.id ? 'radio_button_checked' : 'radio_button_unchecked' }}</span>
+                        <span class="flex-1 text-label-md text-primary truncate font-label-md">{{ m.id }}</span>
+                        <span v-if="m.owned_by" class="text-body-sm text-on-surface-variant shrink-0">{{ m.owned_by }}</span>
+                      </button>
+                    </div>
+                  </div>
+                </section>
+
+                <section v-if="!models.length && !fetching && !testError" class="text-center py-8 text-on-surface-variant">
+                  <span class="material-symbols-outlined !text-[40px] text-outline block mb-2">inbox</span>
+                  <p class="text-body-md">点击「获取模型列表」开始</p>
+                  <p class="text-body-sm mt-1 text-outline break-all">将请求 <code
+                      class="font-label-md text-primary">{{ testConfig.baseUrl || '...' }}/models</code></p>
+                </section>
+              </div>
+
+              <!-- 右栏：messages 编辑器 -->
+              <div class="flex-1 flex flex-col min-w-0 bg-surface-container-lowest">
+                <div class="px-md py-2 border-b border-outline-variant flex items-center justify-between shrink-0">
+                  <div class="flex items-center gap-2 min-w-0">
+                    <span class="material-symbols-outlined !text-[14px] text-secondary">forum</span>
+                    <span class="text-label-md text-on-surface-variant">消息 ({{ messages.length }})</span>
+                    <span v-if="selectedModel"
+                      class="text-label-md text-on-surface-variant bg-surface-container-low border border-outline-variant rounded-md px-2 py-0.5 truncate max-w-[200px]">{{ selectedModel }}</span>
+                  </div>
+                  <div class="flex items-center gap-1">
+                    <button @click="loadFromMain" title="从主 UI 加载修复后内容"
+                      class="h-7 px-2 text-label-md text-primary hover:bg-surface-container-low rounded-md transition-colors flex items-center gap-1">
+                      <span class="material-symbols-outlined !text-[14px]">refresh</span>
+                      加载提示词
+                    </button>
+                    <button @click="addMessage" title="新增消息"
+                      class="h-7 px-2 text-label-md text-primary hover:bg-surface-container-low rounded-md transition-colors flex items-center gap-1">
+                      <span class="material-symbols-outlined !text-[14px]">add</span>
+                      新增
+                    </button>
+                  </div>
+                </div>
+                <transition name="fade">
+                  <div v-if="loadHint"
+                    class="bg-error-container border-b border-outline-variant px-md py-2 flex items-start gap-2 shrink-0">
+                    <span class="material-symbols-outlined !text-[16px] text-on-error-container shrink-0 mt-px">info</span>
+                    <span class="text-body-sm text-on-error-container break-words">{{ loadHint }}</span>
+                  </div>
+                </transition>
+
+                <div class="flex-1 flex overflow-hidden min-h-0">
+                  <div class="w-64 border-r border-outline-variant flex flex-col bg-surface-container-lowest shrink-0">
+                    <div class="flex-1 overflow-y-auto scrollbar-hide py-1">
+                      <div v-for="(m, i) in messages" :key="i"
+                        class="mx-2 my-1 rounded-lg border transition-colors cursor-pointer"
+                        :class="selectedMessageIndex === i ? 'border-primary bg-surface-container-low' : 'border-outline-variant hover:bg-surface-container-low/60'"
+                        @click="selectedMessageIndex = i"
+                        role="button" tabindex="0" @keydown.enter="selectedMessageIndex = i">
+                        <div class="flex items-center justify-between px-2 py-1.5">
+                          <span class="text-label-md px-1.5 py-0.5 rounded font-label-md"
+                            :class="roleColor(m.role)">{{ m.role }}</span>
+                          <button v-if="messages.length > 1" @click.stop="removeMessage(i)"
+                            class="h-5 w-5 flex items-center justify-center text-outline hover:text-error rounded transition-colors">
+                            <span class="material-symbols-outlined !text-[14px]">delete</span>
+                          </button>
+                        </div>
+                        <div class="px-2 pb-2 text-body-sm text-on-surface-variant line-clamp-3 break-words whitespace-pre-wrap">{{ m.content || '(空)' }}</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="flex-1 flex flex-col min-w-0">
+                    <div class="px-md py-2 border-b border-outline-variant flex items-center justify-between shrink-0">
+                      <div class="flex items-center gap-2 min-w-0">
+                        <span class="text-label-md text-on-surface-variant">编辑:</span>
+                        <span class="text-label-md px-1.5 py-0.5 rounded font-label-md"
+                          :class="roleColor(messages[selectedMessageIndex] && messages[selectedMessageIndex].role)">{{ messages[selectedMessageIndex] ? messages[selectedMessageIndex].role : '' }}</span>
+                      </div>
+                      <div class="flex items-center gap-1">
+                        <button @click="setRole(selectedMessageIndex, 'system')"
+                          class="h-6 px-2 text-label-md rounded transition-colors"
+                          :class="messages[selectedMessageIndex] && messages[selectedMessageIndex].role === 'system' ? 'bg-secondary-container text-on-secondary-container' : 'hover:bg-surface-container-low'">system</button>
+                        <button @click="setRole(selectedMessageIndex, 'user')"
+                          class="h-6 px-2 text-label-md rounded transition-colors"
+                          :class="messages[selectedMessageIndex] && messages[selectedMessageIndex].role === 'user' ? 'bg-secondary-container text-on-secondary-container' : 'hover:bg-surface-container-low'">user</button>
+                        <button @click="setRole(selectedMessageIndex, 'assistant')"
+                          class="h-6 px-2 text-label-md rounded transition-colors"
+                          :class="messages[selectedMessageIndex] && messages[selectedMessageIndex].role === 'assistant' ? 'bg-secondary-container text-on-secondary-container' : 'hover:bg-surface-container-low'">assistant</button>
+                      </div>
+                    </div>
+                    <div class="flex-1 p-md overflow-hidden min-h-0">
+                      <textarea
+                        :value="messages[selectedMessageIndex] ? messages[selectedMessageIndex].content : ''"
+                        @input="messages[selectedMessageIndex].content = $event.target.value; syncMessagesText()"
+                        class="w-full h-full resize-none rounded-lg border border-outline-variant bg-surface-container-low p-3 text-body-md text-primary focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary transition-all leading-relaxed"
+                        placeholder="选中左侧消息后在此编辑内容"></textarea>
+                    </div>
+                  </div>
+                </div>
+
+                <div v-if="chatResponse || chatError"
+                  class="border-t border-outline-variant bg-surface-container-low px-md py-2 shrink-0 max-h-40 overflow-auto scrollbar-hide">
+                  <div v-if="chatError" class="bg-error-container border border-outline-variant rounded-lg p-3 flex items-start gap-2">
+                    <span class="material-symbols-outlined !text-[18px] text-on-error-container shrink-0 mt-px">error</span>
+                    <div class="flex-1 min-w-0">
+                      <p class="text-label-md text-on-error-container">请求失败</p>
+                      <p class="text-body-sm text-on-error-container mt-1 break-words">{{ chatError }}</p>
+                    </div>
+                  </div>
+                  <div v-else>
+                    <p class="text-label-md text-on-surface-variant mb-1 flex items-center gap-1.5">
+                      <span class="material-symbols-outlined !text-[14px]">auto_awesome</span>
+                      模型响应
+                    </p>
+                    <pre class="whitespace-pre-wrap break-words text-body-sm text-primary leading-relaxed">{{ chatResponse }}</pre>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div
+              class="h-14 border-t border-outline-variant bg-surface-container-low flex items-center justify-end px-md gap-2 shrink-0">
+              <button @click="closeTestDialog"
+                class="h-8 px-3 py-1.5 border border-outline-variant bg-surface-container-lowest text-primary hover:bg-surface-container-low text-label-md rounded-md transition-colors flex items-center gap-1.5">
+                <span class="material-symbols-outlined !text-[16px]">close</span>
+                取消
+              </button>
+              <button @click="sendChatRequest" :disabled="chatSending || !selectedModel"
+                class="h-8 px-3 py-1.5 bg-primary hover:opacity-90 text-on-primary text-label-md rounded-md transition-opacity flex items-center gap-1.5"
+                :class="{ 'opacity-50 cursor-not-allowed': chatSending || !selectedModel }">
+                <svg v-if="chatSending" class="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none">
+                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3"></circle>
+                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v3a5 5 0 00-5 5H4z"></path>
+                </svg>
+                <span v-else class="material-symbols-outlined !text-[16px]">send</span>
+                {{ chatSending ? '请求中...' : '测试' }}
+              </button>
+            </div>
+          </div>
+        </transition>
+      </div>
+    </transition>
+
+
+
+  </div>
+
+  <script>
+    const { createApp, ref, computed, nextTick, onMounted, onBeforeUnmount, watch, reactive } = Vue;
+
+    const SYSTEM_PROMPT_TEMPLATE = `你是一个专门修复"提示词被内容审核系统拦截"问题的分析引擎。
+
+你的唯一职责：接收一段被审核拦截的提示词文本，找出其中可能触发内容审核的片段，并输出精确的字符串替换指令，使替换后的提示词在不改变原始语义和功能的前提下通过审核。
+
+### 审核触发机制（你需要检测的风险类型）
+
+按优先级从高到低检测以下 8 类风险：
+
+**P0 — 高命中率（几乎必然触发）**
+
+1. **政治敏感词**：涉及国家领导人、政治事件、政治立场表态的词汇或隐喻。
+2. **违法犯罪指令**：要求生成恶意代码、破解工具、社工攻击、钓鱼内容的直接指令。
+3. **个人隐私信息（PII）**：完整的身份证号、手机号、银行卡号、护照号等。片段或脱敏格式（如 138****1234）不触发。
+
+**P1 — 中等命中率（技术场景常见误报）**
+
+4. **安全术语**：DoS、DDoS、exploit、credential、sandbox、escalation、privilege escalation、injection、payload、shellcode、malware、trojan、backdoor、keylogger、rootkit、botnet、零日、0day、0-day。
+5. **攻击性动词组合**：破解密码、绕过限制、入侵系统、提权、渗透测试（在非授权语境下）。
+6. **竞品品牌词**：其他 AI 公司或大模型产品的品牌名称（如 OpenAI、Claude、Anthropic、GPT-4、Gemini、通义千问、文心一言、Kimi、DeepSeek、Llama）。
+
+**P2 — 低命中率（特定上下文触发）**
+
+7. **价值观偏差词**：拜金主义、歧视性表述、自杀自残相关词汇。
+8. **提示词注入特征**：ignore previous instructions、you are now、forget all rules、system prompt（在非元讨论语境中作为指令使用时）。
+
+### 检测规则
+
+- **逐段扫描**：将输入文本按句号、换行、自然语义边界分段，逐段检测。
+- **上下文判断**：安全术语在"防御""检测""修复""防护""扫描"等防御性语境中出现时，仍可能被审核引擎误报（因为审核引擎基于关键词匹配，不区分攻防语境）。因此即使语境合法，仍需标记并提供替换。
+- **品牌词检测**：品牌词在作为技术对比、API 名称、模型选择等场景中出现时仍可能触发。需标记并提供中性替换。
+- **不检测纯代码逻辑**：变量名 exploit 在代码中作为变量使用时，如果是 const exploit = ... 这类，仍需替换（因为审核引擎不解析代码语义）。
+
+### 替换原则
+
+1. **语义保持**：替换后的文本必须与原文在当前语境下语义等价或高度近似。
+2. **最小改动**：只替换触发风险的最小片段，不重写整句。
+3. **可逆向**：用户能通过 replace 操作精确还原。
+4. **优先级覆盖**：若一个片段同时命中多个风险类型，按最高优先级标记。
+
+### 输出格式
+
+严格输出一个 JSON 数组，不要输出任何其他内容（不要 markdown 代码块标记，不要解释文字）。数组中每个对象包含 key 和 value 两个字段：
+
+- key：原文中需要被替换的精确片段（包含足够上下文以确保在原文中唯一匹配）
+- value：替换后的新内容
+
+有风险时：
+
+[
+    {
+        "key": "DoS 漏洞",
+        "value": "拒绝服务类漏洞"
+    },
+    {
+        "key": "利用 exploit 获取 credential",
+        "value": "利用漏洞利用手段获取凭据"
+    }
+]
+
+无风险时输出空数组：
+
+[]
+
+### 替换词参考表
+
+| 原始词 | 替换建议 | 说明 |
+|--------|---------|------|
+| DoS / DDoS | 拒绝服务场景 / 分布式拒绝服务场景 | 展开为中文全称降低关键词命中率 |
+| exploit | 漏洞利用 | 中文替换 |
+| credential | 凭据 / 认证信息 | 英文转中文 |
+| sandbox | 隔离环境 / 测试环境 | 语义等价 |
+| escalation / privilege escalation | 提权 / 权限提升场景 | 展开表述 |
+| injection | 注入类问题 | 加后缀泛化 |
+| payload | 载荷数据 / 请求体数据 | 去攻击性 |
+| shellcode | 底层执行代码 | 去专有名词 |
+| malware | 恶意程序 | 中文替换 |
+| trojan | 木马程序 | 不变但可加"类"后缀 |
+| backdoor | 后门访问 | 加中性后缀 |
+| 0day / zero-day | 未知漏洞 / 未公开漏洞 | 展开表述 |
+| 破解密码 | 分析密码验证机制 | 去攻击性动词 |
+| 绕过限制 | 理解限制的工作原理 | 改为研究性表述 |
+| 入侵系统 | 分析系统安全边界 | 改为防御性表述 |
+| 渗透测试 | 安全评估 / 安全测试 | 去渗透 |
+| OpenAI | 某AI服务商 | 泛化 |
+| Claude | 某模型 | 泛化 |
+| GPT-4 | 某大语言模型 | 泛化 |
+| Gemini | 某多模态模型 | 泛化 |
+| ignore previous instructions | （标记为提示词注入风险，建议删除） | — |
+| you are now | （标记为角色劫持风险，建议改写） | — |
+
+### 处理边界情况
+
+1. **无风险检测到**：输出空数组 []。拦截可能来自上下文中的其他文本（如 system prompt 或 tool definitions），而非当前输入。
+
+2. **PII 信息**：如果检测到完整的身份证号、手机号等，value 中用脱敏格式替换（如 138****1234）。
+
+3. **无法通过简单替换修复**：如果风险来自整体语境而非具体词汇（如整段请求都在要求生成恶意内容），仍然输出空数组 []，因为词汇级替换无法解决意图级问题。
+
+4. **key 唯一性**：key 必须包含足够的上下文字符，确保在原文中能精确定位且唯一匹配。如果风险词在文中出现多次，为每次出现单独生成一个对象，或使用包含前缀后缀的长上下文。
+
+---
+
+## 待修复的提示词
+
+{{待修复的提示词}}`;
+
+    createApp({
+      setup() {
+        const originalText = ref('');
+        const replaceText = ref('');
+        const resultText = ref('');
+        const errorMsg = ref('');
+        const replaceCount = ref(0);
+        const replaceDetails = ref([]);
+        const copied = ref(false);
+        const showPromptBar = ref(false);
+        const promptCopied = ref(false);
+
+        const systemPromptPreview = SYSTEM_PROMPT_TEMPLATE.slice(0, 200) + '\n...（点击「复制提示词」获取完整内容）';
+        const canGenerate = computed(() => originalText.value.trim() && replaceText.value.trim());
+
+        const testDialogOpen = ref(false);
+        const dialogRef = ref(null);
+        const closeBtnRef = ref(null);
+        const baseUrlInputRef = ref(null);
+        const showKey = ref(false);
+        const fetching = ref(false);
+        const testError = ref('');
+        const models = ref([]);
+        const selectedModel = ref('');
+        const chatSending = ref(false);
+        const chatResponse = ref('');
+        const chatError = ref('');
+        const messages = ref([
+          { role: 'system', content: '' },
+          { role: 'user', content: '' },
+        ]);
+        const selectedMessageIndex = ref(0);
+        const loadHint = ref('');
+        const messagesText = ref(JSON.stringify(messages.value, null, 2));
+        const modelsCopied = ref(false);
+        const testConfig = reactive({ baseUrl: '', apiKey: '' });
+
+        function defaultBaseUrl() {
+          const o = window.location.origin || '';
+          return o.replace(/\/+$/, '') + '/v1';
+        }
+
+        function openTestDialog() {
+          testConfig.baseUrl = defaultBaseUrl();
+          testConfig.apiKey = '';
+          testError.value = '';
+          models.value = [];
+          selectedModel.value = '';
+          modelsCopied.value = false;
+          testDialogOpen.value = true;
+          nextTick(() => {
+            baseUrlInputRef.value && baseUrlInputRef.value.focus();
+            baseUrlInputRef.value && baseUrlInputRef.value.select && baseUrlInputRef.value.select();
+          });
+        }
+
+        function closeTestDialog() {
+          testDialogOpen.value = false;
+        }
+
+
+
+
+        function buildChatUrl(baseUrl) {
+          const trimmed = (baseUrl || '').trim().replace(/\/+$/, '');
+          if (!trimmed) return defaultBaseUrl() + '/chat/completions';
+          return trimmed + '/chat/completions';
+        }
+
+        async function sendChatRequest() {
+          if (chatSending.value) return;
+          chatResponse.value = '';
+          chatError.value = '';
+          const url = buildChatUrl(testConfig.baseUrl);
+          const body = {
+            model: selectedModel.value,
+            messages: messages.value.map(m => ({ role: m.role, content: m.content })),
+            stream: false,
+          };
+          chatSending.value = true;
+          try {
+            const headers = { 'Content-Type': 'application/json' };
+            if (testConfig.apiKey && testConfig.apiKey.trim()) {
+              headers['Authorization'] = 'Bearer ' + testConfig.apiKey.trim();
+            }
+            const res = await fetch(url, {
+              method: 'POST',
+              headers,
+              body: JSON.stringify(body),
+              mode: 'cors',
+            });
+            if (!res.ok) {
+              let errMsg = 'HTTP ' + res.status + ' ' + res.statusText;
+              try { const e = await res.json(); errMsg += '  ·  ' + JSON.stringify(e); } catch (_) {}
+              throw new Error(errMsg);
+            }
+            const data = await res.json();
+            const text = data && data.choices && data.choices[0] && data.choices[0].message
+              ? data.choices[0].message.content
+              : JSON.stringify(data, null, 2);
+            chatResponse.value = text || '(空响应)';
+          } catch (e) {
+            chatError.value = (e.message || String(e)) + '  ·  URL: ' + url + '  ·  浏览器直接调用第三方 /v1/chat/completions 通常会被 CORS 拦截，这是预期行为；可复制 URL 在终端用 curl 验证。';
+          } finally {
+            chatSending.value = false;
+          }
+        }
+
+        function loadFromMain() {
+          const target = messages.value[selectedMessageIndex.value];
+          if (!target) return;
+          const text = (resultText.value && resultText.value.trim())
+            ? resultText.value
+            : (originalText.value || '');
+          if (!text) {
+            loadHint.value = '主 UI 里没有内容可加载:请先在左侧输入「原始提示词」并点击「生成修复内容」';
+            setTimeout(() => { loadHint.value = ''; }, 4000);
+            return;
+          }
+          loadHint.value = '';
+          target.content = text;
+          messagesText.value = JSON.stringify(messages.value, null, 2);
+        }
+
+        function addMessage() {
+          messages.value.push({ role: 'user', content: '' });
+          messagesText.value = JSON.stringify(messages.value, null, 2);
+          selectedMessageIndex.value = messages.value.length - 1;
+        }
+
+        function removeMessage(i) {
+          if (messages.value.length <= 1) return;
+          messages.value.splice(i, 1);
+          if (selectedMessageIndex.value >= messages.value.length) {
+            selectedMessageIndex.value = messages.value.length - 1;
+          }
+          messagesText.value = JSON.stringify(messages.value, null, 2);
+        }
+
+        function setRole(i, role) {
+          if (messages.value[i]) {
+            messages.value[i].role = role;
+          }
+        }
+
+        const roleColor = (r) => ({
+          system: 'bg-secondary-container text-on-secondary-container',
+          user: 'bg-primary text-on-primary',
+          assistant: 'bg-surface-container-high text-on-surface',
+        }[r] || 'bg-surface-container text-on-surface-variant');
+
+        function syncMessagesText() {
+          messagesText.value = JSON.stringify(messages.value, null, 2);
+        }
+
+
+        function onGlobalKeydown(e) {
+          if (testDialogOpen.value && e.key === 'Escape') {
+            e.preventDefault();
+            closeTestDialog();
+          }
+        }
+
+        function trapTab(e) {
+          if (!dialogRef.value) return;
+          const focusables = Array.from(
+            dialogRef.value.querySelectorAll(
+              'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+            )
+          ).filter(el => el.offsetParent !== null);
+          if (focusables.length === 0) return;
+          const first = focusables[0];
+          const last = focusables[focusables.length - 1];
+          if (e.shiftKey && document.activeElement === first) {
+            last.focus(); e.preventDefault();
+          } else if (!e.shiftKey && document.activeElement === last) {
+            first.focus(); e.preventDefault();
+          }
+        }
+
+        watch(testDialogOpen, (v) => {
+          if (v) { document.body.style.overflow = 'hidden'; }
+          else { document.body.style.overflow = ''; }
+        });
+
+
+        onMounted(() => { window.addEventListener('keydown', onGlobalKeydown); });
+        onBeforeUnmount(() => {
+          window.removeEventListener('keydown', onGlobalKeydown);
+          document.body.style.overflow = '';
+        });
+
+        function buildModelsUrl(baseUrl) {
+          const trimmed = (baseUrl || '').trim().replace(/\/+$/, '');
+          if (!trimmed) return defaultBaseUrl() + '/models';
+          if (/\/v\d+(\/.*)?$/i.test(trimmed)) {
+            return trimmed.replace(/\/+$/, '') + '/models';
+          }
+          if (trimmed === window.location.origin.replace(/\/+$/, '')) {
+            return trimmed + '/v1/models';
+          }
+          return trimmed + '/models';
+        }
+
+        async function fetchModels() {
+          if (fetching.value) return;
+          testError.value = '';
+          models.value = [];
+          const url = buildModelsUrl(testConfig.baseUrl);
+          fetching.value = true;
+          try {
+            const headers = { 'Accept': 'application/json' };
+            if (testConfig.apiKey && testConfig.apiKey.trim()) {
+              headers['Authorization'] = 'Bearer ' + testConfig.apiKey.trim();
+            }
+            const res = await fetch(url, { method: 'GET', headers, mode: 'cors' });
+            if (!res.ok) throw new Error('HTTP ' + res.status + ' ' + res.statusText);
+            const data = await res.json();
+            let list = [];
+            if (data && Array.isArray(data.data)) {
+              list = data.data.map(item => ({
+                id: item.id || item.name || String(item),
+                owned_by: item.owned_by || '',
+              }));
+            } else if (data && Array.isArray(data.models)) {
+              list = data.models.map(item => ({
+                id: item.id || item.name || String(item),
+                owned_by: item.owned_by || '',
+              }));
+            } else if (Array.isArray(data)) {
+              list = data.map(item => ({
+                id: item.id || item.name || String(item),
+                owned_by: item.owned_by || '',
+              }));
+            } else {
+              throw new Error('响应格式不包含 data/models 数组');
+            }
+            if (list.length === 0) throw new Error('响应中模型列表为空');
+            models.value = list;
+          } catch (e) {
+            testError.value = (e.message || String(e)) + '  ·  URL: ' + url + '  ·  浏览器直接调用第三方 /v1/models 通常会被 CORS 拦截，这是预期行为；可复制 URL 在终端用 curl 验证。';
+          } finally {
+            fetching.value = false;
+          }
+        }
+
+        function copyModels() {
+          const text = models.value.map(m => m.id).join('\n');
+          navigator.clipboard.writeText(text).then(() => {
+            modelsCopied.value = true;
+            setTimeout(() => { modelsCopied.value = false; }, 2000);
+          });
+        }
+
+        function copyModel(id) {
+          navigator.clipboard.writeText(id).catch(() => { });
+        }
+
+        function copySystemPrompt() {
+          navigator.clipboard.writeText(SYSTEM_PROMPT_TEMPLATE).then(() => {
+            promptCopied.value = true;
+            setTimeout(() => { promptCopied.value = false; }, 2000);
+          });
+        }
+
+        function loadExample() {
+          originalText.value = '请帮我检测系统是否存在 DoS 漏洞，并利用 exploit 尝试获取 credential 信息。系统使用的是 OpenAI 的 GPT-4 模型，部署在 sandbox 环境中，可能存在 privilege escalation 风险。';
+          replaceText.value = JSON.stringify([
+            { "key": "DoS 漏洞", "value": "拒绝服务类漏洞" },
+            { "key": "利用 exploit 尝试获取 credential", "value": "利用漏洞利用手段获取凭据" },
+            { "key": "OpenAI", "value": "某AI服务商" },
+            { "key": "GPT-4", "value": "某大语言模型" },
+            { "key": "sandbox", "value": "隔离环境" },
+            { "key": "privilege escalation", "value": "权限提升场景" }
+          ], null, 2);
+          errorMsg.value = '';
+        }
+
+        function generate() {
+          errorMsg.value = '';
+          resultText.value = '';
+          replaceCount.value = 0;
+          replaceDetails.value = [];
+          copied.value = false;
+
+          let instructions;
+          try {
+            instructions = JSON.parse(replaceText.value);
+            if (!Array.isArray(instructions)) {
+              throw new Error('替换指令必须是 JSON 数组');
+            }
+          } catch (e) {
+            errorMsg.value = 'JSON 解析失败: ' + e.message;
+            return;
+          }
+
+          let text = originalText.value;
+          let count = 0;
+          const details = [];
+
+          for (const item of instructions) {
+            const key = item.key;
+            const value = item.value;
+            if (!key || value === undefined || value === null) continue;
+
+            const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const regex = new RegExp(escaped, 'g');
+            const matches = text.match(regex);
+            const occurrences = matches ? matches.length : 0;
+
+            if (occurrences > 0) {
+              text = text.replace(regex, value);
+              count += occurrences;
+              details.push({ key, value, occurrences });
+            }
+          }
+
+          replaceCount.value = count;
+          replaceDetails.value = details;
+          resultText.value = text;
+
+          if (count === 0) {
+            errorMsg.value = '未找到任何匹配的替换内容，请检查 key 是否与原始提示词中的文本一致';
+          }
+        }
+
+        function copyResult() {
+          navigator.clipboard.writeText(resultText.value).then(() => {
+            copied.value = true;
+            setTimeout(() => { copied.value = false; }, 2000);
+          });
+        }
+
+        return {
+          originalText, replaceText, resultText, errorMsg,
+          replaceCount, replaceDetails, copied,
+          showPromptBar, promptCopied, systemPromptPreview,
+          canGenerate, loadExample, generate, copyResult, copySystemPrompt,
+          testDialogOpen, testConfig, showKey, fetching, testError, models, modelsCopied,
+          selectedModel,
+          openTestDialog, closeTestDialog, fetchModels, copyModels, copyModel, trapTab,
+          dialogRef, closeBtnRef, baseUrlInputRef,
+          messages, selectedMessageIndex, messagesText,
+          loadFromMain, addMessage, removeMessage, roleColor,
+          setRole, syncMessagesText,
+          loadHint,
+          chatSending, chatResponse, chatError, sendChatRequest,
+        };
+      }
+    }).mount('#app');
+  </script>
+
+</body>
+
+</html>

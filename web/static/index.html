@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh-CN">
 
 <head>
@@ -107,9 +107,17 @@
       <header
         class="h-12 bg-surface-container-lowest border-b border-outline-variant flex items-center justify-between px-margin shrink-0">
         <span class="font-headline-sm text-body-md font-semibold text-primary">{{activePageLabel}}</span>
-        <div
-          class="font-label-md text-label-md text-secondary bg-surface-container-low border border-outline-variant rounded-lg px-2.5 py-1">
-          <span class="material-symbols-outlined text-[14px]">schedule</span> {{now}}
+        <div class="flex items-center gap-xs">
+          <a href="/prompt_fixer" target="_blank" rel="noopener"
+            class="inline-flex items-center gap-xs px-2.5 py-1 bg-surface-container-low border border-outline-variant rounded-lg font-label-md text-label-md text-primary hover:bg-surface-container-high transition-colors"
+            title="提示词工具 - 在新窗口打开">
+            <span class="material-symbols-outlined text-[14px]">auto_fix</span>
+            <span>提示词工具</span>
+          </a>
+          <div
+            class="font-label-md text-label-md text-secondary bg-surface-container-low border border-outline-variant rounded-lg px-2.5 py-1">
+            <span class="material-symbols-outlined text-[14px]">schedule</span> {{now}}
+          </div>
         </div>
       </header>
       <main class="flex-1 overflow-y-auto p-margin scrollbar-hide">
@@ -125,9 +133,11 @@
                   class="inline-flex items-center gap-1 px-2.5 py-1.5 bg-surface-container text-primary font-label-md text-label-md rounded-lg hover:bg-surface-container-high transition-colors border border-outline-variant">
                   <span class="text-secondary text-[11px]">模型:</span>
                   <span class="truncate max-w-[100px]">{{testModel}}</span>
-                  <span class="material-symbols-outlined text-secondary text-[14px] transition-transform duration-200" :class="testModelDropdown?'rotate-180':''">expand_more</span>
+                  <span class="material-symbols-outlined text-secondary text-[14px] transition-transform duration-200"
+                    :class="testModelDropdown?'rotate-180':''">expand_more</span>
                 </button>
-                <div v-show="testModelDropdown" class="absolute top-full left-0 mt-1 w-48 bg-surface-container-lowest border border-outline-variant rounded-lg pro-shadow z-50 py-1 max-h-64 overflow-y-auto">
+                <div v-show="testModelDropdown"
+                  class="absolute top-full left-0 mt-1 w-48 bg-surface-container-lowest border border-outline-variant rounded-lg pro-shadow z-50 py-1 max-h-64 overflow-y-auto">
                   <button v-for="m in pgModels" :key="m" @mousedown.prevent="selectTestModel(m)"
                     :class="['w-full flex items-center justify-between px-3 py-1.5 text-left font-label-md text-label-md rounded-lg transition-colors', testModel===m?'bg-primary text-on-primary font-medium':'text-primary hover:bg-surface-container-low']">
                     <span class="truncate">{{m}}</span>
@@ -150,7 +160,8 @@
               <thead class="bg-surface-container-low text-secondary font-label-md uppercase tracking-wider text-[10px]">
                 <tr>
                   <th class="text-left px-md py-sm w-10">
-                    <input type="checkbox" @change="toggleSelectAll" :checked="isAllSelected" class="accent-primary w-4 h-4 cursor-pointer">
+                    <input type="checkbox" @change="toggleSelectAll" :checked="isAllSelected"
+                      class="accent-primary w-4 h-4 cursor-pointer">
                   </th>
                   <th class="text-left px-md py-sm">昵称</th>
                   <th class="text-left px-md py-sm">UID</th>
@@ -167,7 +178,8 @@
               <tbody class="divide-y divide-outline-variant">
                 <tr v-for="a in accounts" :key="a.uid" class="hover:bg-surface-container-low/50 transition-colors">
                   <td class="px-md py-sm">
-                    <input type="checkbox" v-model="selectedAccounts" :value="a.uid" class="accent-primary w-4 h-4 cursor-pointer">
+                    <input type="checkbox" v-model="selectedAccounts" :value="a.uid"
+                      class="accent-primary w-4 h-4 cursor-pointer">
                   </td>
                   <td class="px-md py-sm font-medium text-primary">{{a.nickname}}</td>
                   <td class="px-md py-sm font-label-md text-[11px] text-on-surface-variant">{{a.uid}}</td>
@@ -180,8 +192,10 @@
                       </div><span class="text-secondary text-[11px] font-label-md">{{fmtNum(a.quota_remaining)}}</span>
                     </div>
                   </td>
-                  <td class="px-md py-sm font-label-md text-[10px] text-secondary truncate max-w-[80px]" :title="a.auth_token">{{a.has_auth_token ? a.auth_token : '—'}}</td>
-                  <td class="px-md py-sm font-label-md text-[10px] text-secondary truncate max-w-[80px]" :title="a.api_key">{{a.has_api_key ? a.api_key : '—'}}</td>
+                  <td class="px-md py-sm font-label-md text-[10px] text-secondary truncate max-w-[80px]"
+                    :title="a.auth_token">{{a.has_auth_token ? a.auth_token : '—'}}</td>
+                  <td class="px-md py-sm font-label-md text-[10px] text-secondary truncate max-w-[80px]"
+                    :title="a.api_key">{{a.has_api_key ? a.api_key : '—'}}</td>
                   <td class="px-md py-sm">
                     <div class="flex items-center gap-xs text-[11px] font-label-md">
                       <span v-if="a.has_api_key" class="text-[#1e7e34]">✅ API</span>
@@ -201,10 +215,13 @@
                       <button @click="testAccount(a)" :disabled="testLoading[a.uid]"
                         class="w-7 h-7 flex items-center justify-center rounded-lg text-secondary hover:bg-surface-container-low hover:text-primary transition-colors disabled:opacity-30"
                         :title="testResult[a.uid] ? (testResult[a.uid].success ? '连通 · '+testResult[a.uid].duration_ms+'ms' : ('失败: '+testResult[a.uid].error)) : '测试连通性'">
-                        <span v-if="testLoading[a.uid]" class="spinner inline-block w-3.5 h-3.5 border-2 border-secondary/30 border-t-secondary rounded-full"></span>
+                        <span v-if="testLoading[a.uid]"
+                          class="spinner inline-block w-3.5 h-3.5 border-2 border-secondary/30 border-t-secondary rounded-full"></span>
                         <span v-else class="material-symbols-outlined text-[16px]">science</span>
                       </button>
-                      <span v-if="testResult[a.uid]" :class="testResult[a.uid].success ? 'text-[#1e7e34]' : 'text-error'" class="font-label-md text-[10px]">{{testResult[a.uid].success ? '✓ '+testResult[a.uid].duration_ms+'ms' : '✗'}}</span>
+                      <span v-if="testResult[a.uid]"
+                        :class="testResult[a.uid].success ? 'text-[#1e7e34]' : 'text-error'"
+                        class="font-label-md text-[10px]">{{testResult[a.uid].success ? '✓' + testResult[a.uid].duration_ms + 'ms' : '✗'}}</span>
                       <button @click="querySingleQuota(a)" :disabled="quotaLoading[a.uid]"
                         class="w-7 h-7 flex items-center justify-center rounded-lg text-secondary hover:bg-surface-container-low hover:text-primary transition-colors disabled:opacity-30"
                         title="配额"><span
@@ -221,12 +238,16 @@
               </tbody>
             </table>
           </div>
-          <div v-if="selectedAccounts.length > 0" class="flex items-center justify-between bg-secondary-container/30 rounded-lg px-md py-sm">
-            <span class="font-label-md text-label-md text-on-secondary-container">已选中 {{selectedAccounts.length}} / {{accounts.length}} 个账户</span>
+          <div v-if="selectedAccounts.length > 0"
+            class="flex items-center justify-between bg-secondary-container/30 rounded-lg px-md py-sm">
+            <span class="font-label-md text-label-md text-on-secondary-container">已选中 {{selectedAccounts.length}} /
+              {{accounts.length}} 个账户</span>
             <div class="flex gap-xs items-center">
-              <button @click="selectAllAccounts" class="px-2 py-0.5 text-on-secondary-container hover:text-primary font-label-md text-[11px] transition-colors rounded hover:bg-surface-container-low/50">全选</button>
+              <button @click="selectAllAccounts"
+                class="px-2 py-0.5 text-on-secondary-container hover:text-primary font-label-md text-[11px] transition-colors rounded hover:bg-surface-container-low/50">全选</button>
               <span class="text-outline-variant">|</span>
-              <button @click="invertSelection" class="px-2 py-0.5 text-on-secondary-container hover:text-primary font-label-md text-[11px] transition-colors rounded hover:bg-surface-container-low/50">反选</button>
+              <button @click="invertSelection"
+                class="px-2 py-0.5 text-on-secondary-container hover:text-primary font-label-md text-[11px] transition-colors rounded hover:bg-surface-container-low/50">反选</button>
               <span class="text-outline-variant">|</span>
               <button @click="selectedAccounts = []"
                 class="px-2 py-0.5 text-on-secondary-container hover:text-error font-label-md text-[11px] transition-colors rounded hover:bg-surface-container-low/50">清空</button>
@@ -365,13 +386,17 @@
                 <button @click="showStrategyDropdown=!showStrategyDropdown" @blur="hideStrategyDropdown"
                   class="w-full flex items-center justify-between bg-surface-container-low border border-outline-variant hover:bg-surface-container hover:border-outline rounded-lg px-2.5 py-1.5 text-left transition-colors">
                   <span class="text-primary font-medium text-label-md truncate">{{strategyLabel}}</span>
-                  <span class="material-symbols-outlined text-secondary transition-transform duration-200 shrink-0 text-[16px]" :class="showStrategyDropdown?'rotate-180':''">expand_more</span>
+                  <span
+                    class="material-symbols-outlined text-secondary transition-transform duration-200 shrink-0 text-[16px]"
+                    :class="showStrategyDropdown?'rotate-180':''">expand_more</span>
                 </button>
-                <div v-show="showStrategyDropdown" class="absolute top-full left-0 mt-1 w-full bg-surface-container-lowest border border-outline-variant rounded-lg pro-shadow z-50 py-1">
+                <div v-show="showStrategyDropdown"
+                  class="absolute top-full left-0 mt-1 w-full bg-surface-container-lowest border border-outline-variant rounded-lg pro-shadow z-50 py-1">
                   <button v-for="s in strategyOptions" :key="s.value" @mousedown.prevent="selectStrategy(s.value)"
                     :class="['w-full flex items-center justify-between px-3 py-1.5 text-left font-label-md text-label-md rounded-lg transition-colors', proxyStrategy===s.value?'bg-primary text-on-primary font-medium':'text-primary hover:bg-surface-container-low']">
                     <span class="truncate">{{s.label}}</span>
-                    <span v-if="proxyStrategy===s.value" class="material-symbols-outlined text-[16px] shrink-0 ml-auto">check</span>
+                    <span v-if="proxyStrategy===s.value"
+                      class="material-symbols-outlined text-[16px] shrink-0 ml-auto">check</span>
                   </button>
                 </div>
               </div>
@@ -448,151 +473,185 @@
           </div>
         </div>
         <div v-else-if="currentPage==='dashboard'" class="space-y-lg">
-  <!-- 总览卡片 -->
-  <div class="grid grid-cols-5 gap-gutter">
-    <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md text-center">
-      <p class="font-headline-md text-headline-md text-primary">{{fmtNum(dashboardOverview.total_requests)}}</p>
-      <p class="font-body-sm text-body-sm text-secondary">总请求数</p>
-    </div>
-    <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md text-center">
-      <p class="font-headline-md text-headline-md text-primary">{{fmtNum(dashboardOverview.total_tokens)}}</p>
-      <p class="font-body-sm text-body-sm text-secondary">总 Token</p>
-    </div>
-    <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md text-center">
-      <p class="font-headline-md text-headline-md text-primary">{{fmtCredit(dashboardOverview.total_credits)}}</p>
-      <p class="font-body-sm text-body-sm text-secondary">总消费</p>
-    </div>
-    <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md text-center">
-      <p class="font-headline-md text-headline-md text-primary">{{dashboardOverview.success_rate}}%</p>
-      <p class="font-body-sm text-body-sm text-secondary">成功率</p>
-    </div>
-    <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md text-center">
-      <p class="font-headline-md text-headline-md text-primary">{{dashboardOverview.avg_duration_ms>0?(dashboardOverview.avg_duration_ms/1000).toFixed(1)+'s':'--'}}</p>
-      <p class="font-body-sm text-body-sm text-secondary">平均耗时</p>
-    </div>
-  </div>
+          <!-- 总览卡片 -->
+          <div class="grid grid-cols-5 gap-gutter">
+            <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md text-center">
+              <p class="font-headline-md text-headline-md text-primary">{{fmtNum(dashboardOverview.total_requests)}}</p>
+              <p class="font-body-sm text-body-sm text-secondary">总请求数</p>
+            </div>
+            <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md text-center">
+              <p class="font-headline-md text-headline-md text-primary">{{fmtNum(dashboardOverview.total_tokens)}}</p>
+              <p class="font-body-sm text-body-sm text-secondary">总 Token</p>
+            </div>
+            <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md text-center">
+              <p class="font-headline-md text-headline-md text-primary">{{fmtCredit(dashboardOverview.total_credits)}}
+              </p>
+              <p class="font-body-sm text-body-sm text-secondary">总消费</p>
+            </div>
+            <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md text-center">
+              <p class="font-headline-md text-headline-md text-primary">{{dashboardOverview.success_rate}}%</p>
+              <p class="font-body-sm text-body-sm text-secondary">成功率</p>
+            </div>
+            <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md text-center">
+              <p class="font-headline-md text-headline-md text-primary">
+                {{dashboardOverview.avg_duration_ms>0?(dashboardOverview.avg_duration_ms/1000).toFixed(1)+'s':'--'}}</p>
+              <p class="font-body-sm text-body-sm text-secondary">平均耗时</p>
+            </div>
+          </div>
 
-  <!-- 成功/失败统计条 -->
-  <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md flex items-center gap-lg">
-    <div class="flex items-center gap-sm"><span class="w-3 h-3 rounded-full bg-primary"></span><span class="font-label-md text-label-md">成功 {{fmtNum(dashboardOverview.total_success)}}</span></div>
-    <div class="flex items-center gap-sm"><span class="w-3 h-3 rounded-full bg-error"></span><span class="font-label-md text-label-md">失败 {{fmtNum(dashboardOverview.total_failed)}}</span></div>
-    <div class="flex-1 bg-surface-container-low rounded-full h-2 overflow-hidden">
-      <div class="h-full bg-primary rounded-full transition-all" :style="{width:dashboardOverview.success_rate+'%'}"></div>
-    </div>
-    <span class="font-label-md text-label-md text-secondary">{{dashboardOverview.success_rate}}%</span>
-  </div>
+          <!-- 成功/失败统计条 -->
+          <div
+            class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md flex items-center gap-lg">
+            <div class="flex items-center gap-sm"><span class="w-3 h-3 rounded-full bg-primary"></span><span
+                class="font-label-md text-label-md">成功 {{fmtNum(dashboardOverview.total_success)}}</span></div>
+            <div class="flex items-center gap-sm"><span class="w-3 h-3 rounded-full bg-error"></span><span
+                class="font-label-md text-label-md">失败 {{fmtNum(dashboardOverview.total_failed)}}</span></div>
+            <div class="flex-1 bg-surface-container-low rounded-full h-2 overflow-hidden">
+              <div class="h-full bg-primary rounded-full transition-all"
+                :style="{width:dashboardOverview.success_rate+'%'}"></div>
+            </div>
+            <span class="font-label-md text-label-md text-secondary">{{dashboardOverview.success_rate}}%</span>
+          </div>
 
-  <!-- 日历热力图 + 趋势图（并排） -->
-  <div class="grid grid-cols-2 gap-gutter">
-    <!-- 积分消耗日历 -->
-    <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md">
-      <div class="flex items-center justify-between mb-sm">
-        <p class="font-label-md text-label-md text-secondary uppercase tracking-wider">积分消耗月历</p>
-        <div class="flex items-center gap-xs bg-surface-container-low rounded-lg p-0.5">
-          <button @click="calMonth--" class="w-7 h-7 rounded flex items-center justify-center hover:bg-surface-container-high text-secondary hover:text-primary transition-colors">
-            <span class="material-symbols-outlined text-[14px]">chevron_left</span>
-          </button>
-          <span class="text-[11px] font-semibold text-primary px-2 min-w-[80px] text-center select-none">{{calYear}}年 {{calMonthDisplay}}月</span>
-          <button @click="calMonth++" :disabled="calMonth>=nowMonth" class="w-7 h-7 rounded flex items-center justify-center hover:bg-surface-container-high text-secondary hover:text-primary transition-colors disabled:opacity-30">
-            <span class="material-symbols-outlined text-[14px]">chevron_right</span>
-          </button>
-        </div>
-      </div>
-      <div v-if="calendarData.length===0" class="text-center py-lg text-secondary font-body-sm">暂无数据</div>
-      <div v-else class="w-full">
-        <div class="grid grid-cols-7 gap-1 mb-1 text-center text-[10px] font-semibold text-secondary">
-          <div>日</div><div>一</div><div>二</div><div>三</div><div>四</div><div>五</div><div>六</div>
-        </div>
-        <div class="grid grid-cols-7 gap-1" style="grid-auto-rows:minmax(38px,auto)">
-          <template v-for="(cell,i) in calCells" :key="i">
-            <div v-if="cell.day===null" class="rounded-md"></div>
-            <div v-else
-                 :class="['rounded-md border flex flex-col items-center justify-center transition-all p-0.5 min-h-[38px]',
+          <!-- 日历热力图 + 趋势图（并排） -->
+          <div class="grid grid-cols-2 gap-gutter">
+            <!-- 积分消耗日历 -->
+            <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md">
+              <div class="flex items-center justify-between mb-sm">
+                <p class="font-label-md text-label-md text-secondary uppercase tracking-wider">积分消耗月历</p>
+                <div class="flex items-center gap-xs bg-surface-container-low rounded-lg p-0.5">
+                  <button @click="calMonth--"
+                    class="w-7 h-7 rounded flex items-center justify-center hover:bg-surface-container-high text-secondary hover:text-primary transition-colors">
+                    <span class="material-symbols-outlined text-[14px]">chevron_left</span>
+                  </button>
+                  <span
+                    class="text-[11px] font-semibold text-primary px-2 min-w-[80px] text-center select-none">{{calYear}}年
+                    {{calMonthDisplay}}月</span>
+                  <button @click="calMonth++" :disabled="calMonth>=nowMonth"
+                    class="w-7 h-7 rounded flex items-center justify-center hover:bg-surface-container-high text-secondary hover:text-primary transition-colors disabled:opacity-30">
+                    <span class="material-symbols-outlined text-[14px]">chevron_right</span>
+                  </button>
+                </div>
+              </div>
+              <div v-if="calendarData.length===0" class="text-center py-lg text-secondary font-body-sm">暂无数据</div>
+              <div v-else class="w-full">
+                <div class="grid grid-cols-7 gap-1 mb-1 text-center text-[10px] font-semibold text-secondary">
+                  <div>日</div>
+                  <div>一</div>
+                  <div>二</div>
+                  <div>三</div>
+                  <div>四</div>
+                  <div>五</div>
+                  <div>六</div>
+                </div>
+                <div class="grid grid-cols-7 gap-1" style="grid-auto-rows:minmax(38px,auto)">
+                  <template v-for="(cell,i) in calCells" :key="i">
+                    <div v-if="cell.day===null" class="rounded-md"></div>
+                    <div v-else :class="['rounded-md border flex flex-col items-center justify-center transition-all p-0.5 min-h-[38px]',
                    cell.isToday ? 'bg-primary border-primary text-on-primary shadow-sm' :
                    cell.hasCredits ? 'bg-surface-container-low border-outline-variant text-primary hover:scale-[1.05] cursor-pointer' :
                    cell.isFuture ? 'bg-surface-container-lowest/50 border-outline-variant/30 text-outline/40' :
                    'bg-surface-container-lowest border-outline-variant text-outline']">
-              <span class="text-[8px] leading-none" :class="cell.isToday?'text-on-primary/70':cell.isFuture?'text-outline/40':'text-secondary'">{{cell.day}}</span>
-              <span class="text-[10px] font-bold leading-none mt-0.5"
-                    :class="cell.isToday?'text-on-primary':cell.hasCredits?'text-primary':cell.isFuture?'text-outline/30':'text-secondary'">
-                {{cell.hasCredits ? fmtCredit(cell.credits) : (cell.credits===0 ? '0' : '-')}}
-              </span>
+                      <span class="text-[8px] leading-none"
+                        :class="cell.isToday?'text-on-primary/70':cell.isFuture?'text-outline/40':'text-secondary'">{{cell.day}}</span>
+                      <span class="text-[10px] font-bold leading-none mt-0.5"
+                        :class="cell.isToday?'text-on-primary':cell.hasCredits?'text-primary':cell.isFuture?'text-outline/30':'text-secondary'">
+                        {{cell.hasCredits ? fmtCredit(cell.credits) : (cell.credits===0 ? '0' : '-')}}
+                      </span>
+                    </div>
+                  </template>
+                </div>
+              </div>
+              <div
+                class="flex items-center gap-md mt-sm pt-sm border-t border-outline-variant text-[10px] text-secondary">
+                <span class="flex items-center gap-1"><span
+                    class="w-3 h-3 bg-surface-container-lowest border border-outline-variant rounded-sm"></span>无消耗</span>
+                <span class="flex items-center gap-1"><span
+                    class="w-3 h-3 bg-surface-container-low border border-outline-variant rounded-sm"></span>有消耗</span>
+                <span class="flex items-center gap-1"><span class="w-3 h-3 bg-primary rounded-sm"></span>今天</span>
+              </div>
             </div>
-          </template>
-        </div>
-      </div>
-      <div class="flex items-center gap-md mt-sm pt-sm border-t border-outline-variant text-[10px] text-secondary">
-        <span class="flex items-center gap-1"><span class="w-3 h-3 bg-surface-container-lowest border border-outline-variant rounded-sm"></span>无消耗</span>
-        <span class="flex items-center gap-1"><span class="w-3 h-3 bg-surface-container-low border border-outline-variant rounded-sm"></span>有消耗</span>
-        <span class="flex items-center gap-1"><span class="w-3 h-3 bg-primary rounded-sm"></span>今天</span>
-      </div>
-    </div>
 
-<!-- 每日消耗趋势折线图 -->
-    <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md">
-      <div class="flex items-center justify-between mb-sm">
-        <p class="font-label-md text-label-md text-secondary uppercase tracking-wider">每日消耗趋势 (最近30天)</p>
-        <div class="flex items-center gap-xs">
-          <span v-if="trendWindowSize<30" class="text-[10px] text-secondary bg-surface-container-low px-2 py-0.5 rounded">视窗: {{trendWindowSize}}天</span>
-          <button v-if="trendWindowSize<30" @click="resetTrendView"
-            class="text-[10px] font-semibold text-primary bg-surface-container-low hover:bg-surface-container-high px-2 py-0.5 rounded transition-colors">
-            重置
-          </button>
-        </div>
-      </div>
-      <div v-if="calendarData.length===0" class="text-center py-lg text-secondary font-body-sm">暂无数据</div>
-      <div v-else id="trendContainer" @wheel.prevent="onTrendWheel" class="relative w-full" style="height:240px;cursor:default" ref="trendContainer">
-        <svg id="trendSvg" class="w-full h-full overflow-visible select-none" @mousedown="onTrendMouseDown" style="cursor:grab"></svg>
-        <div id="trendTooltip" class="absolute pointer-events-none opacity-0 transition-opacity duration-150 bg-black/90 text-white px-3 py-2 rounded-lg shadow-lg z-10 flex flex-col min-w-[110px]">
-          <span id="ttDate" class="text-[10px] text-white/60 font-medium">2026-07-01</span>
-          <span id="ttValue" class="text-xs font-bold text-white mt-0.5">0 积分</span>
-        </div>
-        <div v-if="trendAllZero" class="absolute inset-0 flex items-center justify-center pointer-events-none">
-          <span class="text-xs text-secondary bg-surface-container-lowest/80 px-3 py-1.5 rounded-md">最近30天无消耗</span>
-        </div>
-      </div>
-    </div>
-  </div>
+            <!-- 每日消耗趋势折线图 -->
+            <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md">
+              <div class="flex items-center justify-between mb-sm">
+                <p class="font-label-md text-label-md text-secondary uppercase tracking-wider">每日消耗趋势 (最近30天)</p>
+                <div class="flex items-center gap-xs">
+                  <span v-if="trendWindowSize<30"
+                    class="text-[10px] text-secondary bg-surface-container-low px-2 py-0.5 rounded">视窗:
+                    {{trendWindowSize}}天</span>
+                  <button v-if="trendWindowSize<30" @click="resetTrendView"
+                    class="text-[10px] font-semibold text-primary bg-surface-container-low hover:bg-surface-container-high px-2 py-0.5 rounded transition-colors">
+                    重置
+                  </button>
+                </div>
+              </div>
+              <div v-if="calendarData.length===0" class="text-center py-lg text-secondary font-body-sm">暂无数据</div>
+              <div v-else id="trendContainer" @wheel.prevent="onTrendWheel" class="relative w-full"
+                style="height:240px;cursor:default" ref="trendContainer">
+                <svg id="trendSvg" class="w-full h-full overflow-visible select-none" @mousedown="onTrendMouseDown"
+                  style="cursor:grab"></svg>
+                <div id="trendTooltip"
+                  class="absolute pointer-events-none opacity-0 transition-opacity duration-150 bg-black/90 text-white px-3 py-2 rounded-lg shadow-lg z-10 flex flex-col min-w-[110px]">
+                  <span id="ttDate" class="text-[10px] text-white/60 font-medium">2026-07-01</span>
+                  <span id="ttValue" class="text-xs font-bold text-white mt-0.5">0 积分</span>
+                </div>
+                <div v-if="trendAllZero" class="absolute inset-0 flex items-center justify-center pointer-events-none">
+                  <span
+                    class="text-xs text-secondary bg-surface-container-lowest/80 px-3 py-1.5 rounded-md">最近30天无消耗</span>
+                </div>
+              </div>
+            </div>
+          </div>
 
-  <!-- 环形图（并排） -->
-  <div class="grid grid-cols-2 gap-gutter">
-    <!-- 模型消耗分布 -->
-    <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md">
-      <p class="font-label-md text-label-md text-secondary mb-sm uppercase tracking-wider">模型消耗分布</p>
-      <div class="flex items-center gap-md" v-if="dashboardOverview.by_model&&dashboardOverview.by_model.length>0">
-        <svg viewBox="0 0 120 120" class="w-28 h-28 shrink-0">
-          <circle v-for="(seg,i) in modelDonutSegs" :key="i" cx="60" cy="60" r="48" fill="none" :stroke="seg.color" stroke-width="20" :stroke-dasharray="seg.dash" :stroke-dashoffset="seg.offset" transform="rotate(-90 60 60)" style="transition:all 0.5s"/>
-        </svg>
-        <div class="space-y-xs flex-1 min-w-0">
-          <div v-for="(m,i) in dashboardOverview.by_model.slice(0,6)" :key="i" class="flex items-center gap-xs text-[11px]">
-            <span class="w-2 h-2 rounded-full shrink-0" :style="{background:donutColors[i%donutColors.length]}"></span>
-            <span class="text-primary truncate">{{m.name}}</span>
-            <span class="text-secondary ml-auto shrink-0">{{fmtCredit(m.credits)}}</span>
+          <!-- 环形图（并排） -->
+          <div class="grid grid-cols-2 gap-gutter">
+            <!-- 模型消耗分布 -->
+            <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md">
+              <p class="font-label-md text-label-md text-secondary mb-sm uppercase tracking-wider">模型消耗分布</p>
+              <div class="flex items-center gap-md"
+                v-if="dashboardOverview.by_model&&dashboardOverview.by_model.length>0">
+                <svg viewBox="0 0 120 120" class="w-28 h-28 shrink-0">
+                  <circle v-for="(seg,i) in modelDonutSegs" :key="i" cx="60" cy="60" r="48" fill="none"
+                    :stroke="seg.color" stroke-width="20" :stroke-dasharray="seg.dash" :stroke-dashoffset="seg.offset"
+                    transform="rotate(-90 60 60)" style="transition:all 0.5s" />
+                </svg>
+                <div class="space-y-xs flex-1 min-w-0">
+                  <div v-for="(m,i) in dashboardOverview.by_model.slice(0,6)" :key="i"
+                    class="flex items-center gap-xs text-[11px]">
+                    <span class="w-2 h-2 rounded-full shrink-0"
+                      :style="{background:donutColors[i%donutColors.length]}"></span>
+                    <span class="text-primary truncate">{{m.name}}</span>
+                    <span class="text-secondary ml-auto shrink-0">{{fmtCredit(m.credits)}}</span>
+                  </div>
+                </div>
+              </div>
+              <div v-else class="text-center py-lg text-secondary font-body-sm">暂无数据</div>
+            </div>
+
+            <!-- 账号消耗分布 -->
+            <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md">
+              <p class="font-label-md text-label-md text-secondary mb-sm uppercase tracking-wider">账号消耗分布</p>
+              <div class="flex items-center gap-md" v-if="dashboardOverview.by_key&&dashboardOverview.by_key.length>0">
+                <svg viewBox="0 0 120 120" class="w-28 h-28 shrink-0">
+                  <circle v-for="(seg,i) in keyDonutSegs" :key="i" cx="60" cy="60" r="48" fill="none"
+                    :stroke="seg.color" stroke-width="20" :stroke-dasharray="seg.dash" :stroke-dashoffset="seg.offset"
+                    transform="rotate(-90 60 60)" style="transition:all 0.5s" />
+                </svg>
+                <div class="space-y-xs flex-1 min-w-0">
+                  <div v-for="(k,i) in dashboardOverview.by_key.slice(0,6)" :key="i"
+                    class="flex items-center gap-xs text-[11px]">
+                    <span class="w-2 h-2 rounded-full shrink-0"
+                      :style="{background:donutColors[i%donutColors.length]}"></span>
+                    <span class="text-primary truncate">{{k.name}}</span>
+                    <span class="text-secondary ml-auto shrink-0">{{fmtCredit(k.credits)}}</span>
+                  </div>
+                </div>
+              </div>
+              <div v-else class="text-center py-lg text-secondary font-body-sm">暂无数据</div>
+            </div>
           </div>
         </div>
-      </div>
-      <div v-else class="text-center py-lg text-secondary font-body-sm">暂无数据</div>
-    </div>
-
-    <!-- 账号消耗分布 -->
-    <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md">
-      <p class="font-label-md text-label-md text-secondary mb-sm uppercase tracking-wider">账号消耗分布</p>
-      <div class="flex items-center gap-md" v-if="dashboardOverview.by_key&&dashboardOverview.by_key.length>0">
-        <svg viewBox="0 0 120 120" class="w-28 h-28 shrink-0">
-          <circle v-for="(seg,i) in keyDonutSegs" :key="i" cx="60" cy="60" r="48" fill="none" :stroke="seg.color" stroke-width="20" :stroke-dasharray="seg.dash" :stroke-dashoffset="seg.offset" transform="rotate(-90 60 60)" style="transition:all 0.5s"/>
-        </svg>
-        <div class="space-y-xs flex-1 min-w-0">
-          <div v-for="(k,i) in dashboardOverview.by_key.slice(0,6)" :key="i" class="flex items-center gap-xs text-[11px]">
-            <span class="w-2 h-2 rounded-full shrink-0" :style="{background:donutColors[i%donutColors.length]}"></span>
-            <span class="text-primary truncate">{{k.name}}</span>
-            <span class="text-secondary ml-auto shrink-0">{{fmtCredit(k.credits)}}</span>
-          </div>
-        </div>
-      </div>
-      <div v-else class="text-center py-lg text-secondary font-body-sm">暂无数据</div>
-    </div>
-  </div>
-</div>
         <div v-else-if="currentPage==='logs'" class="space-y-lg">
           <div class="flex items-center justify-between">
             <span class="font-headline-lg text-headline-lg text-primary">请求日志</span>
@@ -600,8 +659,10 @@
               <span class="text-secondary font-body-sm text-[11px]">共 {{logsTotal}} 条</span>
               <button @click="loadRequestLogs()" :disabled="requestLogsLoading"
                 class="inline-flex items-center gap-xs px-3 py-1.5 bg-primary text-on-primary font-label-md text-label-md rounded-lg hover:opacity-90 transition-opacity disabled:opacity-30">
-                <span v-if="requestLogsLoading" class="spinner inline-block w-3.5 h-3.5 border-2 border-on-primary/30 border-t-on-primary rounded-full"></span>
-                <span v-else class="material-symbols-outlined text-[16px]">refresh</span>{{requestLogsLoading?'加载中...':'刷新'}}
+                <span v-if="requestLogsLoading"
+                  class="spinner inline-block w-3.5 h-3.5 border-2 border-on-primary/30 border-t-on-primary rounded-full"></span>
+                <span v-else
+                  class="material-symbols-outlined text-[16px]">refresh</span>{{requestLogsLoading?'加载中...':'刷新'}}
               </button>
               <button @click="clearLogs"
                 class="inline-flex items-center gap-xs px-3 py-1.5 bg-error-container text-on-error-container font-label-md text-label-md rounded-lg hover:opacity-90 transition-opacity">
@@ -611,26 +672,31 @@
           </div>
           <div class="grid grid-cols-4 gap-gutter">
             <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md text-center">
-              <p class="font-headline-md text-headline-md text-primary">{{requestLogs.filter(l=>l.status==='success').length}}</p>
+              <p class="font-headline-md text-headline-md text-primary">
+                {{requestLogs.filter(l=>l.status==='success').length}}</p>
               <p class="font-body-sm text-body-sm text-secondary">成功（本页）</p>
             </div>
             <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md text-center">
-              <p class="font-headline-md text-headline-md text-error">{{requestLogs.filter(l=>l.status==='failed').length}}</p>
+              <p class="font-headline-md text-headline-md text-error">
+                {{requestLogs.filter(l=>l.status==='failed').length}}</p>
               <p class="font-body-sm text-body-sm text-secondary">失败（本页）</p>
             </div>
             <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md text-center">
-              <p class="font-headline-md text-headline-md text-primary">{{requestLogs.reduce((s,l)=>s+(l.credit||0),0).toFixed(2)}}</p>
+              <p class="font-headline-md text-headline-md text-primary">
+                {{requestLogs.reduce((s,l)=>s+(l.credit||0),0).toFixed(2)}}</p>
               <p class="font-body-sm text-body-sm text-secondary">消耗积分（本页）</p>
             </div>
             <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md text-center">
-              <p class="font-headline-md text-headline-md text-primary">{{requestLogs.reduce((s,l)=>s+(l.total_tokens||0),0)}}</p>
+              <p class="font-headline-md text-headline-md text-primary">
+                {{requestLogs.reduce((s,l)=>s+(l.total_tokens||0),0)}}</p>
               <p class="font-body-sm text-body-sm text-secondary">总 Token（本页）</p>
             </div>
           </div>
           <div class="bg-surface-container-lowest border border-outline-variant rounded-xl overflow-hidden">
             <div class="overflow-x-auto max-h-[500px] overflow-y-auto scrollbar-hide">
               <table class="w-full text-body-sm" v-if="requestLogs.length>0">
-                <thead class="bg-surface-container-low text-secondary font-label-md uppercase tracking-wider text-[10px] sticky top-0 z-10">
+                <thead
+                  class="bg-surface-container-low text-secondary font-label-md uppercase tracking-wider text-[10px] sticky top-0 z-10">
                   <tr>
                     <th class="text-left px-md py-sm whitespace-nowrap">时间</th>
                     <th class="text-left px-md py-sm whitespace-nowrap">模型</th>
@@ -648,20 +714,33 @@
                 <tbody class="divide-y divide-outline-variant">
                   <tr v-for="(log,i) in requestLogs" :key="i"
                     :class="['hover:bg-surface-container-low/50 transition-colors', log.status==='failed'?'bg-error/5':'']">
-                    <td class="px-md py-sm text-secondary font-label-md text-[10px] whitespace-nowrap">{{formatLogTime(log.timestamp)}}</td>
+                    <td class="px-md py-sm text-secondary font-label-md text-[10px] whitespace-nowrap">
+                      {{formatLogTime(log.timestamp)}}</td>
                     <td class="px-md py-sm text-primary font-label-md text-[10px] whitespace-nowrap">{{log.model}}</td>
-                    <td class="px-md py-sm text-secondary text-[10px] max-w-[100px] truncate" :title="log.main_key_label">{{log.main_key_label}}</td>
-                    <td class="px-md py-sm text-secondary text-[10px] whitespace-nowrap">{{strategyLabelMap[log.key_mode]||'专一'}}</td>
+                    <td class="px-md py-sm text-secondary text-[10px] max-w-[100px] truncate"
+                      :title="log.main_key_label">{{log.main_key_label}}</td>
+                    <td class="px-md py-sm text-secondary text-[10px] whitespace-nowrap">
+                      {{strategyLabelMap[log.key_mode]||'专一'}}</td>
                     <td class="px-md py-sm whitespace-nowrap">
-                      <span v-if="log.status==='success'" class="font-label-md text-[10px] px-2 py-0.5 rounded bg-secondary-container text-on-secondary-container">成功</span>
-                      <span v-else class="font-label-md text-[10px] px-2 py-0.5 rounded bg-error-container text-on-error-container" :title="log.error||''">失败</span>
+                      <span v-if="log.status==='success'"
+                        class="font-label-md text-[10px] px-2 py-0.5 rounded bg-secondary-container text-on-secondary-container">成功</span>
+                      <span v-else
+                        class="font-label-md text-[10px] px-2 py-0.5 rounded bg-error-container text-on-error-container"
+                        :title="log.error||''">失败</span>
                     </td>
-                    <td class="px-md py-sm text-right font-label-md text-[10px]" :class="log.credit>0?'text-primary':'text-secondary'">{{log.credit>0?log.credit.toFixed(2):'-'}}</td>
-                    <td class="px-md py-sm text-right font-label-md text-[10px] text-secondary">{{log.prompt_tokens>0?fmtNum(log.prompt_tokens):'-'}}</td>
-                    <td class="px-md py-sm text-right font-label-md text-[10px] text-secondary">{{log.completion_tokens>0?fmtNum(log.completion_tokens):'-'}}</td>
-                    <td class="px-md py-sm text-right font-label-md text-[10px] text-secondary">{{log.first_token_ms>0?(log.first_token_ms/1000).toFixed(1)+'s':'-'}}</td>
-                    <td class="px-md py-sm text-right font-label-md text-[10px] text-secondary">{{log.duration_ms>0?(log.duration_ms/1000).toFixed(1)+'s':'-'}}</td>
-                    <td class="px-md py-sm text-center font-label-md text-[10px]" :class="log.status==='failed'?'text-error':'text-secondary'">
+                    <td class="px-md py-sm text-right font-label-md text-[10px]"
+                      :class="log.credit>0?'text-primary':'text-secondary'">{{log.credit>0?log.credit.toFixed(2):'-'}}
+                    </td>
+                    <td class="px-md py-sm text-right font-label-md text-[10px] text-secondary">
+                      {{log.prompt_tokens>0?fmtNum(log.prompt_tokens):'-'}}</td>
+                    <td class="px-md py-sm text-right font-label-md text-[10px] text-secondary">
+                      {{log.completion_tokens>0?fmtNum(log.completion_tokens):'-'}}</td>
+                    <td class="px-md py-sm text-right font-label-md text-[10px] text-secondary">
+                      {{log.first_token_ms>0?(log.first_token_ms/1000).toFixed(1)+'s':'-'}}</td>
+                    <td class="px-md py-sm text-right font-label-md text-[10px] text-secondary">
+                      {{log.duration_ms>0?(log.duration_ms/1000).toFixed(1)+'s':'-'}}</td>
+                    <td class="px-md py-sm text-center font-label-md text-[10px]"
+                      :class="log.status==='failed'?'text-error':'text-secondary'">
                       {{log.attempt||1}} 次
                     </td>
                   </tr>
@@ -682,13 +761,17 @@
                 <button @click="showPageSizeDropdown=!showPageSizeDropdown" @blur="hidePageSizeDropdown"
                   class="w-full flex items-center justify-between bg-surface-container-low border border-outline-variant hover:bg-surface-container hover:border-outline rounded-lg px-2 py-1 text-left transition-colors">
                   <span class="text-primary font-medium text-label-md">{{logsPageSize}}</span>
-                  <span class="material-symbols-outlined text-secondary transition-transform duration-200 shrink-0 text-[14px]" :class="showPageSizeDropdown?'rotate-180':''">expand_more</span>
+                  <span
+                    class="material-symbols-outlined text-secondary transition-transform duration-200 shrink-0 text-[14px]"
+                    :class="showPageSizeDropdown?'rotate-180':''">expand_more</span>
                 </button>
-                <div v-show="showPageSizeDropdown" class="absolute bottom-full left-0 mb-1 w-full bg-surface-container-lowest border border-outline-variant rounded-lg pro-shadow z-50 py-1">
+                <div v-show="showPageSizeDropdown"
+                  class="absolute bottom-full left-0 mb-1 w-full bg-surface-container-lowest border border-outline-variant rounded-lg pro-shadow z-50 py-1">
                   <button v-for="s in pageSizeOptions" :key="s" @mousedown.prevent="setPageSize(s)"
                     :class="['w-full flex items-center justify-between px-2 py-1 text-left font-label-md text-label-md rounded-lg transition-colors', logsPageSize===s?'bg-primary text-on-primary font-medium':'text-primary hover:bg-surface-container-low']">
                     <span>{{s}}</span>
-                    <span v-if="logsPageSize===s" class="material-symbols-outlined text-[14px] shrink-0 ml-auto">check</span>
+                    <span v-if="logsPageSize===s"
+                      class="material-symbols-outlined text-[14px] shrink-0 ml-auto">check</span>
                   </button>
                 </div>
               </div>
@@ -730,45 +813,49 @@
                 <button @click="showPgModelDropdown=!showPgModelDropdown" @blur="hidePgModelDropdown"
                   class="w-full flex items-center justify-between bg-surface-container-low border border-outline-variant hover:bg-surface-container hover:border-outline rounded-lg px-2.5 py-1.5 text-left transition-colors">
                   <span class="text-primary font-medium text-label-md truncate">{{pgModel}}</span>
-                  <span class="material-symbols-outlined text-secondary transition-transform duration-200 shrink-0 text-[16px]" :class="showPgModelDropdown?'rotate-180':''">expand_more</span>
+                  <span
+                    class="material-symbols-outlined text-secondary transition-transform duration-200 shrink-0 text-[16px]"
+                    :class="showPgModelDropdown?'rotate-180':''">expand_more</span>
                 </button>
-                <div v-show="showPgModelDropdown" class="absolute top-full left-0 mt-1 w-full bg-surface-container-lowest border border-outline-variant rounded-lg pro-shadow z-50 py-1 max-h-64 overflow-y-auto">
+                <div v-show="showPgModelDropdown"
+                  class="absolute top-full left-0 mt-1 w-full bg-surface-container-lowest border border-outline-variant rounded-lg pro-shadow z-50 py-1 max-h-64 overflow-y-auto">
                   <button v-for="m in pgModels" :key="m" @mousedown.prevent="selectPgModel(m)"
                     :class="['w-full flex items-center justify-between px-3 py-1.5 text-left font-label-md text-label-md rounded-lg transition-colors', pgModel===m?'bg-primary text-on-primary font-medium':'text-primary hover:bg-surface-container-low']">
                     <span class="truncate">{{m}}</span>
                     <span v-if="pgModel===m" class="material-symbols-outlined text-[16px] shrink-0 ml-1">check</span>
                   </button>
                 </div>
-              </div></div>
+              </div>
+            </div>
 
             <!-- Prompt -->
             <div><label class="font-label-md text-label-md text-primary block mb-xs">提示词</label>
               <textarea v-model="pgPrompt" rows="4"
                 class="w-full px-2.5 py-1.5 bg-surface-container-low border border-outline-variant rounded-lg text-body-sm text-primary font-label-md outline-none focus:ring-1 focus:ring-primary focus:border-primary resize-y"
-                placeholder="输入你的提示词..."></textarea></div>
+                placeholder="输入你的提示词..."></textarea>
+            </div>
 
             <!-- Image Upload -->
             <div><label class="font-label-md text-label-md text-primary block mb-xs">图片（可选）</label>
               <div v-if="!pgImage"
                 class="border-2 border-dashed border-outline-variant rounded-xl p-lg text-center cursor-pointer hover:border-primary/40 hover:bg-surface-container-low transition-colors"
-                @click="$refs.pgFileInput.click()"
-                @dragover.prevent
-                @drop.prevent="onPgImageDrop"
-                >
+                @click="$refs.pgFileInput.click()" @dragover.prevent @drop.prevent="onPgImageDrop">
                 <span class="material-symbols-outlined text-[32px] text-outline mb-sm block">add_photo_alternate</span>
                 <p class="font-body-sm text-body-sm text-secondary">点击选择图片</p>
                 <p class="font-body-sm text-[11px] text-outline mt-xs">或 Ctrl+V 粘贴 / 拖拽图片到此处</p>
                 <input type="file" accept="image/*" class="hidden" @change="onPgImageSelect" ref="pgFileInput">
               </div>
               <div v-else class="p-sm bg-surface-container-low rounded-lg flex items-start gap-md">
-                 <img :src="pgImage" class="w-20 h-20 object-cover rounded-lg border border-outline-variant">
-                 <div class="font-label-md text-[11px] text-secondary space-y-xs">
-                   <div>文件名: {{pgImageName}}</div>
-                   <div>大小: {{pgImageSize}}</div>
-                   <div>类型: {{pgImageType}}</div>
-                 </div>
-                <button @click="pgImage=null" class="ml-auto px-2 py-1 text-body-sm text-error hover:bg-error-container rounded-lg transition-colors shrink-0">清除</button>
-              </div></div>
+                <img :src="pgImage" class="w-20 h-20 object-cover rounded-lg border border-outline-variant">
+                <div class="font-label-md text-[11px] text-secondary space-y-xs">
+                  <div>文件名: {{pgImageName}}</div>
+                  <div>大小: {{pgImageSize}}</div>
+                  <div>类型: {{pgImageType}}</div>
+                </div>
+                <button @click="pgImage=null"
+                  class="ml-auto px-2 py-1 text-body-sm text-error hover:bg-error-container rounded-lg transition-colors shrink-0">清除</button>
+              </div>
+            </div>
 
             <!-- Send Button -->
             <div class="flex items-center gap-md">
@@ -782,15 +869,18 @@
             </div>
 
             <!-- Result -->
-            <div v-if="pgResult" class="bg-surface-container-low border border-outline-variant rounded-lg p-md space-y-sm max-h-96 overflow-y-auto">
+            <div v-if="pgResult"
+              class="bg-surface-container-low border border-outline-variant rounded-lg p-md space-y-sm max-h-96 overflow-y-auto">
               <div class="flex items-center justify-between">
                 <span class="font-label-md text-[12px] text-primary font-semibold">回复</span>
-                <span class="font-label-md text-[11px] text-secondary">模型: {{pgResult.model}} | tokens: {{pgResult.usage?.total_tokens || 0}}</span>
+                <span class="font-label-md text-[11px] text-secondary">模型: {{pgResult.model}} | tokens:
+                  {{pgResult.usage?.total_tokens || 0}}</span>
               </div>
               <div class="font-body-sm text-body-sm text-secondary whitespace-pre-wrap">{{pgResult.content}}</div>
               <div v-if="pgResult.reasoning_content" class="mt-sm pt-sm border-t border-outline-variant">
                 <span class="font-label-md text-[11px] text-secondary">思考过程</span>
-                <div class="font-body-sm text-body-sm text-secondary/60 whitespace-pre-wrap mt-xs">{{pgResult.reasoning_content}}</div>
+                <div class="font-body-sm text-body-sm text-secondary/60 whitespace-pre-wrap mt-xs">
+                  {{pgResult.reasoning_content}}</div>
               </div>
             </div>
 
@@ -801,7 +891,7 @@
           </div>
         </div>
 
-        <div v-else-if="currentPage==='settings'" class="max-w-xl space-y-lg">
+        <div v-else-if="currentPage==='settings'" class="max-w-5xl grid grid-cols-2 gap-gutter items-start">
           <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md space-y-md">
             <div><label class="font-label-md text-label-md text-primary block mb-xs">网页端口</label><input
                 v-model.number="settings.webPort" type="number"
@@ -819,8 +909,8 @@
                 class="font-label-md text-label-md text-primary">自动启动代理</span><button
                 @click="settings.autoStartProxy=!settings.autoStartProxy"
                 :class="settings.autoStartProxy?'bg-primary':'bg-outline'"
-                class="relative w-9 h-5 rounded-full transition-colors duration-200 focus:outline-none shrink-0" role="switch"
-                :aria-checked="settings.autoStartProxy"><span
+                class="relative w-9 h-5 rounded-full transition-colors duration-200 focus:outline-none shrink-0"
+                role="switch" :aria-checked="settings.autoStartProxy"><span
                   :class="settings.autoStartProxy?'translate-x-[16px]':'translate-x-[1px]'"
                   class="absolute top-0.5 left-0 w-4 h-4 bg-white rounded-full shadow transition-all duration-200 left-0.5"></span></button>
             </div>
@@ -832,6 +922,103 @@
             <button @click="saveSettings"
               class="inline-flex items-center gap-xs px-3 py-1.5 bg-primary text-on-primary font-label-md text-label-md rounded-lg hover:opacity-90 transition-opacity w-full justify-center">保存设置</button>
           </div>
+          <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md space-y-md">
+            <div class="flex items-center justify-between">
+              <span class="font-label-md text-label-md text-primary font-medium">是否开启</span>
+              <button @click="settings.systemPromptSensitiveEnabled = !settings.systemPromptSensitiveEnabled"
+                :class="settings.systemPromptSensitiveEnabled ? 'bg-primary' : 'bg-outline'"
+                class="relative w-9 h-5 rounded-full transition-colors duration-200 focus:outline-none shrink-0"
+                role="switch" :aria-checked="settings.systemPromptSensitiveEnabled">
+                <span :class="settings.systemPromptSensitiveEnabled ? 'translate-x-[16px]' : 'translate-x-[1px]'"
+                  class="absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-all duration-200"></span>
+              </button>
+            </div>
+            <p class="font-body-sm text-[11px] text-on-surface-variant">将上游返回的系统提示词中的敏感关键词替换为兼容文本。关闭时不替换。</p>
+            <div class="space-y-xs">
+              <div v-for="(rule, idx) in promptReplacements" :key="idx"
+                :class="['flex items-start gap-xs rounded-lg border border-outline-variant px-2 py-1.5', settings.systemPromptSensitiveEnabled ? 'bg-surface-container-lowest' : 'bg-surface-container-low/60 opacity-60']">
+                <input v-model="rule.key" placeholder="原文本（key）" :disabled="!settings.systemPromptSensitiveEnabled"
+                  class="flex-1 h-6 px-2 py-1 bg-surface-container-low border border-outline-variant rounded-md text-body-sm text-primary font-label-md outline-none focus:ring-1 focus:ring-primary focus:border-primary disabled:opacity-70">
+                <input v-model="rule.value" placeholder="替换为（value）" :disabled="!settings.systemPromptSensitiveEnabled"
+                  class="flex-1 h-6 px-2 py-1 bg-surface-container-low border border-outline-variant rounded-md text-body-sm text-primary font-label-md outline-none focus:ring-1 focus:ring-primary focus:border-primary disabled:opacity-70">
+                <button @click="removePromptReplacement(idx)" :disabled="!settings.systemPromptSensitiveEnabled"
+                  class="w-7 h-7 flex items-center justify-center rounded-lg text-secondary hover:bg-surface-container-high hover:text-error transition-colors disabled:opacity-40"
+                  title="删除该条规则">
+                  <span class="material-symbols-outlined text-[16px]">delete</span>
+                </button>
+              </div>
+            </div>
+            <div class="flex items-center justify-between pt-xs">
+              <div class="flex items-center gap-xs">
+                <button @click="addPromptReplacement" :disabled="!settings.systemPromptSensitiveEnabled"
+                  class="inline-flex items-center gap-xs px-2.5 py-1 bg-surface-container text-primary font-label-md text-[11px] rounded-lg hover:bg-surface-container-high transition-colors border border-outline-variant disabled:opacity-40"
+                  title="新增一条规则">
+                  <span class="material-symbols-outlined text-[14px]">add</span>
+                  <span>添加</span>
+                </button>
+                <button @click="resetPromptReplacements"
+                  class="inline-flex items-center gap-xs px-2.5 py-1 bg-surface-container text-primary font-label-md text-[11px] rounded-lg hover:bg-surface-container-high transition-colors border border-outline-variant"
+                  title="恢复默认">
+                  <span class="material-symbols-outlined text-[14px]">restart_alt</span>
+                  <span>恢复默认</span>
+                </button>
+                <button @click="showImportPromptModal = true"
+                  class="inline-flex items-center gap-xs px-2.5 py-1 bg-surface-container text-primary font-label-md text-[11px] rounded-lg hover:bg-surface-container-high transition-colors border border-outline-variant"
+                  title="从 JSON 导入规则">
+                  <span class="material-symbols-outlined text-[14px]">file_upload</span>
+                  <span>导入</span>
+                </button>
+                <button @click="exportPromptReplacements"
+                  class="inline-flex items-center gap-xs px-2.5 py-1 bg-surface-container text-primary font-label-md text-[11px] rounded-lg hover:bg-surface-container-high transition-colors border border-outline-variant"
+                  title="导出规则到剪贴板">
+                  <span class="material-symbols-outlined text-[14px]">file_download</span>
+                  <span>导出</span>
+                </button>
+                <button @click="clearPromptReplacements"
+                  class="inline-flex items-center gap-xs px-2.5 py-1 bg-surface-container text-primary font-label-md text-[11px] rounded-lg hover:bg-surface-container-high transition-colors border border-outline-variant"
+                  title="清空所有规则">
+                  <span class="material-symbols-outlined text-[14px]">delete_sweep</span>
+                  <span>清空</span>
+                </button>
+              </div>
+              <button @click="saveSettings"
+                class="inline-flex items-center gap-xs px-3 py-1.5 bg-primary text-on-primary font-label-md text-label-md rounded-lg hover:opacity-90 transition-opacity">保存设置</button>
+            </div>
+          </div>
+
+          <!-- 导入提示词替换规则弹窗 -->
+          <Transition name="fade">
+            <div v-if="showImportPromptModal"
+              class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-md"
+              @click.self="showImportPromptModal=false">
+              <div
+                class="bg-surface-container-lowest border border-outline-variant rounded-xl w-full max-w-lg overflow-hidden pro-shadow"
+                @click.stop>
+                <div class="h-12 border-b border-outline-variant flex items-center justify-between px-md">
+                  <h3 class="font-headline-sm text-body-md font-semibold text-primary">导入替换规则</h3>
+                  <button @click="showImportPromptModal=false"
+                    class="w-8 h-8 flex items-center justify-center text-secondary hover:bg-surface-container-low rounded-lg transition-colors">
+                    <span class="material-symbols-outlined">close</span>
+                  </button>
+                </div>
+                <div class="p-lg space-y-md">
+                  <p class="font-body-sm text-body-sm text-secondary">粘贴 JSON 数组，格式：<code
+                      class="px-1 py-0.5 bg-surface-container rounded text-[11px]">[{"key": "原文", "value": "替换为"}, ...]</code>
+                  </p>
+                  <textarea v-model="importPromptText" rows="8"
+                    class="w-full px-2.5 py-2 bg-surface-container-low border border-outline-variant rounded-lg text-body-sm text-primary font-label-md outline-none focus:ring-1 focus:ring-primary focus:border-primary resize-y"
+                    placeholder='[{"key": "原文", "value": "替换为"}, ...]'></textarea>
+                  <p v-if="importPromptError" class="font-body-sm text-[12px] text-error">{{ importPromptError }}</p>
+                  <div class="flex justify-end gap-xs">
+                    <button @click="showImportPromptModal=false"
+                      class="inline-flex items-center gap-xs px-3 py-1.5 bg-surface-container text-primary font-label-md text-label-md rounded-lg hover:bg-surface-container-high transition-colors border border-outline-variant">取消</button>
+                    <button @click="importPromptReplacements"
+                      class="inline-flex items-center gap-xs px-3 py-1.5 bg-primary text-on-primary font-label-md text-label-md rounded-lg hover:opacity-90 transition-opacity">导入</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </Transition>
         </div>
       </main>
     </div>
@@ -911,21 +1098,25 @@
               class="w-8 h-8 flex items-center justify-center text-secondary hover:bg-surface-container-low rounded-lg transition-colors"><span
                 class="material-symbols-outlined">close</span></button>
           </div>
-          <p class="px-md pt-md font-body-sm text-body-sm text-secondary">选择已有账号导入到上游 Key 池。只有含 API Key 的账号才可导入。已导入的会默认勾选。</p>
+          <p class="px-md pt-md font-body-sm text-body-sm text-secondary">选择已有账号导入到上游 Key 池。只有含 API Key
+            的账号才可导入。已导入的会默认勾选。</p>
           <div class="p-md max-h-[60vh] overflow-y-auto">
             <table class="w-full text-body-sm" v-if="importKeysAccounts.length > 0">
               <thead class="text-secondary font-label-md uppercase tracking-wider text-[10px]">
                 <tr class="border-b border-outline-variant">
-                  <th class="text-left py-sm pr-sm w-10"><input type="checkbox" @change="toggleSelectAllImport" :checked="importAllSelected" class="accent-primary w-3.5 h-3.5 cursor-pointer"></th>
+                  <th class="text-left py-sm pr-sm w-10"><input type="checkbox" @change="toggleSelectAllImport"
+                      :checked="importAllSelected" class="accent-primary w-3.5 h-3.5 cursor-pointer"></th>
                   <th class="text-left py-sm pr-sm">昵称</th>
                   <th class="text-left py-sm pr-sm">UID</th>
                   <th class="text-left py-sm">状态</th>
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="a in importKeysAccounts" :key="a.uid" :class="{'text-outline': a.already_imported}" class="border-b border-outline-variant/50">
+                <tr v-for="a in importKeysAccounts" :key="a.uid" :class="{'text-outline': a.already_imported}"
+                  class="border-b border-outline-variant/50">
                   <td class="py-sm pr-sm">
-                    <input type="checkbox" v-model="a.selected" :disabled="a.already_imported" class="accent-primary w-3.5 h-3.5 cursor-pointer disabled:cursor-not-allowed">
+                    <input type="checkbox" v-model="a.selected" :disabled="a.already_imported"
+                      class="accent-primary w-3.5 h-3.5 cursor-pointer disabled:cursor-not-allowed">
                   </td>
                   <td class="py-sm pr-sm">{{a.display_name}}</td>
                   <td class="py-sm pr-sm font-label-md text-[11px]">{{a.uid}}</td>
@@ -988,7 +1179,8 @@
                   <div v-for="(it,i) in importPreview" :key="i"
                     class="px-sm py-xs font-label-md text-[11px] flex items-center gap-sm">
                     <span class="text-secondary shrink-0 w-14">{{it.method.toUpperCase()}}</span>
-                    <span class="text-primary truncate flex-1">{{it.nickname || it.uid || it.api_key?.slice(0,16) || '(无)'}}</span>
+                    <span class="text-primary truncate flex-1">{{it.nickname || it.uid || it.api_key?.slice(0,16) ||
+                      '(无)'}}</span>
                   </div>
                 </div>
               </div>
@@ -1010,7 +1202,8 @@
                   <div v-for="(it,i) in importPreview" :key="i"
                     class="px-sm py-xs font-label-md text-[11px] flex items-center gap-sm">
                     <span class="text-secondary shrink-0 w-14">{{it.method.toUpperCase()}}</span>
-                    <span class="text-primary truncate flex-1">{{it.nickname || it.uid || it.api_key?.slice(0,16) || '(无)'}}</span>
+                    <span class="text-primary truncate flex-1">{{it.nickname || it.uid || it.api_key?.slice(0,16) ||
+                      '(无)'}}</span>
                   </div>
                 </div>
               </div>
@@ -1024,7 +1217,8 @@
                 class="inline-flex items-center gap-xs px-3 py-1.5 bg-primary text-on-primary font-label-md text-label-md rounded-lg hover:opacity-90 transition-opacity disabled:opacity-30"><span
                   v-if="importLoading"
                   class="spinner inline-block w-3.5 h-3.5 border-2 border-on-primary/30 border-t-on-primary rounded-full"></span><span
-                  v-else class="material-symbols-outlined text-[16px]">upload</span>{{importLoading?'导入中...':'导入 ' + importPreview.length + ' 个'}}</button>
+                  v-else class="material-symbols-outlined text-[16px]">upload</span>{{importLoading?'导入中...':'导入 ' +
+                importPreview.length + ' 个'}}</button>
             </div>
           </div>
         </div>
@@ -1048,17 +1242,19 @@
             <div class="bg-surface-container-low border border-outline-variant rounded-lg p-md">
               <p class="font-body-sm text-body-sm text-secondary">将导出以下 {{selectedAccounts.length}} 个选中账户的配置：</p>
               <div class="mt-sm max-h-40 overflow-y-auto scrollbar-hide">
-                <div v-for="uid in selectedAccounts" :key="uid"
-                  class="font-label-md text-[11px] text-primary py-0.5">{{accounts.find(a => a.uid === uid)?.nickname || uid}}</div>
+                <div v-for="uid in selectedAccounts" :key="uid" class="font-label-md text-[11px] text-primary py-0.5">
+                  {{accounts.find(a => a.uid === uid)?.nickname || uid}}</div>
               </div>
             </div>
             <div class="flex gap-xs pt-xs border-t border-outline-variant">
               <button @click="copyExportToClipboard"
                 class="flex-1 inline-flex items-center justify-center gap-xs px-3 py-1.5 bg-surface-container-low border border-outline-variant text-primary font-label-md text-label-md rounded-lg hover:bg-surface-container-high transition-colors disabled:opacity-30"
-                :disabled="selectedAccounts.length===0"><span class="material-symbols-outlined text-[16px]">content_copy</span>复制到剪贴板</button>
+                :disabled="selectedAccounts.length===0"><span
+                  class="material-symbols-outlined text-[16px]">content_copy</span>复制到剪贴板</button>
               <button @click="downloadExport"
                 class="flex-1 inline-flex items-center justify-center gap-xs px-3 py-1.5 bg-primary text-on-primary font-label-md text-label-md rounded-lg hover:opacity-90 transition-opacity disabled:opacity-30"
-                :disabled="selectedAccounts.length===0"><span class="material-symbols-outlined text-[16px]">download</span>下载文件</button>
+                :disabled="selectedAccounts.length===0"><span
+                  class="material-symbols-outlined text-[16px]">download</span>下载文件</button>
             </div>
           </div>
         </div>
@@ -1095,357 +1291,357 @@
           { id: 'settings', label: '设置', icon: 'settings' },
         ];
         const stats = reactive({ accountCount: 0, activeCount: 0, checkedToday: 0, totalCredits: 0 });
-// --- 仪表盘数据 ---
-const dashboardOverview = reactive({ total_requests:0,total_success:0,total_failed:0,success_rate:0,total_tokens:0,total_credits:0,avg_duration_ms:0,by_model:[],by_key:[] });
-const calendarData = ref([]);
-const calendarOffset = ref(0);
-const donutColors = ['#000','#5f5e61','#78767b','#a8a5aa','#c8c5ca','#e2e2e3','#eeeeef','#f3f3f4'];
-const calendarMonths = computed(() => {
-  const months = [];
-  const base = new Date();
-  base.setMonth(base.getMonth() + calendarOffset.value);
-  for (let m = 0; m < 4; m++) {
-    const d = new Date(base.getFullYear(), base.getMonth() - m, 1);
-    months.unshift({ year: d.getFullYear(), month: d.getMonth() });
-  }
-  return months;
-});
-const calendarTitle = computed(() => {
-  if (calendarMonths.value.length === 0) return '';
-  const first = calendarMonths.value[0];
-  const last = calendarMonths.value[calendarMonths.value.length - 1];
-  const fmt = (y,m) => y+'年'+(m+1)+'月';
-  return fmt(first.year, first.month) + ' - ' + fmt(last.year, last.month);
-});
-// --- 日历状态（真日历布局，每月一页，可翻月）---
-const _nowDate = new Date();
-const nowYear = ref(_nowDate.getFullYear());
-const nowMonth = ref(_nowDate.getMonth()); // 0-11
-const calYear = ref(_nowDate.getFullYear());
-const calMonth = ref(_nowDate.getMonth());
-const calMonthDisplay = computed(() => calMonth.value + 1);
-const todayStr = computed(() => {
-  const d = new Date();
-  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
-});
+        // --- 仪表盘数据 ---
+        const dashboardOverview = reactive({ total_requests: 0, total_success: 0, total_failed: 0, success_rate: 0, total_tokens: 0, total_credits: 0, avg_duration_ms: 0, by_model: [], by_key: [] });
+        const calendarData = ref([]);
+        const calendarOffset = ref(0);
+        const donutColors = ['#000', '#5f5e61', '#78767b', '#a8a5aa', '#c8c5ca', '#e2e2e3', '#eeeeef', '#f3f3f4'];
+        const calendarMonths = computed(() => {
+          const months = [];
+          const base = new Date();
+          base.setMonth(base.getMonth() + calendarOffset.value);
+          for (let m = 0; m < 4; m++) {
+            const d = new Date(base.getFullYear(), base.getMonth() - m, 1);
+            months.unshift({ year: d.getFullYear(), month: d.getMonth() });
+          }
+          return months;
+        });
+        const calendarTitle = computed(() => {
+          if (calendarMonths.value.length === 0) return '';
+          const first = calendarMonths.value[0];
+          const last = calendarMonths.value[calendarMonths.value.length - 1];
+          const fmt = (y, m) => y + '年' + (m + 1) + '月';
+          return fmt(first.year, first.month) + ' - ' + fmt(last.year, last.month);
+        });
+        // --- 日历状态（真日历布局，每月一页，可翻月）---
+        const _nowDate = new Date();
+        const nowYear = ref(_nowDate.getFullYear());
+        const nowMonth = ref(_nowDate.getMonth()); // 0-11
+        const calYear = ref(_nowDate.getFullYear());
+        const calMonth = ref(_nowDate.getMonth());
+        const calMonthDisplay = computed(() => calMonth.value + 1);
+        const todayStr = computed(() => {
+          const d = new Date();
+          return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+        });
 
-// creditsMap: { "2026-07-10": 52.3, "2026-07-09": 0, ... }
-const creditsMap = computed(() => {
-  const map = {};
-  calendarData.value.forEach(d => { map[d.date] = d.credits; });
-  return map;
-});
+        // creditsMap: { "2026-07-10": 52.3, "2026-07-09": 0, ... }
+        const creditsMap = computed(() => {
+          const map = {};
+          calendarData.value.forEach(d => { map[d.date] = d.credits; });
+          return map;
+        });
 
-const calCells = computed(() => {
-  const y = calYear.value;
-  const m = calMonth.value;
-  const firstDay = new Date(y, m, 1).getDay(); // 0=Sun
-  const daysInMonth = new Date(y, m+1, 0).getDate();
-  const cells = [];
-  const t = todayStr.value;
+        const calCells = computed(() => {
+          const y = calYear.value;
+          const m = calMonth.value;
+          const firstDay = new Date(y, m, 1).getDay(); // 0=Sun
+          const daysInMonth = new Date(y, m + 1, 0).getDate();
+          const cells = [];
+          const t = todayStr.value;
 
-  // 月初空白
-  for (let i = 0; i < firstDay; i++) {
-    cells.push({ day: null });
-  }
-  // 每一天（后端已补全缺失日期，所以 creditsMap 一定有值）
-  for (let d = 1; d <= daysInMonth; d++) {
-    const key = y+'-'+String(m+1).padStart(2,'0')+'-'+String(d).padStart(2,'0');
-    const v = creditsMap.value[key];
-    const credits = v !== undefined ? v : 0;
-    const isFuture = new Date(y, m, d) > new Date();
-    cells.push({
-      day: d,
-      credits,
-      hasCredits: credits > 0,
-      isToday: key === t,
-      isFuture,
-    });
-  }
-  return cells;
-});
+          // 月初空白
+          for (let i = 0; i < firstDay; i++) {
+            cells.push({ day: null });
+          }
+          // 每一天（后端已补全缺失日期，所以 creditsMap 一定有值）
+          for (let d = 1; d <= daysInMonth; d++) {
+            const key = y + '-' + String(m + 1).padStart(2, '0') + '-' + String(d).padStart(2, '0');
+            const v = creditsMap.value[key];
+            const credits = v !== undefined ? v : 0;
+            const isFuture = new Date(y, m, d) > new Date();
+            cells.push({
+              day: d,
+              credits,
+              hasCredits: credits > 0,
+              isToday: key === t,
+              isFuture,
+            });
+          }
+          return cells;
+        });
 
-// --- 趋势图：原生 SVG + JS 绘制（响应式，支持滚轮缩放 + 鼠标平移）---
-const trendContainer = ref(null);
-const trendAllZero = computed(() => {
-  const data = calendarData.value.slice(-30);
-  return data.length > 0 && data.every(d => !d.credits || d.credits === 0);
-});
-let trendDrawTimer = null;
+        // --- 趋势图：原生 SVG + JS 绘制（响应式，支持滚轮缩放 + 鼠标平移）---
+        const trendContainer = ref(null);
+        const trendAllZero = computed(() => {
+          const data = calendarData.value.slice(-30);
+          return data.length > 0 && data.every(d => !d.credits || d.credits === 0);
+        });
+        let trendDrawTimer = null;
 
-// 缩放/平移状态
-const trendZoom = ref(1);
-const trendPan = ref(0);
-const trendWindowSize = computed(() => Math.max(3, Math.floor(30 / trendZoom.value)));
-const trendMaxPan = computed(() => Math.max(0, 30 - trendWindowSize.value));
-let trendDragging = false;
-let trendDragStartX = 0;
-let trendDragStartPan = 0;
+        // 缩放/平移状态
+        const trendZoom = ref(1);
+        const trendPan = ref(0);
+        const trendWindowSize = computed(() => Math.max(3, Math.floor(30 / trendZoom.value)));
+        const trendMaxPan = computed(() => Math.max(0, 30 - trendWindowSize.value));
+        let trendDragging = false;
+        let trendDragStartX = 0;
+        let trendDragStartPan = 0;
 
-function resetTrendView() {
-  trendZoom.value = 1;
-  trendPan.value = 0;
-  drawTrendChart();
-}
+        function resetTrendView() {
+          trendZoom.value = 1;
+          trendPan.value = 0;
+          drawTrendChart();
+        }
 
-function onTrendWheel(e) {
-  const oldSize = trendWindowSize.value;
-  const newZoom = Math.max(1, Math.min(10, trendZoom.value * (e.deltaY > 0 ? 1.12 : 0.9)));
-  const centerIdx = trendPan.value + oldSize / 2;
-  const newSize = Math.max(3, Math.floor(30 / newZoom));
-  const newPan = Math.round(Math.max(0, Math.min(30 - newSize, centerIdx - newSize / 2)));
-  trendZoom.value = newZoom;
-  trendPan.value = newPan;
-  drawTrendChart();
-}
+        function onTrendWheel(e) {
+          const oldSize = trendWindowSize.value;
+          const newZoom = Math.max(1, Math.min(10, trendZoom.value * (e.deltaY > 0 ? 1.12 : 0.9)));
+          const centerIdx = trendPan.value + oldSize / 2;
+          const newSize = Math.max(3, Math.floor(30 / newZoom));
+          const newPan = Math.round(Math.max(0, Math.min(30 - newSize, centerIdx - newSize / 2)));
+          trendZoom.value = newZoom;
+          trendPan.value = newPan;
+          drawTrendChart();
+        }
 
-function onTrendMouseDown(e) {
-  if (e.button !== 0) return;
-  trendDragging = true;
-  trendDragStartX = e.clientX;
-  trendDragStartPan = trendPan.value;
-  const svg = document.getElementById('trendSvg');
-  if (svg) svg.style.cursor = 'grabbing';
-  // 全局监听 move/up，避免鼠标移出 SVG 后丢失事件
-  document.addEventListener('mousemove', onTrendMouseMove);
-  document.addEventListener('mouseup', onTrendMouseUp);
-}
+        function onTrendMouseDown(e) {
+          if (e.button !== 0) return;
+          trendDragging = true;
+          trendDragStartX = e.clientX;
+          trendDragStartPan = trendPan.value;
+          const svg = document.getElementById('trendSvg');
+          if (svg) svg.style.cursor = 'grabbing';
+          // 全局监听 move/up，避免鼠标移出 SVG 后丢失事件
+          document.addEventListener('mousemove', onTrendMouseMove);
+          document.addEventListener('mouseup', onTrendMouseUp);
+        }
 
-function onTrendMouseMove(e) {
-  if (!trendDragging) return;
-  // 根据鼠标偏移量换算为数据点偏移
-  const container = document.getElementById('trendContainer');
-  if (!container || !trendWindowSize.value) return;
-  const pxPerPoint = container.clientWidth / trendWindowSize.value;
-  if (pxPerPoint <= 0) return;
-  const dx = e.clientX - trendDragStartX;
-  const dp = Math.round(dx / pxPerPoint);
-  trendPan.value = Math.max(0, Math.min(trendMaxPan.value, trendDragStartPan - dp));
-  drawTrendChart();
-}
+        function onTrendMouseMove(e) {
+          if (!trendDragging) return;
+          // 根据鼠标偏移量换算为数据点偏移
+          const container = document.getElementById('trendContainer');
+          if (!container || !trendWindowSize.value) return;
+          const pxPerPoint = container.clientWidth / trendWindowSize.value;
+          if (pxPerPoint <= 0) return;
+          const dx = e.clientX - trendDragStartX;
+          const dp = Math.round(dx / pxPerPoint);
+          trendPan.value = Math.max(0, Math.min(trendMaxPan.value, trendDragStartPan - dp));
+          drawTrendChart();
+        }
 
-function onTrendMouseUp() {
-  trendDragging = false;
-  const svg = document.getElementById('trendSvg');
-  if (svg) svg.style.cursor = 'grab';
-  document.removeEventListener('mousemove', onTrendMouseMove);
-  document.removeEventListener('mouseup', onTrendMouseUp);
-}
+        function onTrendMouseUp() {
+          trendDragging = false;
+          const svg = document.getElementById('trendSvg');
+          if (svg) svg.style.cursor = 'grab';
+          document.removeEventListener('mousemove', onTrendMouseMove);
+          document.removeEventListener('mouseup', onTrendMouseUp);
+        }
 
-function drawTrendChart() {
-  const container = document.getElementById('trendContainer');
-  const svg = document.getElementById('trendSvg');
-  const tooltip = document.getElementById('trendTooltip');
-  if (!container || !svg) return;
+        function drawTrendChart() {
+          const container = document.getElementById('trendContainer');
+          const svg = document.getElementById('trendSvg');
+          const tooltip = document.getElementById('trendTooltip');
+          if (!container || !svg) return;
 
-  const fullData = calendarData.value.slice(-30);
-  if (fullData.length === 0) return;
+          const fullData = calendarData.value.slice(-30);
+          if (fullData.length === 0) return;
 
-  // 按 zoom/pan 窗口切片
-  const winSize = trendWindowSize.value;
-  const pan = Math.max(0, Math.min(trendMaxPan.value, trendPan.value));
-  const data = fullData.slice(pan, pan + winSize);
-  if (data.length < 2) return;
+          // 按 zoom/pan 窗口切片
+          const winSize = trendWindowSize.value;
+          const pan = Math.max(0, Math.min(trendMaxPan.value, trendPan.value));
+          const data = fullData.slice(pan, pan + winSize);
+          if (data.length < 2) return;
 
-  const W = container.clientWidth;
-  const H = container.clientHeight;
-  if (W <= 0 || H <= 0) {
-    setTimeout(drawTrendChart, 200);
-    return;
-  }
-  const pad = { top: 20, right: 20, bottom: 30, left: 40 };
-  const cw = W - pad.left - pad.right;
-  const ch = H - pad.top - pad.bottom;
-  if (cw <= 0 || ch <= 0) return;
+          const W = container.clientWidth;
+          const H = container.clientHeight;
+          if (W <= 0 || H <= 0) {
+            setTimeout(drawTrendChart, 200);
+            return;
+          }
+          const pad = { top: 20, right: 20, bottom: 30, left: 40 };
+          const cw = W - pad.left - pad.right;
+          const ch = H - pad.top - pad.bottom;
+          if (cw <= 0 || ch <= 0) return;
 
-  const maxV = Math.max(...data.map(d => d.credits), 10);
-  const getX = (i) => pad.left + (i / (data.length - 1)) * cw;
-  const getY = (v) => pad.top + ch - (v / maxV) * ch;
+          const maxV = Math.max(...data.map(d => d.credits), 10);
+          const getX = (i) => pad.left + (i / (data.length - 1)) * cw;
+          const getY = (v) => pad.top + ch - (v / maxV) * ch;
 
-  svg.innerHTML = '';
+          svg.innerHTML = '';
 
-  // Grid lines
-  for (let i = 0; i <= 4; i++) {
-    const y = getY(maxV * i / 4);
-    const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-    line.setAttribute('x1', pad.left); line.setAttribute('y1', y);
-    line.setAttribute('x2', W - pad.right); line.setAttribute('y2', y);
-    line.setAttribute('stroke', '#e2e2e3'); line.setAttribute('stroke-width', '0.5');
-    svg.appendChild(line);
-  }
+          // Grid lines
+          for (let i = 0; i <= 4; i++) {
+            const y = getY(maxV * i / 4);
+            const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+            line.setAttribute('x1', pad.left); line.setAttribute('y1', y);
+            line.setAttribute('x2', W - pad.right); line.setAttribute('y2', y);
+            line.setAttribute('stroke', '#e2e2e3'); line.setAttribute('stroke-width', '0.5');
+            svg.appendChild(line);
+          }
 
-  // Y-axis labels
-  for (let i = 0; i <= 4; i++) {
-    const y = getY(maxV * i / 4);
-    const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-    t.setAttribute('x', pad.left - 6); t.setAttribute('y', y + 3);
-    t.setAttribute('text-anchor', 'end'); t.setAttribute('fill', '#a8a5aa');
-    t.setAttribute('font-size', '9');
-    t.textContent = Math.round(maxV * i / 4);
-    svg.appendChild(t);
-  }
+          // Y-axis labels
+          for (let i = 0; i <= 4; i++) {
+            const y = getY(maxV * i / 4);
+            const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+            t.setAttribute('x', pad.left - 6); t.setAttribute('y', y + 3);
+            t.setAttribute('text-anchor', 'end'); t.setAttribute('fill', '#a8a5aa');
+            t.setAttribute('font-size', '9');
+            t.textContent = Math.round(maxV * i / 4);
+            svg.appendChild(t);
+          }
 
-  // X labels (show all in zoomed view, every 5 in full view)
-  data.forEach((d, i) => {
-    const show = winSize <= 14 ? true : (i % 5 === 0 || i === data.length - 1);
-    if (show) {
-      const x = getX(i);
-      const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-      t.setAttribute('x', x); t.setAttribute('y', H - 4);
-      t.setAttribute('text-anchor', 'middle'); t.setAttribute('fill', '#78767b');
-      t.setAttribute('font-size', '9'); t.textContent = d.date.slice(5);
-      svg.appendChild(t);
-    }
-  });
+          // X labels (show all in zoomed view, every 5 in full view)
+          data.forEach((d, i) => {
+            const show = winSize <= 14 ? true : (i % 5 === 0 || i === data.length - 1);
+            if (show) {
+              const x = getX(i);
+              const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+              t.setAttribute('x', x); t.setAttribute('y', H - 4);
+              t.setAttribute('text-anchor', 'middle'); t.setAttribute('fill', '#78767b');
+              t.setAttribute('font-size', '9'); t.textContent = d.date.slice(5);
+              svg.appendChild(t);
+            }
+          });
 
-  // Area fill
-  let areaD = 'M ' + getX(0) + ' ' + getY(0);
-  data.forEach((d, i) => { areaD += ' L ' + getX(i) + ' ' + getY(d.credits); });
-  areaD += ' L ' + getX(data.length - 1) + ' ' + (pad.top + ch) + ' L ' + getX(0) + ' ' + (pad.top + ch) + ' Z';
-  const area = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-  area.setAttribute('d', areaD); area.setAttribute('fill', '#000'); area.setAttribute('fill-opacity', '0.05');
-  svg.appendChild(area);
+          // Area fill
+          let areaD = 'M ' + getX(0) + ' ' + getY(0);
+          data.forEach((d, i) => { areaD += ' L ' + getX(i) + ' ' + getY(d.credits); });
+          areaD += ' L ' + getX(data.length - 1) + ' ' + (pad.top + ch) + ' L ' + getX(0) + ' ' + (pad.top + ch) + ' Z';
+          const area = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+          area.setAttribute('d', areaD); area.setAttribute('fill', '#000'); area.setAttribute('fill-opacity', '0.05');
+          svg.appendChild(area);
 
-  // Line
-  let lineD = '';
-  data.forEach((d, i) => { lineD += (i === 0 ? 'M' : 'L') + ' ' + getX(i) + ' ' + getY(d.credits); });
-  const line = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-  line.setAttribute('d', lineD); line.setAttribute('fill', 'none');
-  line.setAttribute('stroke', '#000'); line.setAttribute('stroke-width', '2');
-  line.setAttribute('stroke-linecap', 'round'); line.setAttribute('stroke-linejoin', 'round');
-  svg.appendChild(line);
+          // Line
+          let lineD = '';
+          data.forEach((d, i) => { lineD += (i === 0 ? 'M' : 'L') + ' ' + getX(i) + ' ' + getY(d.credits); });
+          const line = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+          line.setAttribute('d', lineD); line.setAttribute('fill', 'none');
+          line.setAttribute('stroke', '#000'); line.setAttribute('stroke-width', '2');
+          line.setAttribute('stroke-linecap', 'round'); line.setAttribute('stroke-linejoin', 'round');
+          svg.appendChild(line);
 
-  // Dots + hover rects
-  const colW = cw / (data.length - 1);
-  data.forEach((d, i) => {
-    const x = getX(i), y = getY(d.credits);
+          // Dots + hover rects
+          const colW = cw / (data.length - 1);
+          data.forEach((d, i) => {
+            const x = getX(i), y = getY(d.credits);
 
-    // Dot
-    const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-    dot.setAttribute('cx', x); dot.setAttribute('cy', y); dot.setAttribute('r', '3.5');
-    dot.setAttribute('fill', '#fff'); dot.setAttribute('stroke', '#000'); dot.setAttribute('stroke-width', '1.5');
-    dot.setAttribute('id', 'dot-' + i);
-    svg.appendChild(dot);
+            // Dot
+            const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+            dot.setAttribute('cx', x); dot.setAttribute('cy', y); dot.setAttribute('r', '3.5');
+            dot.setAttribute('fill', '#fff'); dot.setAttribute('stroke', '#000'); dot.setAttribute('stroke-width', '1.5');
+            dot.setAttribute('id', 'dot-' + i);
+            svg.appendChild(dot);
 
-    // Guide line
-    const guide = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-    guide.setAttribute('x1', x); guide.setAttribute('y1', pad.top);
-    guide.setAttribute('x2', x); guide.setAttribute('y2', pad.top + ch);
-    guide.setAttribute('stroke', '#78767b'); guide.setAttribute('stroke-width', '1');
-    guide.setAttribute('stroke-dasharray', '3,3'); guide.setAttribute('opacity', '0');
-    guide.setAttribute('id', 'guide-' + i);
-    svg.insertBefore(guide, line);
+            // Guide line
+            const guide = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+            guide.setAttribute('x1', x); guide.setAttribute('y1', pad.top);
+            guide.setAttribute('x2', x); guide.setAttribute('y2', pad.top + ch);
+            guide.setAttribute('stroke', '#78767b'); guide.setAttribute('stroke-width', '1');
+            guide.setAttribute('stroke-dasharray', '3,3'); guide.setAttribute('opacity', '0');
+            guide.setAttribute('id', 'guide-' + i);
+            svg.insertBefore(guide, line);
 
-    // Hover rect
-    const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-    rect.setAttribute('x', x - colW / 2); rect.setAttribute('y', pad.top);
-    rect.setAttribute('width', colW); rect.setAttribute('height', ch);
-    rect.setAttribute('fill', 'transparent'); rect.setAttribute('cursor', 'pointer');
+            // Hover rect
+            const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+            rect.setAttribute('x', x - colW / 2); rect.setAttribute('y', pad.top);
+            rect.setAttribute('width', colW); rect.setAttribute('height', ch);
+            rect.setAttribute('fill', 'transparent'); rect.setAttribute('cursor', 'pointer');
 
-    rect.addEventListener('mouseenter', () => {
-      dot.setAttribute('r', '6'); dot.setAttribute('fill', '#000'); dot.setAttribute('stroke', '#fff');
-      guide.setAttribute('opacity', '1');
-      document.getElementById('ttDate').textContent = d.date;
-      document.getElementById('ttValue').textContent = fmtCredit(d.credits) + ' 积分';
-      tooltip.style.opacity = '1';
-      const tw = tooltip.offsetWidth || 110, th = tooltip.offsetHeight || 40;
-      let tx = x - tw / 2, ty = y - th - 10;
-      if (tx < 5) tx = 5;
-      if (tx + tw > W) tx = W - tw - 5;
-      if (ty < 0) ty = y + 12;
-      tooltip.style.left = tx + 'px';
-      tooltip.style.top = ty + 'px';
-    });
-    rect.addEventListener('mouseleave', () => {
-      dot.setAttribute('r', '3.5'); dot.setAttribute('fill', '#fff'); dot.setAttribute('stroke', '#000');
-      guide.setAttribute('opacity', '0');
-      tooltip.style.opacity = '0';
-    });
-    svg.appendChild(rect);
-  });
-}
+            rect.addEventListener('mouseenter', () => {
+              dot.setAttribute('r', '6'); dot.setAttribute('fill', '#000'); dot.setAttribute('stroke', '#fff');
+              guide.setAttribute('opacity', '1');
+              document.getElementById('ttDate').textContent = d.date;
+              document.getElementById('ttValue').textContent = fmtCredit(d.credits) + ' 积分';
+              tooltip.style.opacity = '1';
+              const tw = tooltip.offsetWidth || 110, th = tooltip.offsetHeight || 40;
+              let tx = x - tw / 2, ty = y - th - 10;
+              if (tx < 5) tx = 5;
+              if (tx + tw > W) tx = W - tw - 5;
+              if (ty < 0) ty = y + 12;
+              tooltip.style.left = tx + 'px';
+              tooltip.style.top = ty + 'px';
+            });
+            rect.addEventListener('mouseleave', () => {
+              dot.setAttribute('r', '3.5'); dot.setAttribute('fill', '#fff'); dot.setAttribute('stroke', '#000');
+              guide.setAttribute('opacity', '0');
+              tooltip.style.opacity = '0';
+            });
+            svg.appendChild(rect);
+          });
+        }
 
-// Watch for data changes and redraw
-const modelDonutSegs = computed(() => {
-  const items = (dashboardOverview.by_model||[]).filter(m=>m.credits>0);
-  if (items.length===0) return [];
-  const total = items.reduce((s,m)=>s+m.credits,0)||1;
-  const circ = 2*Math.PI*48;
-  let acc = 0;
-  return items.map((m,i) => {
-    const dash = circ*m.credits/total;
-    const off = -acc;
-    acc += dash;
-    return { dash: dash+' '+circ, offset: off, color: donutColors[i%donutColors.length] };
-  });
-});
-const keyDonutSegs = computed(() => {
-  const items = (dashboardOverview.by_key||[]).filter(k=>k.credits>0);
-  if (items.length===0) return [];
-  const total = items.reduce((s,k)=>s+k.credits,0)||1;
-  const circ = 2*Math.PI*48;
-  let acc = 0;
-  return items.map((k,i) => {
-    const dash = circ*k.credits/total;
-    const off = -acc;
-    acc += dash;
-    return { dash: dash+' '+circ, offset: off, color: donutColors[i%donutColors.length] };
-  });
-});
-async function loadDashboard() {
-  try {
-    const [ov, cal] = await Promise.all([
-      fetch('/api/proxy/stats/overview').then(r=>r.json()),
-      fetch('/api/proxy/stats/calendar?months=4').then(r=>r.json())
-    ]);
-    if (ov&&ov.success) Object.assign(dashboardOverview, ov);
-    if (cal&&cal.success) calendarData.value = cal.data||[];
-    nextTick(() => { drawTrendChart(); });
-  } catch(e) { console.error('Dashboard load failed', e); }
-}
-const accounts = ref([]);
-const selectedAccounts = ref([]);
-const testModel = ref('auto');
-const testModelDropdown = ref(false);
-const testLoading = reactive({});
-const testResult = reactive({});
-function selectTestModel(m) { testModel.value = m; testModelDropdown.value = false; }
-function hideTestModelDropdown() { setTimeout(()=>{testModelDropdown.value=false},150); }
-const isAllSelected = computed(() => accounts.value.length > 0 && selectedAccounts.value.length === accounts.value.length);
-function toggleSelectAll() { if (selectedAccounts.value.length === accounts.value.length) { selectedAccounts.value = []; } else { selectedAccounts.value = accounts.value.map(a => a.uid); } }
-function selectAllAccounts() { selectedAccounts.value = accounts.value.map(a => a.uid); }
-function invertSelection() { selectedAccounts.value = accounts.value.filter(a => !selectedAccounts.value.includes(a.uid)).map(a => a.uid); }
-const showAddModal = ref(false); const addMethod = ref('apikey'); const addLoading = ref(false); const addError = ref('');
-const addMethods = [{ id: 'apikey', label: 'API Key' }, { id: 'jwt', label: 'JWT' }, { id: 'workbuddy', label: 'WorkBuddy' }];
-const addForm = reactive({ api_key: '', access_token: '', uid: '', nickname: '' });
-const quotaLoading = reactive({}); const checkinLoading = reactive({});
-const checkinAllLoading = ref(false); const lastCheckin = reactive({ success: 0, already: 0, failed: 0 }); const checkinLogs = reactive([]);
-const quotaAllLoading = ref(false); const quotaSummary = reactive({ totalRemain: 0, totalCredits: 0, accountCount: 0 }); const quotaDetails = reactive([]);
-const proxyInfo = reactive({ running: false, port: 8867, total_keys: 0, active_keys: 0, exhausted_keys: 0, keys: [] });
+        // Watch for data changes and redraw
+        const modelDonutSegs = computed(() => {
+          const items = (dashboardOverview.by_model || []).filter(m => m.credits > 0);
+          if (items.length === 0) return [];
+          const total = items.reduce((s, m) => s + m.credits, 0) || 1;
+          const circ = 2 * Math.PI * 48;
+          let acc = 0;
+          return items.map((m, i) => {
+            const dash = circ * m.credits / total;
+            const off = -acc;
+            acc += dash;
+            return { dash: dash + ' ' + circ, offset: off, color: donutColors[i % donutColors.length] };
+          });
+        });
+        const keyDonutSegs = computed(() => {
+          const items = (dashboardOverview.by_key || []).filter(k => k.credits > 0);
+          if (items.length === 0) return [];
+          const total = items.reduce((s, k) => s + k.credits, 0) || 1;
+          const circ = 2 * Math.PI * 48;
+          let acc = 0;
+          return items.map((k, i) => {
+            const dash = circ * k.credits / total;
+            const off = -acc;
+            acc += dash;
+            return { dash: dash + ' ' + circ, offset: off, color: donutColors[i % donutColors.length] };
+          });
+        });
+        async function loadDashboard() {
+          try {
+            const [ov, cal] = await Promise.all([
+              fetch('/api/proxy/stats/overview').then(r => r.json()),
+              fetch('/api/proxy/stats/calendar?months=4').then(r => r.json())
+            ]);
+            if (ov && ov.success) Object.assign(dashboardOverview, ov);
+            if (cal && cal.success) calendarData.value = cal.data || [];
+            nextTick(() => { drawTrendChart(); });
+          } catch (e) { console.error('Dashboard load failed', e); }
+        }
+        const accounts = ref([]);
+        const selectedAccounts = ref([]);
+        const testModel = ref('auto');
+        const testModelDropdown = ref(false);
+        const testLoading = reactive({});
+        const testResult = reactive({});
+        function selectTestModel(m) { testModel.value = m; testModelDropdown.value = false; }
+        function hideTestModelDropdown() { setTimeout(() => { testModelDropdown.value = false }, 150); }
+        const isAllSelected = computed(() => accounts.value.length > 0 && selectedAccounts.value.length === accounts.value.length);
+        function toggleSelectAll() { if (selectedAccounts.value.length === accounts.value.length) { selectedAccounts.value = []; } else { selectedAccounts.value = accounts.value.map(a => a.uid); } }
+        function selectAllAccounts() { selectedAccounts.value = accounts.value.map(a => a.uid); }
+        function invertSelection() { selectedAccounts.value = accounts.value.filter(a => !selectedAccounts.value.includes(a.uid)).map(a => a.uid); }
+        const showAddModal = ref(false); const addMethod = ref('apikey'); const addLoading = ref(false); const addError = ref('');
+        const addMethods = [{ id: 'apikey', label: 'API Key' }, { id: 'jwt', label: 'JWT' }, { id: 'workbuddy', label: 'WorkBuddy' }];
+        const addForm = reactive({ api_key: '', access_token: '', uid: '', nickname: '' });
+        const quotaLoading = reactive({}); const checkinLoading = reactive({});
+        const checkinAllLoading = ref(false); const lastCheckin = reactive({ success: 0, already: 0, failed: 0 }); const checkinLogs = reactive([]);
+        const quotaAllLoading = ref(false); const quotaSummary = reactive({ totalRemain: 0, totalCredits: 0, accountCount: 0 }); const quotaDetails = reactive([]);
+        const proxyInfo = reactive({ running: false, port: 8867, total_keys: 0, active_keys: 0, exhausted_keys: 0, keys: [] });
         const requestLogs = ref([]); const requestLogsLoading = ref(false); const logsSince = ref(0); const logsPage = ref(1); const logsTotal = ref(0); const logsTotalPages = ref(0); const logsPageSize = ref(10); const showPageSizeDropdown = ref(false); const pageSizeOptions = [10, 20, 50, 100];
         const strategyLabelMap = { 1: '专一', 2: '临期优先', 3: '轮询', 4: '会话亲和' };
         function goToPage(p) { if (p >= 1) { loadRequestLogs(p); } }
         function setPageSize(s) { logsPageSize.value = s; showPageSizeDropdown.value = false; logsPage.value = 1; loadRequestLogs(1); }
-        function hidePageSizeDropdown() { setTimeout(()=>{showPageSizeDropdown.value=false}, 150); }
+        function hidePageSizeDropdown() { setTimeout(() => { showPageSizeDropdown.value = false }, 150); }
         function onPageSizeChange() { logsPage.value = 1; loadRequestLogs(1); }
         function clearLogs() { logsSince.value = Date.now() / 1000; requestLogs.value = []; }
         function fmtCredit(n) {
-            const v = Number(n) || 0;
-            const s = v.toFixed(1);
-            return s.endsWith('.0') ? s.slice(0, -2) : s;
+          const v = Number(n) || 0;
+          const s = v.toFixed(1);
+          return s.endsWith('.0') ? s.slice(0, -2) : s;
         }
 
-function formatLogTime(ts) { if (!ts) return '-'; const d = new Date(ts*1000); return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')+':'+String(d.getSeconds()).padStart(2,'0'); }
+        function formatLogTime(ts) { if (!ts) return '-'; const d = new Date(ts * 1000); return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0') + ':' + String(d.getSeconds()).padStart(2, '0'); }
         async function loadRequestLogs(page) { requestLogsLoading.value = true; if (typeof page === 'number' && page >= 1) logsPage.value = page; const p = logsPage.value; const ps = logsPageSize.value; const sinceParam = logsSince.value > 0 ? '&since=' + logsSince.value : ''; const d = await api('/api/proxy/logs?limit=' + ps + '&page=' + p + sinceParam); requestLogsLoading.value = false; if (d && d.logs) { requestLogs.value = d.logs; logsTotal.value = d.total || 0; logsTotalPages.value = d.total_pages || 0; } } const proxyLoading = ref(false);
-        const proxyStrategy = ref(parseInt(localStorage.getItem('ag_proxy_strategy')||'1'));
+        const proxyStrategy = ref(parseInt(localStorage.getItem('ag_proxy_strategy') || '1'));
         const showStrategyDropdown = ref(false);
-        const strategyOptions = [{value:1,label:'专一模式'},{value:2,label:'临期优先'},{value:3,label:'轮询模式'},{value:4,label:'会话亲和'}];
-        const strategyLabel = computed(()=>(strategyOptions.find(s=>s.value===proxyStrategy.value)||strategyOptions[0]).label);
-        async function selectStrategy(v) { const prev=proxyStrategy.value; proxyStrategy.value=v; showStrategyDropdown.value=false; localStorage.setItem('ag_proxy_strategy',v); try { const r=await api('/api/proxy/strategy',{method:'POST',body:JSON.stringify({strategy:v})}); if(!r||!r.success){ proxyStrategy.value=prev; showToast('策略切换失败','error'); } } catch(e){ proxyStrategy.value=prev; showToast('策略切换失败','error'); } }
-        function hideStrategyDropdown() { setTimeout(()=>{showStrategyDropdown.value=false},150); }
-const quotaAccounts = ref([]);
-const showImportKeysModal = ref(false); const importKeysAccounts = ref([]); const importKeysLoading = ref(false); const importAllSelected = ref(false);
-const proxyKeyLoading = reactive({});
+        const strategyOptions = [{ value: 1, label: '专一模式' }, { value: 2, label: '临期优先' }, { value: 3, label: '轮询模式' }, { value: 4, label: '会话亲和' }];
+        const strategyLabel = computed(() => (strategyOptions.find(s => s.value === proxyStrategy.value) || strategyOptions[0]).label);
+        async function selectStrategy(v) { const prev = proxyStrategy.value; proxyStrategy.value = v; showStrategyDropdown.value = false; localStorage.setItem('ag_proxy_strategy', v); try { const r = await api('/api/proxy/strategy', { method: 'POST', body: JSON.stringify({ strategy: v }) }); if (!r || !r.success) { proxyStrategy.value = prev; showToast('策略切换失败', 'error'); } } catch (e) { proxyStrategy.value = prev; showToast('策略切换失败', 'error'); } }
+        function hideStrategyDropdown() { setTimeout(() => { showStrategyDropdown.value = false }, 150); }
+        const quotaAccounts = ref([]);
+        const showImportKeysModal = ref(false); const importKeysAccounts = ref([]); const importKeysLoading = ref(false); const importAllSelected = ref(false);
+        const proxyKeyLoading = reactive({});
         // --- 模型测试 (Playground) ---
         const pgModels = ref([]); const pgModel = ref('auto');
         const pgPrompt = ref(''); const pgLoading = ref(false);
@@ -1453,11 +1649,11 @@ const proxyKeyLoading = reactive({});
         const pgResult = ref(null); const pgError = ref(''); const pgDuration = ref(0); const pgFileInput = ref(null);
         const showPgModelDropdown = ref(false);
         function selectPgModel(m) { pgModel.value = m; showPgModelDropdown.value = false; }
-        function hidePgModelDropdown() { setTimeout(()=>{showPgModelDropdown.value=false},150); }
-        async function loadPgModels() { try { const d = await fetch('/api/playground/models').then(r=>r.json()); if (d && d.models) { pgModels.value = d.models; pgModel.value = d.models[0] || 'auto'; } } catch(e) {} }
-        function onPgImageSelect(e) { const f = e.target.files[0]; if (!f) return; pgImageName.value = f.name; pgImageType.value = f.type; const kb = (f.size/1024).toFixed(1); pgImageSize.value = kb > 1024 ? (f.size/(1024*1024)).toFixed(1)+' MB' : kb+' KB'; const r = new FileReader(); r.onload = () => { pgImage.value = r.result; }; r.readAsDataURL(f); }
-        function onPgImagePaste(e) { const items = (e.clipboardData||e.originalEvent?.clipboardData)?.items; if (!items) return; for (const item of items) { if (item.type.startsWith('image/')) { const f = item.getAsFile(); pgImageName.value = '粘贴图片.' + item.type.split('/')[1]; pgImageType.value = item.type; const kb = (f.size/1024).toFixed(1); pgImageSize.value = kb > 1024 ? (f.size/(1024*1024)).toFixed(1)+' MB' : kb+' KB'; const r = new FileReader(); r.onload = () => { pgImage.value = r.result; }; r.readAsDataURL(f); e.preventDefault(); return; } } }
-        function onPgImageDrop(e) { const f = e.dataTransfer?.files?.[0]; if (!f) return; pgImageName.value = f.name; pgImageType.value = f.type; const kb = (f.size/1024).toFixed(1); pgImageSize.value = kb > 1024 ? (f.size/(1024*1024)).toFixed(1)+' MB' : kb+' KB'; const r = new FileReader(); r.onload = () => { pgImage.value = r.result; }; r.readAsDataURL(f); }
+        function hidePgModelDropdown() { setTimeout(() => { showPgModelDropdown.value = false }, 150); }
+        async function loadPgModels() { try { const d = await fetch('/api/playground/models').then(r => r.json()); if (d && d.models) { pgModels.value = d.models; pgModel.value = d.models[0] || 'auto'; } } catch (e) { } }
+        function onPgImageSelect(e) { const f = e.target.files[0]; if (!f) return; pgImageName.value = f.name; pgImageType.value = f.type; const kb = (f.size / 1024).toFixed(1); pgImageSize.value = kb > 1024 ? (f.size / (1024 * 1024)).toFixed(1) + ' MB' : kb + ' KB'; const r = new FileReader(); r.onload = () => { pgImage.value = r.result; }; r.readAsDataURL(f); }
+        function onPgImagePaste(e) { const items = (e.clipboardData || e.originalEvent?.clipboardData)?.items; if (!items) return; for (const item of items) { if (item.type.startsWith('image/')) { const f = item.getAsFile(); pgImageName.value = '粘贴图片.' + item.type.split('/')[1]; pgImageType.value = item.type; const kb = (f.size / 1024).toFixed(1); pgImageSize.value = kb > 1024 ? (f.size / (1024 * 1024)).toFixed(1) + ' MB' : kb + ' KB'; const r = new FileReader(); r.onload = () => { pgImage.value = r.result; }; r.readAsDataURL(f); e.preventDefault(); return; } } }
+        function onPgImageDrop(e) { const f = e.dataTransfer?.files?.[0]; if (!f) return; pgImageName.value = f.name; pgImageType.value = f.type; const kb = (f.size / 1024).toFixed(1); pgImageSize.value = kb > 1024 ? (f.size / (1024 * 1024)).toFixed(1) + ' MB' : kb + ' KB'; const r = new FileReader(); r.onload = () => { pgImage.value = r.result; }; r.readAsDataURL(f); }
         async function pgSend() {
           if (!pgPrompt.value.trim()) return;
           pgLoading.value = true; pgError.value = ''; pgResult.value = null; pgDuration.value = 0;
@@ -1465,29 +1661,34 @@ const proxyKeyLoading = reactive({});
           try {
             const body = { model: pgModel.value, prompt: pgPrompt.value };
             if (pgImage.value) body.image_base64 = pgImage.value;
-            const r = await fetch('/api/playground/chat', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+            const r = await fetch('/api/playground/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
             const d = await r.json();
             pgDuration.value = Math.round(performance.now() - t0);
             if (r.ok && d.success) pgResult.value = d;
             else pgError.value = d.detail || r.statusText || 'Unknown error';
-          } catch(e) { pgDuration.value = Math.round(performance.now() - t0); pgError.value = e.message; }
+          } catch (e) { pgDuration.value = Math.round(performance.now() - t0); pgError.value = e.message; }
           pgLoading.value = false;
           if (pgFileInput.value) pgFileInput.value.value = '';
         }
         loadPgModels();
-const settings = reactive({ webPort: 8866, proxyPort: 8867, httpProxy: '', autoStartProxy: true, checkinConcurrency: 5 });
-const showImportModal = ref(false); const importMode = ref('file'); const importModes = [{ id: 'file', label: '文件' }, { id: 'paste', label: '粘贴' }]; const importFileName = ref(''); const importText = ref(''); const importPreview = ref([]); const importError = ref(''); const importResult = ref(''); const importLoading = ref(false);
-const showExportModal = ref(false);
-const exportLoading = ref(false);
-const exportContent = ref('');
-function openImportModal() { showImportModal.value = true; importMode.value = 'file'; importFileName.value = ''; importText.value = ''; importPreview.value = []; importError.value = ''; importResult.value = ''; }
-function closeImportModal() { showImportModal.value = false; importFileName.value = ''; importText.value = ''; importPreview.value = []; importError.value = ''; importResult.value = ''; }
-function onImportFileChange(e) { const f = e.target.files[0]; if (!f) return; importFileName.value = f.name; const r = new FileReader(); r.onload = () => { try { const data = JSON.parse(r.result); const items = Array.isArray(data) ? data : (data.accounts || []); importPreview.value = items.filter(it => it && it.method && (it.api_key || it.access_token || it.auth_token)).map(it => ({ method: it.method, api_key: it.api_key || '', access_token: it.access_token || it.auth_token || '', uid: it.uid || '', domain: it.domain || '', nickname: it.nickname || '' })); if (importPreview.value.length === 0) importError.value = '未识别到有效的账号数据'; else importError.value = ''; } catch (err) { importError.value = '文件解析失败: ' + err.message; importPreview.value = []; } }; r.readAsText(f); }
-function parseImportText() { const t = importText.value.trim(); if (!t) return; try { const data = JSON.parse(t); const items = Array.isArray(data) ? data : (data.accounts || []); importPreview.value = items.filter(it => it && it.method && (it.api_key || it.access_token || it.auth_token)).map(it => ({ method: it.method, api_key: it.api_key || '', access_token: it.access_token || it.auth_token || '', uid: it.uid || '', domain: it.domain || '', nickname: it.nickname || '' })); if (importPreview.value.length === 0) importError.value = '未识别到有效的账号数据'; else importError.value = ''; } catch (err) { importError.value = '内容解析失败: ' + err.message; importPreview.value = []; } }
-async function submitImport() { if (importPreview.value.length === 0) return; importLoading.value = true; importError.value = ''; importResult.value = ''; const r = await fetch('/api/accounts/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: importPreview.value }) }); const d = await r.json(); importLoading.value = false; if (d && d.success) { importResult.value = `导入完成: ${d.added} 成功, ${d.failed} 失败`; if (d.errors && d.errors.length > 0) { importError.value = d.errors.join('; '); } else { showToast('导入完成: ' + d.added + ' 成功'); closeImportModal(); await loadAccounts(); } } else { importError.value = (d && d.detail) ? d.detail : '导入失败'; } }
-function openExportModal() { if (selectedAccounts.value.length === 0) { showToast('请先选中要导出的账户'); return; } showExportModal.value = true; }
-async function copyExportToClipboard() { if (selectedAccounts.value.length === 0) return; exportLoading.value = true; const r = await fetch('/api/accounts/export', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ uids: selectedAccounts.value }) }); const d = await r.json(); exportLoading.value = false; if (d && d.success && d.accounts) { const text = JSON.stringify(d.accounts, null, 2); navigator.clipboard.writeText(text).then(() => showToast('已复制到剪贴板')).catch(() => showToast('复制失败', 'error')); } else { showToast('导出失败', 'error'); } }
-async function downloadExport() { if (selectedAccounts.value.length === 0) return; exportLoading.value = true; const r = await fetch('/api/accounts/export', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ uids: selectedAccounts.value }) }); const d = await r.json(); exportLoading.value = false; if (d && d.success && d.accounts) { const blob = new Blob([JSON.stringify(d.accounts, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'antigravity-accounts-' + new Date().toISOString().slice(0,10) + '.json'; a.click(); URL.revokeObjectURL(url); showToast('文件已下载'); } else { showToast('导出失败', 'error'); } }
+        const DEFAULT_PROMPT_REPLACEMENTS = [{ "key": "You are Claude Code, Anthropic's official CLI for Claude.", "value": "You are a Claude agent, built on Anthropic's Claude Agent SDK." }, { "key": "PRs", "value": "pull requests" }, { "key": "github.com/anthropics/claude-code/issues", "value": "github.com/anthropics/claude-code" }];
+        const promptReplacements = reactive([]);
+        const showImportPromptModal = ref(false);
+        const importPromptText = ref('');
+        const importPromptError = ref('');
+        const settings = reactive({ webPort: 8866, proxyPort: 8867, httpProxy: '', autoStartProxy: true, checkinConcurrency: 5, systemPromptSensitiveEnabled: true });
+        const showImportModal = ref(false); const importMode = ref('file'); const importModes = [{ id: 'file', label: '文件' }, { id: 'paste', label: '粘贴' }]; const importFileName = ref(''); const importText = ref(''); const importPreview = ref([]); const importError = ref(''); const importResult = ref(''); const importLoading = ref(false);
+        const showExportModal = ref(false);
+        const exportLoading = ref(false);
+        const exportContent = ref('');
+        function openImportModal() { showImportModal.value = true; importMode.value = 'file'; importFileName.value = ''; importText.value = ''; importPreview.value = []; importError.value = ''; importResult.value = ''; }
+        function closeImportModal() { showImportModal.value = false; importFileName.value = ''; importText.value = ''; importPreview.value = []; importError.value = ''; importResult.value = ''; }
+        function onImportFileChange(e) { const f = e.target.files[0]; if (!f) return; importFileName.value = f.name; const r = new FileReader(); r.onload = () => { try { const data = JSON.parse(r.result); const items = Array.isArray(data) ? data : (data.accounts || []); importPreview.value = items.filter(it => it && it.method && (it.api_key || it.access_token || it.auth_token)).map(it => ({ method: it.method, api_key: it.api_key || '', access_token: it.access_token || it.auth_token || '', uid: it.uid || '', domain: it.domain || '', nickname: it.nickname || '' })); if (importPreview.value.length === 0) importError.value = '未识别到有效的账号数据'; else importError.value = ''; } catch (err) { importError.value = '文件解析失败: ' + err.message; importPreview.value = []; } }; r.readAsText(f); }
+        function parseImportText() { const t = importText.value.trim(); if (!t) return; try { const data = JSON.parse(t); const items = Array.isArray(data) ? data : (data.accounts || []); importPreview.value = items.filter(it => it && it.method && (it.api_key || it.access_token || it.auth_token)).map(it => ({ method: it.method, api_key: it.api_key || '', access_token: it.access_token || it.auth_token || '', uid: it.uid || '', domain: it.domain || '', nickname: it.nickname || '' })); if (importPreview.value.length === 0) importError.value = '未识别到有效的账号数据'; else importError.value = ''; } catch (err) { importError.value = '内容解析失败: ' + err.message; importPreview.value = []; } }
+        async function submitImport() { if (importPreview.value.length === 0) return; importLoading.value = true; importError.value = ''; importResult.value = ''; const r = await fetch('/api/accounts/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: importPreview.value }) }); const d = await r.json(); importLoading.value = false; if (d && d.success) { importResult.value = `导入完成: ${d.added} 成功, ${d.failed} 失败`; if (d.errors && d.errors.length > 0) { importError.value = d.errors.join('; '); } else { showToast('导入完成: ' + d.added + ' 成功'); closeImportModal(); await loadAccounts(); } } else { importError.value = (d && d.detail) ? d.detail : '导入失败'; } }
+        function openExportModal() { if (selectedAccounts.value.length === 0) { showToast('请先选中要导出的账户'); return; } showExportModal.value = true; }
+        async function copyExportToClipboard() { if (selectedAccounts.value.length === 0) return; exportLoading.value = true; const r = await fetch('/api/accounts/export', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ uids: selectedAccounts.value }) }); const d = await r.json(); exportLoading.value = false; if (d && d.success && d.accounts) { const text = JSON.stringify(d.accounts, null, 2); navigator.clipboard.writeText(text).then(() => showToast('已复制到剪贴板')).catch(() => showToast('复制失败', 'error')); } else { showToast('导出失败', 'error'); } }
+        async function downloadExport() { if (selectedAccounts.value.length === 0) return; exportLoading.value = true; const r = await fetch('/api/accounts/export', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ uids: selectedAccounts.value }) }); const d = await r.json(); exportLoading.value = false; if (d && d.success && d.accounts) { const blob = new Blob([JSON.stringify(d.accounts, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'antigravity-accounts-' + new Date().toISOString().slice(0, 10) + '.json'; a.click(); URL.revokeObjectURL(url); showToast('文件已下载'); } else { showToast('导出失败', 'error'); } }
         async function api(url, opts) { opts = opts || {}; try { const r = await fetch(url, { headers: { 'Content-Type': 'application/json' }, method: opts.method || 'GET', body: opts.body }); return await r.json(); } catch (e) { showToast(e.message, 'error'); return null; } }
         async function loadAccounts() { const d = await api('/api/accounts'); if (d) { accounts.value = d.accounts || []; stats.accountCount = d.total || 0; stats.activeCount = accounts.value.filter(a => a.status === 'active').length; stats.checkedToday = accounts.value.filter(a => a.checked_today).length; let tc = 0; accounts.value.forEach(a => tc += a.quota_remaining || a.quota_total || 0); stats.totalCredits = tc; } }
         async function runWithConcurrency(items, limit, fn) {
@@ -1552,7 +1753,7 @@ async function downloadExport() { if (selectedAccounts.value.length === 0) retur
               quotaSummary.totalRemain = d.summary.totalRemain || 0;
               quotaSummary.totalCredits = d.summary.totalCredits || 0;
               quotaSummary.accountCount = d.summary.accountCount || 0;
- quotaAccounts.value = d.accounts.map(a => ({ ...a, expanded: false, packages: (a.packages || []).map(p => ({ ...p, package: p.name, typeLabel: p.type || '?', typeClass: ({ '免费': 'bg-secondary-container text-on-secondary-container', '付费': 'bg-surface-container text-primary', '体验': 'bg-surface-container-low border border-outline-variant' })[p.type] || 'bg-surface-container text-secondary' })) }));
+              quotaAccounts.value = d.accounts.map(a => ({ ...a, expanded: false, packages: (a.packages || []).map(p => ({ ...p, package: p.name, typeLabel: p.type || '?', typeClass: ({ '免费': 'bg-secondary-container text-on-secondary-container', '付费': 'bg-surface-container text-primary', '体验': 'bg-surface-container-low border border-outline-variant' })[p.type] || 'bg-surface-container text-secondary' })) }));
               saveQuotaCache();
               return;
             }
@@ -1563,7 +1764,8 @@ async function downloadExport() { if (selectedAccounts.value.length === 0) retur
         function saveQuotaCache() {
           try { localStorage.setItem(QUOTA_CACHE_KEY, JSON.stringify({ summary: { totalRemain: quotaSummary.totalRemain, totalCredits: quotaSummary.totalCredits, accountCount: quotaSummary.accountCount }, accounts: quotaAccounts.value, ts: Date.now() })); } catch (e) { }
         }
-        async function queryAllQuota() { quotaAllLoading.value = true; const cached = quotaAccounts.value; const expandedMap = new Map(); const cachedOrder = cached.map(a => a.name); cached.forEach(a => expandedMap.set(a.name, a.expanded));
+        async function queryAllQuota() {
+          quotaAllLoading.value = true; const cached = quotaAccounts.value; const expandedMap = new Map(); const cachedOrder = cached.map(a => a.name); cached.forEach(a => expandedMap.set(a.name, a.expanded));
           // 第一步：尝试从代理服务器获取配额（后端维护的数据）
           let d = await api('/api/proxy/quota?cache=false');
           let source = 'server';
@@ -1582,12 +1784,12 @@ async function downloadExport() { if (selectedAccounts.value.length === 0) retur
               const map = new Map();
               (d.accounts || []).forEach(a => {
                 const wasExpanded = expandedMap.get(a.name) || false;
- map.set(a.name, { name: a.name, expanded: wasExpanded, totalQuota: a.totalQuota || 0, totalRemain: a.totalRemain || 0, remainPercent: a.remainPercent || 0, packages: (a.packages || []).map(p => ({ ...p, package: p.name, typeLabel: p.type || '?', typeClass: ({ '免费': 'bg-secondary-container text-on-secondary-container', '付费': 'bg-surface-container text-primary', '体验': 'bg-surface-container-low border border-outline-variant' })[p.type] || 'bg-surface-container text-secondary' })) });
+                map.set(a.name, { name: a.name, expanded: wasExpanded, totalQuota: a.totalQuota || 0, totalRemain: a.totalRemain || 0, remainPercent: a.remainPercent || 0, packages: (a.packages || []).map(p => ({ ...p, package: p.name, typeLabel: p.type || '?', typeClass: ({ '免费': 'bg-secondary-container text-on-secondary-container', '付费': 'bg-surface-container text-primary', '体验': 'bg-surface-container-low border border-outline-variant' })[p.type] || 'bg-surface-container text-secondary' })) });
               });
               const ordered = []; cachedOrder.forEach(name => { const item = map.get(name); if (item) ordered.push(item); }); map.forEach((v, k) => { if (!cachedOrder.includes(k)) ordered.push(v); }); quotaAccounts.value = ordered;
             } else if (source === 'legacy') {
               // 回退：使用传统配额接口
-              quotaSummary.totalRemain = d.total_remaining || 0; quotaSummary.totalCredits = d.total_credits || 0; quotaSummary.accountCount = d.account_count || 0; const map = new Map(); (d.details || []).forEach(a => { if (!a.success || !a.packages) return; const list = a.packages.map(p => { const t = p.total || 0, r = p.remain || 0, pct = t > 0 ? (r / t * 100) : 0; const tm = { '免费': 'bg-secondary-container text-on-secondary-container', '付费': 'bg-surface-container text-primary', '体验': 'bg-surface-container-low border border-outline-variant' }; let dl = -1; if (p.cycle_end) { try { const ed = new Date(p.cycle_end.replace(' ','T')+'Z'); dl = Math.ceil((ed - Date.now())/86400000); } catch(e){} } return { account: a.nickname, package: p.name, typeLabel: p.type || '?', typeClass: tm[p.type] || 'bg-surface-container text-secondary', remain: r, total: t, remainPercent: pct, cycle: p.cycle_start ? p.cycle_start.substring(0, 7) : '--', daysLeft: dl }; }); const totalQuota = list.reduce((s, p) => s + p.total, 0); const totalRemain = list.reduce((s, p) => s + p.remain, 0); const wasExpanded = expandedMap.get(a.nickname) || false; map.set(a.nickname, { name: a.nickname, expanded: wasExpanded, totalQuota, totalRemain, remainPercent: totalQuota > 0 ? (totalRemain / totalQuota * 100) : 0, packages: list }); }); const ordered = []; cachedOrder.forEach(name => { const item = map.get(name); if (item) ordered.push(item); }); map.forEach((v, k) => { if (!cachedOrder.includes(k)) ordered.push(v); }); quotaAccounts.value = ordered;
+              quotaSummary.totalRemain = d.total_remaining || 0; quotaSummary.totalCredits = d.total_credits || 0; quotaSummary.accountCount = d.account_count || 0; const map = new Map(); (d.details || []).forEach(a => { if (!a.success || !a.packages) return; const list = a.packages.map(p => { const t = p.total || 0, r = p.remain || 0, pct = t > 0 ? (r / t * 100) : 0; const tm = { '免费': 'bg-secondary-container text-on-secondary-container', '付费': 'bg-surface-container text-primary', '体验': 'bg-surface-container-low border border-outline-variant' }; let dl = -1; if (p.cycle_end) { try { const ed = new Date(p.cycle_end.replace(' ', 'T') + 'Z'); dl = Math.ceil((ed - Date.now()) / 86400000); } catch (e) { } } return { account: a.nickname, package: p.name, typeLabel: p.type || '?', typeClass: tm[p.type] || 'bg-surface-container text-secondary', remain: r, total: t, remainPercent: pct, cycle: p.cycle_start ? p.cycle_start.substring(0, 7) : '--', daysLeft: dl }; }); const totalQuota = list.reduce((s, p) => s + p.total, 0); const totalRemain = list.reduce((s, p) => s + p.remain, 0); const wasExpanded = expandedMap.get(a.nickname) || false; map.set(a.nickname, { name: a.nickname, expanded: wasExpanded, totalQuota, totalRemain, remainPercent: totalQuota > 0 ? (totalRemain / totalQuota * 100) : 0, packages: list }); }); const ordered = []; cachedOrder.forEach(name => { const item = map.get(name); if (item) ordered.push(item); }); map.forEach((v, k) => { if (!cachedOrder.includes(k)) ordered.push(v); }); quotaAccounts.value = ordered;
             }
             saveQuotaCache();
             showToast('完成: ' + quotaSummary.accountCount + ' 个账户 (' + source + ')');
@@ -1666,39 +1868,93 @@ async function downloadExport() { if (selectedAccounts.value.length === 0) retur
             showToast(d.detail, 'error');
           }
         }
-        async function saveSettings() { const r = await api('/api/settings', { method: 'POST', body: JSON.stringify({ webPort: settings.webPort, proxyPort: settings.proxyPort, httpProxy: settings.httpProxy, autoStartProxy: settings.autoStartProxy, checkinConcurrency: settings.checkinConcurrency }) }); if (r && r.success) { showToast('设置已保存（重启生效）'); } else { showToast('保存失败', 'error'); } }
-        async function loadSettings() { const d = await api('/api/settings'); if (d) { settings.webPort = d.webPort || 8866; settings.proxyPort = d.proxyPort || 8867; settings.httpProxy = d.httpProxy || ''; settings.autoStartProxy = d.autoStartProxy !== undefined ? d.autoStartProxy : true; settings.checkinConcurrency = d.checkinConcurrency || 5; } }
-        onMounted(async () => { loadQuotaCache(); await loadSettings(); await loadAccounts(); await loadProxyStatus(); loadDashboard();
-  // ── 全局粘贴监听：仅在测试页面时拦截图片粘贴 ──
-  document.addEventListener('paste', (e) => { if (currentPage.value === 'playground') onPgImagePaste(e); });
-  // 趋势图重绘（窗口 resize + 数据变化）
-  window.addEventListener('resize', () => { clearTimeout(trendDrawTimer); trendDrawTimer = setTimeout(drawTrendChart, 100); });
-  watch(calendarData, () => { nextTick(() => drawTrendChart()); });
-  watch(currentPage, (p) => { if (p==='dashboard') { nextTick(() => { setTimeout(drawTrendChart, 300); }); } });
-  // 日历翻月限制：不能超过当前月
-  watch(calYear, () => {
-    if (calYear.value > nowYear.value || (calYear.value===nowYear.value && calMonth.value>nowMonth.value)) {
-      calYear.value = nowYear.value; calMonth.value = nowMonth.value;
-    }
-  });
-  watch(calMonth, () => {
-    if (calYear.value===nowYear.value && calMonth.value>nowMonth.value) {
-      calMonth.value = nowMonth.value;
-    }
-  });
-});
-        return { currentPage, activePageLabel, navItems, now, port, toast, showToast, fmtNum, stats, accounts, selectedAccounts, testModel, testModelDropdown, testLoading, testResult, selectTestModel, hideTestModelDropdown, testAccount, isAllSelected, toggleSelectAll, selectAllAccounts, invertSelection, showAddModal, addMethod, addMethods, addForm, addLoading, addError, addAccount, deleteAccount, quotaLoading, checkinLoading, querySingleQuota, checkinSingle, checkinAllLoading, lastCheckin, checkinLogs, checkinAll, quotaAllLoading, quotaSummary, quotaAccounts, queryAllQuota, refreshQuota, proxyInfo, proxyLoading, proxyStrategy, strategyOptions, strategyLabel, showStrategyDropdown, selectStrategy, hideStrategyDropdown, toggleProxy, showImportKeysModal, importKeysAccounts, importKeysLoading, importAllSelected, openImportKeysModal, toggleSelectAllImport, importSelectedKeys, deleteProxyKey, proxyKeyLoading, toggleProxyKey, pgModels, pgModel, showPgModelDropdown, selectPgModel, hidePgModelDropdown, pgPrompt, pgLoading, pgImage, pgImageName, pgImageSize, pgImageType, pgResult, pgError, pgDuration, pgFileInput, onPgImageSelect, onPgImagePaste, onPgImageDrop, pgSend, settings, saveSettings, showImportModal, importMode, importModes, importFileName, importText, importPreview, importError, importResult, importLoading, openImportModal, closeImportModal, onImportFileChange, parseImportText, submitImport, showExportModal, exportLoading, exportContent, openExportModal, copyExportToClipboard, downloadExport, requestLogs, requestLogsLoading, logsSince, logsPage, logsTotal, logsTotalPages, logsPageSize, strategyLabelMap, formatLogTime, dashboardOverview, calendarData, calYear, calMonth, calMonthDisplay, nowYear, nowMonth, creditsMap, calCells, todayStr, modelDonutSegs, keyDonutSegs, donutColors, loadDashboard, drawTrendChart, trendZoom, trendPan, trendWindowSize, trendAllZero, onTrendWheel, onTrendMouseDown, resetTrendView, trendContainer, trendDrawTimer, loadRequestLogs, clearLogs, goToPage, onPageSizeChange, showPageSizeDropdown, pageSizeOptions, setPageSize, hidePageSizeDropdown, fmtCredit };
+        async function saveSettings() { const payload = { webPort: settings.webPort, proxyPort: settings.proxyPort, httpProxy: settings.httpProxy, autoStartProxy: settings.autoStartProxy, checkinConcurrency: settings.checkinConcurrency, systemPromptSensitiveEnabled: settings.systemPromptSensitiveEnabled, systemPromptSensitiveConfig: JSON.stringify({ rules: promptReplacements.filter(function (r) { return r.key && r.key.trim(); }) }) }; const r = await api('/api/settings', { method: 'POST', body: JSON.stringify(payload) }); if (r && r.success) { showToast('设置已保存'); } else { showToast('保存失败', 'error'); } }
+        async function loadSettings() {
+          const d = await api('/api/settings');
+          if (d) {
+            settings.webPort = d.webPort || 8866;
+            settings.proxyPort = d.proxyPort || 8867;
+            settings.httpProxy = d.httpProxy || '';
+            settings.autoStartProxy = d.autoStartProxy !== undefined ? d.autoStartProxy : true;
+            settings.checkinConcurrency = d.checkinConcurrency || 5;
+            settings.systemPromptSensitiveEnabled = d.systemPromptSensitiveEnabled !== undefined ? d.systemPromptSensitiveEnabled : true;
+            const serverRules = d.systemPromptSensitiveRules || [];
+            const incoming = serverRules.length > 0 ? serverRules : DEFAULT_PROMPT_REPLACEMENTS;
+            promptReplacements.splice(0, promptReplacements.length, ...incoming.map(function (r) { return { key: r.key, value: r.value }; }));
+          }
+        }
+        function addPromptReplacement() { promptReplacements.push({ key: '', value: '' }); }
+        function removePromptReplacement(i) { promptReplacements.splice(i, 1); }
+        function resetPromptReplacements() { promptReplacements.splice(0, promptReplacements.length, ...DEFAULT_PROMPT_REPLACEMENTS.map(function (r) { return { key: r.key, value: r.value }; })); }
+        function clearPromptReplacements() { promptReplacements.splice(0, promptReplacements.length); }
+        function importPromptReplacements() {
+          importPromptError.value = '';
+          try {
+            var parsed = JSON.parse(importPromptText.value);
+            if (!Array.isArray(parsed)) { importPromptError.value = '请输入一个 JSON 数组'; return; }
+            var valid = [];
+            for (var i = 0; i < parsed.length; i++) {
+              var item = parsed[i];
+              if (typeof item !== 'object' || !item) continue;
+              var k = String(item.key || '').trim();
+              var v = String(item.value || '');
+              if (k) valid.push({ key: k, value: v });
+            }
+            if (valid.length === 0) { importPromptError.value = '没有解析到有效的 key/value 对'; return; }
+            // 合并：新导入的 key 覆盖已有同 key 行，其余追加
+            var existing = promptReplacements.slice();
+            var keyIndex = {};
+            for (var i2 = 0; i2 < existing.length; i2++) { keyIndex[existing[i2].key] = i2; }
+            var added = 0, replaced = 0;
+            for (var j = 0; j < valid.length; j++) {
+              var r = valid[j];
+              if (keyIndex.hasOwnProperty(r.key)) {
+                existing[keyIndex[r.key]].value = r.value;
+                replaced++;
+              } else {
+                existing.push(r);
+                keyIndex[r.key] = existing.length - 1;
+                added++;
+              }
+            }
+            promptReplacements.splice(0, promptReplacements.length, ...existing.filter(function (r) { return r.key; }));
+            showImportPromptModal.value = false;
+            importPromptText.value = '';
+            showToast('新增 ' + added + ' 条, 更新 ' + replaced + ' 条');
+          } catch (e) {
+            importPromptError.value = 'JSON 解析失败: ' + e.message;
+          }
+        }
+        function exportPromptReplacements() {
+          var rules = promptReplacements.filter(function(r){ return r.key && r.key.trim(); });
+          if (rules.length === 0) { showToast('没有可导出的规则', 'error'); return; }
+          var json = JSON.stringify(rules, null, 2);
+          navigator.clipboard.writeText(json).then(function(){ showToast('已复制 ' + rules.length + ' 条规则到剪贴板'); }).catch(function(){ showToast('复制失败', 'error'); });
+        }
+        onMounted(async () => {
+          loadQuotaCache(); await loadSettings(); await loadAccounts(); await loadProxyStatus(); loadDashboard();
+          // ── 全局粘贴监听：仅在测试页面时拦截图片粘贴 ──
+          document.addEventListener('paste', (e) => { if (currentPage.value === 'playground') onPgImagePaste(e); });
+          // 趋势图重绘（窗口 resize + 数据变化）
+          window.addEventListener('resize', () => { clearTimeout(trendDrawTimer); trendDrawTimer = setTimeout(drawTrendChart, 100); });
+          watch(calendarData, () => { nextTick(() => drawTrendChart()); });
+          watch(currentPage, (p) => { if (p === 'dashboard') { nextTick(() => { setTimeout(drawTrendChart, 300); }); } });
+          // 日历翻月限制：不能超过当前月
+          watch(calYear, () => {
+            if (calYear.value > nowYear.value || (calYear.value === nowYear.value && calMonth.value > nowMonth.value)) {
+              calYear.value = nowYear.value; calMonth.value = nowMonth.value;
+            }
+          });
+          watch(calMonth, () => {
+            if (calYear.value === nowYear.value && calMonth.value > nowMonth.value) {
+              calMonth.value = nowMonth.value;
+            }
+          });
+        });
+        return { currentPage, activePageLabel, navItems, now, port, toast, showToast, fmtNum, stats, accounts, selectedAccounts, testModel, testModelDropdown, testLoading, testResult, selectTestModel, hideTestModelDropdown, testAccount, isAllSelected, toggleSelectAll, selectAllAccounts, invertSelection, showAddModal, addMethod, addMethods, addForm, addLoading, addError, addAccount, deleteAccount, quotaLoading, checkinLoading, querySingleQuota, checkinSingle, checkinAllLoading, lastCheckin, checkinLogs, checkinAll, quotaAllLoading, quotaSummary, quotaAccounts, queryAllQuota, refreshQuota, proxyInfo, proxyLoading, proxyStrategy, strategyOptions, strategyLabel, showStrategyDropdown, selectStrategy, hideStrategyDropdown, toggleProxy, showImportKeysModal, importKeysAccounts, importKeysLoading, importAllSelected, openImportKeysModal, toggleSelectAllImport, importSelectedKeys, deleteProxyKey, proxyKeyLoading, toggleProxyKey, pgModels, pgModel, showPgModelDropdown, selectPgModel, hidePgModelDropdown, pgPrompt, pgLoading, pgImage, pgImageName, pgImageSize, pgImageType, pgResult, pgError, pgDuration, pgFileInput, onPgImageSelect, onPgImagePaste, onPgImageDrop, pgSend, settings, saveSettings, promptReplacements, addPromptReplacement, removePromptReplacement, resetPromptReplacements, clearPromptReplacements, exportPromptReplacements, showImportPromptModal, importPromptText, importPromptError, importPromptReplacements, showImportModal, importMode, importModes, importFileName, importText, importPreview, importError, importResult, importLoading, openImportModal, closeImportModal, onImportFileChange, parseImportText, submitImport, showExportModal, exportLoading, exportContent, openExportModal, copyExportToClipboard, downloadExport, requestLogs, requestLogsLoading, logsSince, logsPage, logsTotal, logsTotalPages, logsPageSize, strategyLabelMap, formatLogTime, dashboardOverview, calendarData, calYear, calMonth, calMonthDisplay, nowYear, nowMonth, creditsMap, calCells, todayStr, modelDonutSegs, keyDonutSegs, donutColors, loadDashboard, drawTrendChart, trendZoom, trendPan, trendWindowSize, trendAllZero, onTrendWheel, onTrendMouseDown, resetTrendView, trendContainer, trendDrawTimer, loadRequestLogs, clearLogs, goToPage, onPageSizeChange, showPageSizeDropdown, pageSizeOptions, setPageSize, hidePageSizeDropdown, fmtCredit };
       }
     }).mount('#app');
   </script>
 </body>
 
 </html>
-
-
-
-
-
-
-
-

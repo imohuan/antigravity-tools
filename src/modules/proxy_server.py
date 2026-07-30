@@ -702,7 +702,7 @@ DEFAULT_SYSTEM_PROMPT_COMPATIBILITY_REPLACEMENTS = [
         "key": "You are Claude Code, Anthropic's official CLI for Claude.",
         "value": "You are a Claude agent, built on Anthropic's Claude Agent SDK.",
     },
-    {"key": "PRs", "value": "pull requests"},
+    {   "key": "PRs", "value": "pull requests"  },
     {
         "key": "github.com/anthropics/claude-code/issues",
         "value": "github.com/anthropics/claude-code",

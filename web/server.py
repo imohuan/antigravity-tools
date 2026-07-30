@@ -47,6 +47,18 @@ _static_dir.mkdir(exist_ok=True)
 async def index():
     return FileResponse(_static_dir / "index.html")
 
+@app.get("/prompt_fixer")
+async def index():
+    return FileResponse(_static_dir / "prompt_fixer_v2.html")
+
+@app.get("/playground")
+async def index():
+    return FileResponse(_static_dir / "prompt_fixer_v2.html")
+
+@app.get("/p")
+async def index():
+    return FileResponse(_static_dir / "prompt_fixer_v2.html")
+
 
 def main():
     """Entry point for `python -m web.server`"""
