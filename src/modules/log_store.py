@@ -118,6 +118,14 @@ class LogStore:
                     if "duplicate column name" not in str(exc).lower():
                         raise
 
+            # 清理敏感词替换误写入 request_logs 的脏数据（v1.8.x 修复）
+            cleaned = self._conn.execute(
+                "DELETE FROM request_logs WHERE key_mode = '' AND error LIKE '%敏感信息替换%'"
+            ).rowcount
+            if cleaned:
+                logger = logging.getLogger(__name__)
+                logger.info(f"[启动清理] 删除 {cleaned} 条敏感词替换脏日志")
+
             self._conn.commit()
         return self._conn
 

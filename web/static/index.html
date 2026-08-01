@@ -708,6 +708,7 @@
                     <th class="text-right px-md py-sm whitespace-nowrap">Completion</th>
                     <th class="text-right px-md py-sm whitespace-nowrap">首字</th>
                     <th class="text-right px-md py-sm whitespace-nowrap">总耗时</th>
+                    <th class="text-left px-md py-sm whitespace-nowrap">错误</th>
                     <th class="text-center px-md py-sm whitespace-nowrap">尝试</th>
                   </tr>
                 </thead>
@@ -739,6 +740,10 @@
                       {{log.first_token_ms>0?(log.first_token_ms/1000).toFixed(1)+'s':'-'}}</td>
                     <td class="px-md py-sm text-right font-label-md text-[10px] text-secondary">
                       {{log.duration_ms>0?(log.duration_ms/1000).toFixed(1)+'s':'-'}}</td>
+                    <td class="px-md py-sm text-secondary text-[10px] max-w-[280px] truncate"
+                      :title="log.error||''">
+                      {{log.error||'-'}}
+                    </td>
                     <td class="px-md py-sm text-center font-label-md text-[10px]"
                       :class="log.status==='failed'?'text-error':'text-secondary'">
                       {{log.attempt||1}} 次

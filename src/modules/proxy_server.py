@@ -2476,8 +2476,10 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             prompt_tokens: prompt token数
             completion_tokens: completion token数
             upstream_status: 上游返回的HTTP状态码
-            request_path: 请求路径
+            request_path: 请求路径（默认自动取 self.path）
         """
+        if not request_path:
+            request_path = getattr(self, 'path', '')
         self.db.add_request_log({
             "timestamp": time.time(),
             "sub_key_id": sub_key.get("key_id", "") if sub_key else "",
@@ -2733,14 +2735,14 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                 client_ip = self._get_client_ip()
                 error_detail = "无效的 API Key"
                 logger.warning(f"[认证] {error_detail}, client={client_ip}")
-                self._add_log(event="auth_fail", error=error_detail, request_path="/v1/chat/completions")
+                self._add_log(event="auth_fail", error=error_detail)
                 self._send_json(401, {"error": {"message": "Invalid API key", "type": "authentication_error"}})
                 return
             # 本地模式：不返回 401/403！WorkBuddy 客户端收到 401 会触发重新登录。
             # 用 503 (Service Unavailable) 代替，表示"服务暂时不可用"，不触发认证流程。
             error_detail = "请求缺少 Bearer token"
             logger.warning(f"[认证] {error_detail}，返回503")
-            self._add_log(event="auth_fail", error=error_detail, request_path="/v1/chat/completions")
+            self._add_log(event="auth_fail", error=error_detail)
             self._send_json(503, {"error": {"message": "Service temporarily unavailable", "type": "server_error"}})
             return
 
@@ -2752,7 +2754,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             if not sub_key.get("is_active", True):
                 error_detail = f"子Key已禁用, sub={sub_key.get('label', sub_key.get('key_id', ''))}"
                 logger.warning(f"[禁用] {error_detail}")
-                self._add_log(event="auth_fail", sub_key=sub_key, error=error_detail, request_path="/v1/chat/completions")
+                self._add_log(event="auth_fail", sub_key=sub_key, error=error_detail)
                 self._send_json(503, {"error": {"message": "Service temporarily unavailable", "type": "server_error"}})
                 return
 
@@ -2761,7 +2763,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             if max_usage > 0 and used_count >= max_usage:
                 error_detail = f"子Key使用次数超限, sub={sub_key.get('label', '')} used={used_count}/{max_usage}"
                 logger.warning(f"[限流] {error_detail}")
-                self._add_log(event="auth_fail", sub_key=sub_key, error=error_detail, request_path="/v1/chat/completions")
+                self._add_log(event="auth_fail", sub_key=sub_key, error=error_detail)
                 self._send_json(429, {"error": {"message": "Usage limit exceeded", "type": "rate_limit"}})
                 return
 
@@ -2848,7 +2850,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                 # 用 503 代替 403，避免触发 WorkBuddy 认证流程
                 error_detail = f"模型 {model} 不允许, 允许: {allowed_models}"
                 logger.warning(f"[模型] {error_detail}")
-                self._add_log(event="error", sub_key=sub_key, model=model, error=error_detail, request_path="/v1/chat/completions")
+                self._add_log(event="error", sub_key=sub_key, model=model, error=error_detail)
                 self._send_json(503, {"error": {"message": f"Model {model} not available", "type": "server_error"}})
                 return
 
@@ -2914,13 +2916,10 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                 upstream_request_data, build_meta = _build_workbuddy_relay_body(request_data)
                 sensitive_replaced = build_meta.get("system_prompt_sensitive_replaced", 0)
                 if sensitive_replaced:
-                    self._add_log(
-                        event="sensitive_replace",
-                        sub_key=sub_key,
-                        upstream_key=upstream_key,
-                        model=model,
-                        error=f"系统提示词敏感信息替换 {sensitive_replaced} 处",
-                        request_path="/v1/chat/completions",
+                    logger.info(
+                        f"[敏感词] 子Key {sub_key.get('label', sub_key.get('key_id', '')[:8])} "
+                        f"→ 上游 {upstream_key.get('label', upstream_key.get('key_id', '')[:8])} "
+                        f"替换 {sensitive_replaced} 处"
                     )
 
                 if (
